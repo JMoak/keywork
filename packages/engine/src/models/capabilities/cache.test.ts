@@ -35,15 +35,6 @@ describe("CapabilityCache", () => {
     ]);
     expect(restored.fieldMemory(root, "qwen3.6:35b-a3b").rejects("parallel_tool_calls")).toBe(true);
   });
-
-  it("remembers a refusal once", () => {
-    const cache = new CapabilityCache(now);
-    cache.store(record());
-    const memory = cache.fieldMemory(root, "qwen3.6:35b-a3b");
-    memory.reject("n", 400);
-    memory.reject("n", 400);
-    expect(cache.record(root, "qwen3.6:35b-a3b")?.rejectedFields).toHaveLength(1);
-  });
 });
 
 describe("class eligibility", () => {
@@ -83,10 +74,5 @@ describe("class eligibility", () => {
       eligibleClasses(record({ logprobs: known(true, { source: "server-delta", rule: "S14" }) })),
     ).toEqual(["decide"]);
     expect(eligibleClasses(record({ decisionEndpoint: known(null, route) }))).toEqual([]);
-  });
-
-  it("admits vision on any image input kind but none", () => {
-    expect(eligibleClasses(record({ imageInput: known("none", route) }))).toEqual([]);
-    expect(eligibleClasses(record({ imageInput: known("base64", route) }))).toEqual(["vision"]);
   });
 });

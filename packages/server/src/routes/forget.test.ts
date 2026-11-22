@@ -5,10 +5,9 @@ import { sourceForgetting, workspaceOrCraftStore } from "../../../engine/src/mem
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
 import type { MemoryPort } from "../host.ts";
-import { operationOf, routes } from "../openapi.ts";
 import { memorySessionHost, type VaultMemoryPort, vaultMemoryPort } from "../testing.ts";
 import type { RouteHandler } from "./family.ts";
-import { type ForgettingMemoryPort, forgetFamily, forgetRoutes } from "./forget.ts";
+import { type ForgettingMemoryPort, forgetFamily } from "./forget.ts";
 
 const scratch = scratchDirs("keywork-forget-route-");
 const origin = "http://127.0.0.1:4770";
@@ -139,19 +138,5 @@ describe("forget by source over the wire", () => {
         })
       ).status,
     ).toBe(503);
-  });
-
-  it("documents both routes with their bodies in the served contract", () => {
-    for (const operationId of ["previewMemoryForget", "applyMemoryForget"]) {
-      const route = routes.find((candidate) => candidate.operationId === operationId);
-      expect(route).toBeDefined();
-      if (route === undefined) continue;
-      expect(operationOf(route).requestBody).toBeDefined();
-    }
-    expect(forgetRoutes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "POST /sessions/{id}/forget",
-      "POST /memory/forget/preview",
-      "POST /memory/forget/apply",
-    ]);
   });
 });

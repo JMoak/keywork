@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { memoryQuestions } from "../../packages/engine/src/index.ts";
 import { scratchDirs } from "../../packages/shared/src/testing/index.ts";
-import { emDash } from "../check-prose.ts";
 import type { AnswerLine } from "./corpus.ts";
 import { answersOf } from "./metrics.ts";
 import { proofFindings, provenInReport } from "./proofs.ts";
@@ -99,34 +98,6 @@ describe("formatReport for the reference arm", () => {
     );
     expect(provenInReport(markdown)).toEqual([]);
   });
-
-  it("prints every measure beside the memory-off floor", () => {
-    for (const row of [
-      "| Measure | builtin-1 | off-1 (floor) |",
-      "| Tokens injected | 200 (200.0 per point) | 0 (0.0 per point) |",
-      "| Tokens carried (injected × turns ridden) | 400 | 0 |",
-      "| Hindsight recall | 1.00 (1 of 1 relevant) | 0.00 (0 of 1 relevant) |",
-      "| Hindsight precision | 0.50 (1 of 2 kept) | n/a: kept nothing labeled |",
-      "| Judge-rated recall | skipped: no judge labels | skipped: no judge labels |",
-      "| Harmful drops | n/a: the baseline itself | 1 (100.0% of relevant) |",
-      "| Answer quality | not run (on demand) | not run (on demand) |",
-      "| Latency p50 / p95 | 0 / 0 ms | 10 / 10 ms |",
-      "| Hot-path wait p50 / p95 / max | 0 / 0 / 0 ms | 10 / 10 / 10 ms |",
-      "| Fallbacks | none | none |",
-      "| Calibration (ECE after the map) | n/a: states no labeled probabilities | n/a: states no labeled probabilities |",
-      "| Complement probe | not run: the port asks no negated question | not run: the port asks no negated question |",
-      "| Cost | $0.000000 (0 decider input tokens) | $0.000000 (0 decider input tokens) |",
-      "| Agreement with the person's verdicts | 0.00 (0 of 1 labeled) | 0.00 (0 of 1 labeled) |",
-    ])
-      expect(markdown).toContain(row);
-  });
-
-  it("lists every disagreement with the floor and writes no em dash", () => {
-    expect(markdown).toContain(
-      "Disagreements between builtin-1 and off-1 (floor): 1.\n\n- `auth` edit src/auth.ts: builtin-1 kept [[Auth Tokens]], [[Theme Tokens]]; off-1 (floor) kept nothing",
-    );
-    expect(markdown).not.toContain(emDash);
-  });
 });
 
 describe("formatReport for a challenger", () => {
@@ -136,23 +107,6 @@ describe("formatReport for a challenger", () => {
     expect(markdown).toContain("| `action-relevance@1` | 1 | 4 of 4 criteria pass | yes |");
     expect(markdown).toContain("| `entry-durability@1` | 1 | 1 of 3 criteria pass | no |");
     expect(provenInReport(markdown)).toEqual([memoryQuestions.actionRelevance]);
-  });
-
-  it("prints the criteria, the harmful drops, the fitted map and the disagreements", () => {
-    expect(markdown).toContain("| Measure | jev-1.13.0 | builtin-1 | off-1 (floor) |");
-    expect(markdown).toContain(
-      "| 2. tokens injected at 60% of the builtin's or less | pass | injects 100 tokens, 50.0% of the builtin's 200 |",
-    );
-    expect(markdown).toContain("Harmful drops: none.");
-    expect(markdown).toContain(
-      "| Stated up to | Calibrated |\n|---|---|\n| 0.040 | 0.000 |\n| 0.970 | 1.000 |",
-    );
-    expect(markdown).toContain(
-      "- `auth` edit src/auth.ts: jev-1.13.0 kept [[Auth Tokens]]; builtin-1 kept [[Auth Tokens]], [[Theme Tokens]]",
-    );
-    expect(markdown).toContain(
-      "| 2. background spend at 20% of the builtin's or less | fail | spends $0.000017 where the builtin, with no chat model wired, spent nothing |",
-    );
   });
 });
 

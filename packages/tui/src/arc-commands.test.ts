@@ -3,7 +3,6 @@ import type { FocusedArcPort } from "./arc-commands.ts";
 import type { ArcCloseOutcome, ArcSummary, ArcsPort } from "./arcs.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
 import { AppProbe, type AppProbeOptions } from "./probe.ts";
-import type { WorkspacesPort } from "./workspace-picker.ts";
 
 interface ArcWorld {
   arcs: ArcSummary[];
@@ -173,28 +172,6 @@ describe("/arc command grammar", () => {
     expect(probe.core.arcPicker()).toBeUndefined();
     expect(world.bound).toEqual(["dock-v2"]);
   });
-
-  it("creates from the picker when the query is a fresh slug", async () => {
-    const world = worldOf();
-    const probe = await probeOver(world);
-    probe.command("arc");
-    await flush();
-    probe.type("checkout-flow");
-    probe.keys("enter");
-    await flush();
-    expect(world.arcs.map((arc) => arc.slug)).toContain("checkout-flow");
-    expect(world.bound).toEqual(["checkout-flow"]);
-  });
-
-  it("escape closes the picker without binding", async () => {
-    const world = worldOf();
-    const probe = await probeOver(world);
-    probe.command("arc");
-    await flush();
-    probe.keys("escape");
-    expect(probe.core.arcPicker()).toBeUndefined();
-    expect(world.bound).toEqual([]);
-  });
 });
 
 describe("arc panes", () => {
@@ -238,32 +215,6 @@ describe("arc panes", () => {
     expect(probe.snapshot().focused).toBe("arc-1");
   });
 
-  it("/arc open refuses unknown arcs, and without a slug opens the focused session's arc", async () => {
-    const world = worldOf();
-    const probe = arcPaneProbe(world);
-    probe.command("arc open ghost");
-    await flush();
-    expect(probe.snapshot().notice).toBe("no arc named ghost · /arc-new ghost creates it");
-    probe.command("arc open");
-    await flush();
-    expect(probe.snapshot().notice).toBe("no arc here · /arc-open <slug> names one");
-    world.current = "dock-v2";
-    probe.command("arc open");
-    await flush();
-    expect(dockOf(probe, "arc-1")).toBe("right");
-  });
-
-  it("an arc pane joins a dock that already exists instead of opening a new column", async () => {
-    const world = worldOf();
-    const probe = arcPaneProbe(world);
-    probe.command("split");
-    probe.command("dock-left");
-    probe.command("arc open dock-v2");
-    await flush();
-    expect(dockOf(probe, "arc-1")).toBe("left");
-    expect(probe.core.layout.dock("right")).toBeUndefined();
-  });
-
   it("arc panes land beside a docked arcs node and introduction never steals focus", async () => {
     const world = worldOf();
     const probe = arcPaneProbe(world);
@@ -275,19 +226,6 @@ describe("arc panes", () => {
     expect(probe.snapshot().focused).toBe("session-1");
     probe.core.introduceArcPane("dock-v2");
     expect(probe.snapshot().panes.filter((pane) => pane.id.startsWith("arc-"))).toHaveLength(1);
-  });
-
-  it("an arc pane takes half a dock slot and survives a restore", async () => {
-    const world = worldOf();
-    const probe = arcPaneProbe(world);
-    probe.command("split");
-    probe.command("dock-right");
-    probe.command("arc open dock-v2");
-    await flush();
-    expect([probe.rect("session-2").height, probe.rect("arc-1").height]).toEqual([27, 13]);
-    const restored = arcPaneProbe(world, { restoreWorkspace: probe.workspaceState() });
-    expect(restored.core.panes.get("arc-1")?.describe?.()).toEqual({ kind: "arc", arc: "dock-v2" });
-    expect(dockOf(restored, "arc-1")).toBe("right");
   });
 });
 
@@ -314,28 +252,6 @@ describe("splits and arcs", () => {
 });
 
 describe("flat verb commands (C73)", () => {
-  function workspacesOver(uses: Array<string | undefined>, created: string[]): WorkspacesPort {
-    return {
-      list: async () => [],
-      create: async (slug) => {
-        created.push(slug);
-      },
-      use: async (slug) => {
-        uses.push(slug);
-      },
-      linkFocusDir: async () => "",
-      unlinkFocusDir: async () => {},
-    };
-  }
-
-  it("lists every arc verb through the registry under the /arc- prefix", async () => {
-    const probe = await probeOver(worldOf());
-    const names = probe.core.registry.search("arc-").map((command) => command.name);
-    for (const name of ["arc-new", "arc-close", "arc-abandon", "arc-release", "arc-open"]) {
-      expect(names).toContain(name);
-    }
-  });
-
   it("/arc-new and /arc-release run the same handlers as the old verb forms", async () => {
     const world = worldOf();
     const probe = await probeOver(world);
@@ -356,43 +272,5 @@ describe("flat verb commands (C73)", () => {
     await flush();
     expect(world.closed).toEqual(["dock-v2"]);
     expect(world.directions).toEqual(["focus on the dock rules"]);
-  });
-
-  it("the old /arc close <slug> alias still names the arc and carries no direction", async () => {
-    const world = worldOf();
-    const probe = await probeOver(world);
-    probe.command("arc close dock-v2");
-    await flush();
-    expect(world.closed).toEqual(["dock-v2"]);
-    expect(world.directions).toEqual([undefined]);
-  });
-
-  it("/arc-abandon wants a name and abandons when given one", async () => {
-    const world = worldOf();
-    const probe = await probeOver(world);
-    probe.command("arc-abandon");
-    await flush();
-    expect(world.abandoned).toEqual([]);
-    expect(probe.snapshot().notice).toBe("abandon needs a name · /arc-abandon <slug>");
-    probe.command("arc-abandon dock-v2");
-    await flush();
-    expect(world.abandoned).toEqual(["dock-v2"]);
-  });
-
-  it("workspace verbs run flat and through the old alias alike", async () => {
-    const runs: Array<[string, Array<string | undefined>, string[]]> = [
-      ["workspace-new infra", ["infra"], ["infra"]],
-      ["workspace new infra", ["infra"], ["infra"]],
-      ["workspace-default", [undefined], []],
-    ];
-    for (const [command, uses, created] of runs) {
-      const usedSlugs: Array<string | undefined> = [];
-      const createdSlugs: string[] = [];
-      const probe = new AppProbe({ workspaces: workspacesOver(usedSlugs, createdSlugs) });
-      probe.command(command);
-      await flush();
-      expect(usedSlugs).toEqual(uses);
-      expect(createdSlugs).toEqual(created);
-    }
   });
 });

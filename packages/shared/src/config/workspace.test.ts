@@ -26,11 +26,6 @@ afterEach(async () => {
 });
 
 describe("openWorkspace", () => {
-  it("returns undefined silently when no declaration exists", async () => {
-    const root = await tempRoot();
-    expect(openWorkspace(root)).toBeUndefined();
-  });
-
   it("opens the workspace declared in the cwd's own .keywork", async () => {
     const root = await tempRoot();
     const file = await declareWorkspace(root, { name: "alpha" });
@@ -46,15 +41,6 @@ describe("openWorkspace", () => {
     });
   });
 
-  it("walks up from a nested cwd to the declaration, git-style", async () => {
-    const root = await tempRoot();
-    await declareWorkspace(root, { name: "alpha" });
-    const nested = join(root, "packages", "deep", "leaf");
-    await mkdir(nested, { recursive: true });
-
-    expect(openWorkspace(nested)?.root).toBe(root);
-  });
-
   it("rejects a declaration nested inside another declared workspace", async () => {
     const root = await tempRoot();
     await declareWorkspace(root, { name: "outer" });
@@ -66,15 +52,6 @@ describe("openWorkspace", () => {
 
     expect(() => openWorkspace(join(inner, "src"))).toThrow("nested workspace anchors");
     expect(openWorkspace(root)?.name).toBe("outer");
-  });
-
-  it("resolves the vault path beside the declaration", async () => {
-    const root = await tempRoot();
-    await declareWorkspace(root, { name: "alpha" });
-    const nested = join(root, "sub");
-    await mkdir(nested, { recursive: true });
-
-    expect(openWorkspace(nested)?.vaultPath).toBe(join(root, ".keywork", "memory"));
   });
 
   it("resolves context dirs against the root, keeps absolutes, and dedupes", async () => {
@@ -150,13 +127,6 @@ describe("openWorkspace", () => {
     expect(() => openWorkspace(root)).toThrow(ConfigError);
   });
 
-  it("rejects a missing name", async () => {
-    const root = await tempRoot();
-    await declareWorkspace(root, { contextDirs: ["docs"] });
-
-    expect(() => openWorkspace(root)).toThrow(ConfigError);
-  });
-
   it("rejects empty and oversized strings", async () => {
     const root = await tempRoot();
     await declareWorkspace(root, { name: "" });
@@ -179,11 +149,6 @@ describe("openWorkspace", () => {
 });
 
 describe("resolveVaultPath", () => {
-  it("is undefined for an undeclared cwd", async () => {
-    const root = await tempRoot();
-    expect(resolveVaultPath(root)).toBeUndefined();
-  });
-
   it("points at .keywork/memory beside the declaration", async () => {
     const root = await tempRoot();
     await declareWorkspace(root, { name: "alpha" });

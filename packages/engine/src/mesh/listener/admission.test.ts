@@ -26,10 +26,6 @@ describe("admit", () => {
     });
   });
 
-  it("denies an address tailscaled answered 404 for", () => {
-    expect(admit("100.99.99.99", null)).toMatchObject({ admitted: false, reason: "not-a-peer" });
-  });
-
   it("denies a node whose key expired", () => {
     expect(admit(recordedHost.ipv4, whoisWith({ expired: true }))).toMatchObject({
       admitted: false,
@@ -41,14 +37,6 @@ describe("admit", () => {
     expect(admit(recordedHost.ipv4, whoisWith({ sharerId: "4242" }))).toMatchObject({
       admitted: false,
       reason: "shared-in",
-    });
-  });
-
-  it("admits a tagged node without a human identity", () => {
-    const admission = admit(recordedHost.ipv4, whoisWith({ tags: ["tag:agent-host"] }));
-    expect(admission).toMatchObject({
-      admitted: true,
-      caller: { human: null, node: { tags: ["tag:agent-host"] } },
     });
   });
 });

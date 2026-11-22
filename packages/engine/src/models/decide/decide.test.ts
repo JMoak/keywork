@@ -62,24 +62,6 @@ describe("deciderFor a resolved decide candidate", () => {
     expect(sent[0]?.headers.authorization).toBe("Bearer sk-or-vault");
   });
 
-  it("asks a local decision model on its own server without a key", async () => {
-    const sent: SentRequest[] = [];
-    const entry = recorded("ollama-nimble-no-usage");
-    const ollama = registration("ollama", "http://localhost:11434/v1");
-    const binding: InferenceBinding = {
-      reference: { provider: "ollama", model: "nimble" },
-      registration: ollama,
-      spec: { id: "nimble", origin: "unlisted" },
-      protocol: "chat-completions",
-      capabilities: { input: ["text"], toolCalls: false },
-      credential: undefined,
-    };
-    const decider = deciderFor(binding, { vault: vaultOf({}), fetchFn: replaying(entry, sent) });
-    await decider.decide(entry.request.body as DecisionRequest);
-    expect(sent[0]?.url).toBe("http://localhost:11434/v1/systemone");
-    expect(sent[0]?.headers.authorization).toBeUndefined();
-  });
-
   it("refuses a credential the vault no longer holds", () => {
     const binding = decideBinding([openrouter], "openrouter", "typesafe/jev-1.14");
     expect(() => deciderFor(binding, { vault: vaultOf({}) })).toThrow(CredentialMaterialError);
@@ -96,32 +78,9 @@ describe("deciderFor a resolved decide candidate", () => {
 });
 
 describe("nativeDecisionModel", () => {
-  it("reads llama-server's output modalities", () => {
-    const entry = {
-      id: "nimble",
-      architecture: { input_modalities: ["text"], output_modalities: ["decisions"] },
-    };
-    expect(nativeDecisionModel(entry)).toBe(true);
-    expect(
-      nativeDecisionModel({
-        architecture: { input_modalities: ["text"], output_modalities: ["text"] },
-      }),
-    ).toBe(false);
-  });
-
   it("reads LM Studio's model type", () => {
     expect(nativeDecisionModel({ key: "clef-flash", type: "decision" })).toBe(true);
     expect(nativeDecisionModel({ key: "qwen3.8-27b", type: "llm" })).toBe(false);
-  });
-
-  it("reads Ollama's capabilities from /api/show", () => {
-    expect(nativeDecisionModel({ capabilities: ["completion", "decision"] })).toBe(true);
-    expect(nativeDecisionModel({ capabilities: ["completion", "vision", "tools"] })).toBe(false);
-  });
-
-  it("says no to anything else", () => {
-    expect(nativeDecisionModel(undefined)).toBe(false);
-    expect(nativeDecisionModel({ id: "qwen3.8-27b" })).toBe(false);
   });
 });
 

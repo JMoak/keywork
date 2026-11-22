@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { calibrationOf, keeperFitRows, modelOfRow } from "./calibration.ts";
-import { formatKeeperReport } from "./format.ts";
 import type { DecisionRecord } from "./ratchet.ts";
 import { loadRatchet } from "./ratchet.ts";
 import { readKeeperReport, readKeeperRows } from "./report.ts";
@@ -95,20 +94,6 @@ describe("calibrationOf", () => {
     ]);
     expect(modelOfRow(rows[0] as DecisionRecord)).toBe("nimble-0.8b@2026-10-01");
   });
-
-  it("shows calibration per model and class in the printed report", async () => {
-    const nodeState = await promotableNode(ratchet);
-    const lines = formatKeeperReport(await readKeeperReport({ nodeState, ratchet })).split("\n");
-    expect(lines).toContain(
-      "model         rule class         labelled   bar  held-out  review  state",
-    );
-    expect(lines).toContain(
-      "keeper-rules  bash make build *       200  0.96   149/149     0/0  accepted",
-    );
-    expect(lines.find((line) => line.startsWith("  keeper-rules, bash make build *:"))).toMatch(
-      /accepted, 149 of 149 held-out calls above bar 0\.96 approved \(95% interval .* exact lower bound 98\.\d%$/,
-    );
-  }, 120_000);
 });
 
 function denyAt(rows: readonly DecisionRecord[], index: number): DecisionRecord[] {

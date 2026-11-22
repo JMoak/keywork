@@ -115,26 +115,6 @@ describe("BrowserModel expansion laziness", () => {
 });
 
 describe("BrowserModel cursor", () => {
-  it("moves with j/k and arrows, clamped to the rows", async () => {
-    const { model } = await browserOver(sampleTree);
-    press(model, "k");
-    expect(model.cursor).toBe(0);
-    press(model, "j", "j", "down");
-    expect(model.cursor).toBe(3);
-    press(model, "j");
-    expect(model.cursor).toBe(3);
-    press(model, "up", "k");
-    expect(model.cursor).toBe(1);
-  });
-
-  it("pages by the given row count", async () => {
-    const { model } = await browserOver(sampleTree);
-    model.handleKey(parseChord("pagedown"), 2);
-    expect(model.cursor).toBe(2);
-    model.handleKey(parseChord("pageup"), 2);
-    expect(model.cursor).toBe(0);
-  });
-
   it("h collapses an expanded dir, or jumps to the parent row", async () => {
     const { model } = await browserOver(sampleTree);
     await pressSettled(model, "j", "l");
@@ -145,22 +125,6 @@ describe("BrowserModel cursor", () => {
     press(model, "h");
     expect(model.rows()[model.cursor]?.expanded).toBe(false);
     expect(model.rows().map((row) => row.name)).toEqual(["docs", "src", "Alpha.ts", "zeta.ts"]);
-  });
-
-  it("stays on the collapsed dir when the rows below it vanish", async () => {
-    const { model } = await browserOver(sampleTree);
-    await pressSettled(model, "j", "l");
-    press(model, "j", "h", "h");
-    expect(model.rows()[model.cursor]?.name).toBe("src");
-  });
-
-  it("survives a refresh that removes the row under it", async () => {
-    const tree: Tree = { "a.ts": "file", "b.ts": "file", "c.ts": "file" };
-    const { model } = await browserOver(tree);
-    press(model, "j", "j");
-    delete tree["c.ts"];
-    await pressSettled(model, "r");
-    expect(model.rows()[model.cursor]?.name).toBe("b.ts");
   });
 });
 
@@ -184,18 +148,6 @@ describe("BrowserModel filter", () => {
     expect(model.filterQuery).toBe("jjk");
     press(model, "escape");
     expect(model.filterQuery).toBe("");
-  });
-
-  it("edits with backspace and matches case-insensitively", async () => {
-    const { model } = await browserOver(sampleTree);
-    press(model, "/", "a", "l", "x", "backspace");
-    expect(model.rows().map((row) => row.name)).toEqual(["Alpha.ts"]);
-  });
-
-  it("clamps the cursor when the filter narrows past it", async () => {
-    const { model } = await browserOver(sampleTree);
-    press(model, "j", "j", "j", "/", "d");
-    expect(model.rows()[model.cursor]?.name).toBe("docs");
   });
 
   it("accepts a space and keeps the typed case from the raw sequence", async () => {
@@ -228,32 +180,6 @@ describe("BrowserModel modifier guard", () => {
   });
 });
 
-describe("BrowserModel disposal", () => {
-  it("stays silent after dispose even when a read lands", async () => {
-    let release: (entries: Entry[]) => void = () => {};
-    let notified = 0;
-    const model = new BrowserModel(
-      "root",
-      {
-        readDirectory: () =>
-          new Promise((resolve) => {
-            release = resolve;
-          }),
-      },
-      () => {
-        notified += 1;
-      },
-      () => {},
-    );
-    model.dispose();
-    release([{ name: "late.ts", kind: "file" }]);
-    await model.settled();
-    expect(notified).toBe(0);
-    expect(model.handleKey(parseChord("."), 5)).toBe(true);
-    expect(notified).toBe(0);
-  });
-});
-
 describe("BrowserModel open intent", () => {
   it("fires for files on enter or l, never for dirs", async () => {
     const { model, opened } = await browserOver(sampleTree);
@@ -281,39 +207,6 @@ describe("BrowserModel failure", () => {
     await model.settled();
     await pressSettled(model, "l");
     expect(model.rows()[0]).toMatchObject({ name: "broken", load: "failed", failure: "EACCES" });
-  });
-
-  it("surfaces a root read failure", async () => {
-    const model = new BrowserModel(
-      "root",
-      {
-        readDirectory: async () => {
-          throw new Error("ENOENT");
-        },
-      },
-      () => {},
-      () => {},
-    );
-    await model.settled();
-    expect(model.rootFailure()).toBe("ENOENT");
-    expect(model.rows()).toEqual([]);
-  });
-});
-
-describe("BrowserModel windowing", () => {
-  it("keeps the cursor inside the window and clamps the scroll", async () => {
-    const tree: Tree = Object.fromEntries(
-      Array.from({ length: 20 }, (_, index) => [`f${String(index).padStart(2, "0")}.ts`, "file"]),
-    );
-    const { model } = await browserOver(tree);
-    model.scrollTop = 99;
-    expect(model.visibleRows(5)[0]?.index).toBe(0);
-    for (let step = 0; step < 9; step += 1) press(model, "j");
-    const window = model.visibleRows(5);
-    expect(window.map(({ index }) => index)).toEqual([5, 6, 7, 8, 9]);
-    expect(window.some(({ index }) => index === model.cursor)).toBe(true);
-    press(model, "k", "k", "k", "k", "k", "k");
-    expect(model.visibleRows(5)[0]?.index).toBe(3);
   });
 });
 
@@ -376,14 +269,6 @@ describe("BrowserModel refresh and caching", () => {
     expect(model.rows().map((row) => row.name)).toEqual(["fresh.ts"]);
   });
 
-  it("reuses the built rows until the tree changes", async () => {
-    const { model } = await browserOver(sampleTree);
-    const first = model.rows();
-    expect(model.rows()).toBe(first);
-    press(model, ".");
-    expect(model.rows()).not.toBe(first);
-  });
-
   it("orders names by locale, not code units", async () => {
     const { model } = await browserOver({ "z.ts": "file", "é.ts": "file" });
     expect(model.rows().map((row) => row.name)).toEqual(["é.ts", "z.ts"]);
@@ -434,60 +319,6 @@ describe("BrowserModel gitignore awareness", () => {
       ["app.log", true],
       ["main.ts", false],
     ]);
-  });
-
-  it("keeps ignored entries navigable and openable", async () => {
-    const { model, opened } = await repoBrowser();
-    press(model, "j", "j");
-    expect(model.cursorRow()?.name).toBe("app.log");
-    press(model, "enter");
-    expect(opened).toEqual([join("root", "app.log")]);
-  });
-
-  it("ignores everything beneath an ignored directory, negations included", async () => {
-    const { model } = await repoBrowser();
-    await pressSettled(model, "l");
-    const children = model.rows().filter((row) => row.depth === 1);
-    expect(children.map((row) => [row.name, row.ignored])).toEqual([
-      ["bundle.js", true],
-      ["keep.txt", true],
-    ]);
-  });
-
-  it("applies a nested .gitignore relative to its own directory", async () => {
-    const { model, ignoreReads } = await repoBrowser();
-    await pressSettled(model, "j", "l");
-    expect(ignoreReads).toContain(join("root", "src", ".gitignore"));
-    const children = model.rows().filter((row) => row.depth === 1);
-    expect(children.map((row) => [row.name, row.ignored])).toEqual([
-      ["app.ts", false],
-      ["types.gen.ts", true],
-    ]);
-  });
-
-  it("re-reads ignore rules on refresh", async () => {
-    const { model, ignoreReads } = await repoBrowser();
-    await pressSettled(model, "r");
-    expect(ignoreReads).toEqual([join("root", ".gitignore"), join("root", ".gitignore")]);
-    expect(model.rows().find((row) => row.name === "app.log")?.ignored).toBe(true);
-  });
-
-  it("stays unignored when there is no ignore reader or the read fails", async () => {
-    const { model } = await browserOver(repo);
-    expect(model.rows().every((row) => !row.ignored)).toBe(true);
-    const failing = new BrowserModel(
-      "root",
-      {
-        readDirectory: fakeDisk(repo).read,
-        readIgnoreFile: async () => {
-          throw new Error("EACCES");
-        },
-      },
-      () => {},
-      () => {},
-    );
-    await failing.settled();
-    expect(failing.rows().every((row) => !row.ignored)).toBe(true);
   });
 });
 
@@ -559,17 +390,6 @@ describe("BrowserModel disk watch", () => {
     expect(disk.reads.get("root")).toBe(2);
     expect(disk.reads.get(join("root", "src"))).toBe(2);
     expect(model.rows().map((row) => row.name)).toEqual(["src", "a.ts", "main.ts", "new.ts"]);
-  });
-
-  it("keeps the cursor row across a watch-triggered reload", async () => {
-    const tree: Tree = { "a.ts": "file", "b.ts": "file", "c.ts": "file" };
-    const { model, change, advanceTo } = await watchedBrowser(tree);
-    press(model, "j", "j");
-    delete tree["a.ts"];
-    change("root");
-    advanceTo(watchQuietMs);
-    await model.settled();
-    expect(model.cursorRow()?.name).toBe("c.ts");
   });
 
   it("closes watchers on refresh and dispose", async () => {

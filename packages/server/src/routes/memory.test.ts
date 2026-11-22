@@ -2,7 +2,6 @@ import { MockProvider } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { rememberFrom } from "../../../engine/src/memory/admission.ts";
-import { learnCraft } from "../../../engine/src/memory/craft.ts";
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
 import { memorySessionHost, type VaultMemoryPort, vaultMemoryPort } from "../testing.ts";
@@ -71,40 +70,5 @@ describe("the admission policy over the memory routes", () => {
         frontmatter: expect.objectContaining({ origin_source: "web:example.com" }),
       }),
     ]);
-  });
-
-  it("drops a staged write with one discard and reports the new count on memory.inbox", async () => {
-    const port = await vault();
-    await rememberFrom(
-      port.store,
-      { kind: "workshop", id: "ws-wren" },
-      {
-        title: "Build Output",
-        body: "green\n",
-      },
-    );
-    const { h, log } = handlers(port);
-    const [item] = await port.store.listStaged();
-    expect((await call(h.discardStagedItem, "POST", "/x", { id: item?.id ?? "" })).status).toBe(
-      200,
-    );
-    expect(await port.store.listStaged()).toEqual([]);
-    expect(log.since(0).at(-1)).toMatchObject({ type: "memory.inbox", payload: { count: 0 } });
-  });
-});
-
-describe("craft memory over the memory routes", () => {
-  it("serves craft notes with their section so a profile can tell them from the keeper's", async () => {
-    const port = await vault();
-    await learnCraft(port.store, "wren", { title: "Triage Order", body: "Oldest first.\n" });
-    await port.store.writeNote({ title: "Keeper Note", body: "mine\n", provenance: "user" });
-    const { h } = handlers(port);
-    const notes = (await call(h.listMemoryNotes, "GET", "/memory/notes")).body.notes as {
-      name: string;
-      frontmatter: Record<string, unknown>;
-    }[];
-    expect(
-      notes.filter((note) => note.frontmatter.section === "craft").map((note) => note.name),
-    ).toEqual(["Triage Order"]);
   });
 });

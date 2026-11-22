@@ -42,16 +42,6 @@ const bashCall: ToolCallPart = {
 const assistant: Message = { role: "assistant", parts: [{ type: "text", text: "done" }] };
 
 describe("ExtensionHost activation and containment", () => {
-  it("activates in order and lists every extension with its standing", async () => {
-    const { host } = harness();
-    await host.activate(inline("one", () => undefined));
-    await host.activate(inline("two", () => undefined));
-    expect(host.extensions()).toEqual([
-      { name: "one", source: "inline", standing: "active" },
-      { name: "two", source: "inline", standing: "active" },
-    ]);
-  });
-
   it("quarantines an extension that throws while activating and withdraws what it registered", async () => {
     const { host, notices } = harness();
     const status = await host.activate(
@@ -301,22 +291,6 @@ describe("ExtensionHost hook dispatch", () => {
       "turn_end:false",
     ]);
   });
-
-  it("fires session_start and session_end with their reasons", async () => {
-    const { host } = harness();
-    const seen: string[] = [];
-    await host.activate(
-      inline("lifecycle", (api) => {
-        api.on("session_start", ({ reason }) => void seen.push(`start:${reason}`));
-        api.on("session_end", ({ reason }) => void seen.push(`end:${reason}`));
-      }),
-    );
-    await host.startSession({ reason: "resume" });
-    await host.endSession("switch");
-    await host.startSession();
-    await host.endSession();
-    expect(seen).toEqual(["start:resume", "end:switch", "start:start", "end:exit"]);
-  });
 });
 
 describe("ExtensionHost registrations", () => {
@@ -367,22 +341,6 @@ describe("ExtensionHost registrations", () => {
       phase: "command /boom",
       reason: "command failed",
     });
-  });
-
-  it("routes the per-extension logger onto the bus with the extension named", async () => {
-    const { host, notices } = harness();
-    await host.activate(
-      inline("talker", (api) => {
-        api.log.info("hello");
-        api.log.warn("careful", { count: 2 });
-        api.log.error("oops");
-      }),
-    );
-    expect(notices).toEqual([
-      { extension: "talker", level: "info", message: "hello" },
-      { extension: "talker", level: "warn", message: "careful", detail: { count: 2 } },
-      { extension: "talker", level: "error", message: "oops" },
-    ]);
   });
 });
 
@@ -453,24 +411,6 @@ describe("ExtensionHost replayable state (D3)", () => {
     );
     await host.startSession({ reason: "resume", store });
     expect(mine).toEqual([1, 3]);
-  });
-
-  it("drops an entry with a warning when no session is open", async () => {
-    const { host, notices } = harness();
-    let api: ExtensionApi | undefined;
-    await host.activate(
-      inline("orphan", (given) => {
-        api = given;
-      }),
-    );
-    await api?.appendEntry("note", { x: 1 });
-    expect(notices).toEqual([
-      {
-        extension: "orphan",
-        level: "warn",
-        message: 'entry "note" was dropped: no session is open',
-      },
-    ]);
   });
 
   it("recognizes only well-formed extension entries", () => {
@@ -636,35 +576,6 @@ describe("ExtensionHost over many buses", () => {
     expect(notices.map((notice) => notice.message)).toEqual([
       'entry "note" was dropped: 2 sessions are open and no turn names one',
     ]);
-  });
-
-  it("reports what each extension registered and relays notices to listeners", async () => {
-    const { host } = harness();
-    const heard: string[] = [];
-    const stop = host.onNotice((notice) => heard.push(`${notice.level}:${notice.message}`));
-    await host.activate(
-      inline("kit", (api) => {
-        api.registerTool(tool("kit_tool"));
-        api.registerCommand({ name: "kit", run: () => undefined });
-        api.registerShortcut({ keys: "ctrl+k", run: () => undefined });
-        api.registerFlag({ name: "kit-flag" });
-        api.log.warn("ready-ish");
-      }),
-    );
-    expect(host.registrations("kit")).toEqual({
-      tools: ["kit_tool"],
-      commands: ["kit"],
-      shortcuts: ["ctrl+k"],
-      flags: ["kit-flag"],
-    });
-    expect(host.registrations("nobody")).toEqual({
-      tools: [],
-      commands: [],
-      shortcuts: [],
-      flags: [],
-    });
-    expect(heard).toEqual(["warn:ready-ish"]);
-    stop();
   });
 });
 

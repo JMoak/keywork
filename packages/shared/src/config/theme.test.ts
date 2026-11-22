@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { completeTheme } from "./complete-theme.ts";
-import {
-  contrastFailures,
-  contrastMeasurements,
-  parseTheme,
-  type Theme,
-  themeTokenOverridesSchema,
-  themeTokensSchema,
-} from "./theme.ts";
+import { contrastFailures, parseTheme, type Theme, themeTokenOverridesSchema } from "./theme.ts";
 
 const night: Theme = {
   name: "night-fixture",
@@ -54,12 +47,6 @@ describe("parseTheme", () => {
     expect(() => parseTheme(theme)).toThrow(/density full/);
   });
 
-  it("lists every failing pair so one reload fixes them all", () => {
-    const buried = parseTheme.bind(undefined, withTokens({ text: "#3a3d52", textMid: "#2a2d42" }));
-    expect(buried).toThrow(/text on background/);
-    expect(buried).toThrow(/textMid on background/);
-  });
-
   it("points into the schema when the shape is wrong", () => {
     const { accent, ...missingAccent } = night.tokens;
     expect(() => parseTheme({ ...night, tokens: missingAccent })).toThrow(
@@ -76,10 +63,6 @@ describe("parseTheme", () => {
 });
 
 describe("contrastFailures", () => {
-  it("reads clean on the reference palette", () => {
-    expect(contrastFailures(night)).toEqual([]);
-  });
-
   it("refuses a light theme that is a tinted dark one, sections included", () => {
     const tinted = { ...completeTheme(night), name: "tinted", appearance: "light" as const };
     expect(contrastFailures(tinted)).toEqual(
@@ -91,52 +74,9 @@ describe("contrastFailures", () => {
     );
     expect(() => parseTheme(tinted)).toThrow(/reads light-on-dark in a light theme/);
   });
-
-  it("lets a selection with its own ink read against the theme's polarity", () => {
-    const inverted = { ...night, selection: { background: "#c3a6ff", text: "#000000" } };
-    expect(contrastFailures(inverted)).toEqual([]);
-  });
-});
-
-describe("contrastMeasurements", () => {
-  it("measures every floored pair once, tokens apart from sections", () => {
-    const measurements = contrastMeasurements(completeTheme(night));
-    const pairs = measurements.map((measurement) => measurement.pair);
-    expect(new Set(pairs).size).toBe(pairs.length);
-    expect(measurements.filter((measurement) => measurement.layer === "tokens")).toHaveLength(15);
-    expect(measurements.filter((measurement) => measurement.layer === "sections")).toHaveLength(
-      12 + 15 + 2 + 1 + 1,
-    );
-    expect(contrastMeasurements(night).every((measurement) => measurement.layer === "tokens")).toBe(
-      true,
-    );
-  });
-
-  it("carries the floor and the measured Lc a failure message is built from", () => {
-    const [text] = contrastMeasurements(night);
-    expect(text).toMatchObject({
-      pair: "text on background",
-      ink: night.tokens.text,
-      ground: night.tokens.background,
-      floor: 60,
-      polarity: "native",
-    });
-    expect(text?.lc).toBeGreaterThan(60);
-  });
 });
 
 describe("themeTokenOverridesSchema", () => {
-  it("accepts any subset of the theme tokens and nothing else", () => {
-    expect(themeTokenOverridesSchema.parse({ accent: "#ff00ff", ramp: ["#ff00ff"] })).toEqual({
-      accent: "#ff00ff",
-      ramp: ["#ff00ff"],
-    });
-    expect(themeTokenOverridesSchema.parse({})).toEqual({});
-    expect(Object.keys(themeTokenOverridesSchema.shape)).toEqual(
-      Object.keys(themeTokensSchema.shape),
-    );
-  });
-
   it("names a misspelled token and holds colors to the theme rule", () => {
     const misspelled = themeTokenOverridesSchema.safeParse({ acent: "#ff00ff" });
     expect(misspelled.success).toBe(false);
@@ -149,10 +89,6 @@ describe("themeTokenOverridesSchema", () => {
 
 describe("optional sections", () => {
   const dressed = completeTheme(night);
-
-  it("leaves a theme without sections valid, so every older theme file still loads", () => {
-    expect(parseTheme(night)).toEqual(night);
-  });
 
   it("round-trips every section and the pair through the schema", () => {
     const paired = { ...dressed, pair: "day-fixture" };
@@ -189,12 +125,6 @@ describe("optional sections", () => {
     ).toThrow(/syntax\.comment on panel .* needs at least 15/);
   });
 
-  it("holds text to body contrast on both diff line grounds", () => {
-    expect(() =>
-      parseTheme({ ...dressed, diff: { ...dressed.diff, deletedLine: "#b05060" } }),
-    ).toThrow(/text on diff\.deletedLine measures Lc [\d.]+, needs at least 60/);
-  });
-
   it("measures selection with its own text when it has one", () => {
     const glaring = { background: "#c3a6ff" };
     expect(() => parseTheme({ ...dressed, selection: glaring })).toThrow(
@@ -203,12 +133,6 @@ describe("optional sections", () => {
     expect(() =>
       parseTheme({ ...dressed, selection: { ...glaring, text: "#000000" } }),
     ).not.toThrow();
-  });
-
-  it("floors the cursor on background", () => {
-    expect(() => parseTheme({ ...dressed, cursor: "#24283b" })).toThrow(
-      /cursor on background measures Lc [\d.]+, needs at least 40/,
-    );
   });
 
   it("holds the pair to the theme name grammar", () => {

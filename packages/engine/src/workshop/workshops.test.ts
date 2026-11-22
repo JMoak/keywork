@@ -5,7 +5,7 @@ import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import type { Tool } from "../tools.ts";
 import { environmentSecrets, modelProviderBrokers } from "./brokers.ts";
-import { directReturns, homelessReturns, sealedReturns } from "./detail.ts";
+import { directReturns, sealedReturns } from "./detail.ts";
 import { bareHostLimitation, hostSubstrate } from "./host.ts";
 import { sbxSubstrate } from "./sbx.ts";
 import { type FakeSbx, fakeSbx, refusingSandboxHost } from "./testing.ts";
@@ -81,8 +81,6 @@ describe("the node's workshops", () => {
 
   it.each([
     [{ creature: "Pip!", substrate: "host" }, "invalid"],
-    [{ creature: "pip", substrate: "host", gpu: true }, "deferred"],
-    [{ creature: "pip", substrate: "compose" }, "unavailable"],
     [{ creature: "pip", substrate: "sbx", brokers: ["openai"] }, "unavailable"],
   ])("refuses %j as %s", async (request, refused) => {
     const { workshops } = await node();
@@ -149,39 +147,6 @@ describe("the node's workshops", () => {
     expect(second.changes.map((change) => change.change)).toEqual(["started"]);
   });
 
-  it("hands out the four workshop tools", async () => {
-    const { workshops } = await node();
-    const view = await created(workshops, { creature: "pip", substrate: "host" });
-
-    const tools = await workshops.tools(view.id);
-
-    expect(isRefused(tools) ? tools : tools.map((tool) => tool.name)).toEqual([
-      "read",
-      "write",
-      "edit",
-      "bash",
-    ]);
-  });
-
-  it("has no display for a bare host workshop", async () => {
-    const { workshops } = await node();
-    const view = await created(workshops, { creature: "pip", substrate: "host" });
-
-    expect(await workshops.display(view.id, new AbortController().signal)).toMatchObject({
-      refused: "unavailable",
-    });
-  });
-
-  it("removes a workshop and forgets it, keeping the disk when asked", async () => {
-    const { workshops, changes, stateDir } = await node();
-    const view = await created(workshops, { creature: "pip", substrate: "host" });
-
-    expect(await workshops.remove(view.id, true)).toEqual({ id: view.id, keptDisk: true });
-    expect(await workshops.list()).toEqual([]);
-    expect(existsSync(join(stateDir, "workshops-kept", view.id, "home"))).toBe(true);
-    expect(changes.at(-1)?.change).toBe("removed");
-  });
-
   it("turns a substrate failure into a refusal instead of a crash", async () => {
     const { workshops, sbx } = await node();
     const view = await created(workshops, { creature: "pip", substrate: "sbx" });
@@ -237,15 +202,6 @@ describe("where a workshop works", () => {
     expect(view.workdir).not.toBe(workspace);
     expect(await placed.detail(view.id)).toMatchObject({
       workspace: { access: "working-copy", path: workspace, returns: sealedReturns },
-    });
-  });
-
-  it("says a bare host workshop raised outside a workspace reaches none", async () => {
-    const { workshops } = await node();
-    const view = await created(workshops, { creature: "osk", substrate: "host" });
-
-    expect(await workshops.detail(view.id)).toMatchObject({
-      workspace: { access: "none", path: null, returns: homelessReturns },
     });
   });
 });

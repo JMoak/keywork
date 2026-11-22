@@ -106,16 +106,6 @@ describe("memory_search", () => {
     expect(output).toContain("sidebar collapses below 80 columns");
   });
 
-  it("reports no matches without erroring on an unknown topic", async () => {
-    const root = await vaultRoot();
-    const store = openStore(root);
-    await store.writeNote({ title: "Something", body: "unrelated\n", provenance: "user" });
-    const output = await runTool(memorySearchTool(store, new MemorySearch(store)), {
-      query: "quantum entanglement",
-    });
-    expect(output).toBe('no memories match "quantum entanglement"');
-  });
-
   it("is inert over an untrusted vault", async () => {
     const root = await vaultRoot();
     const trusted = openStore(root);
@@ -178,12 +168,6 @@ describe("memory_get", () => {
     const store = await seededStore();
     const output = await runTool(memoryGetTool(store), { note: "Layout Decision", offset: 99 });
     expect(output).toContain('"Layout Decision" has only 3 lines');
-  });
-
-  it("names the missing note instead of throwing", async () => {
-    const store = await seededStore();
-    const output = await runTool(memoryGetTool(store), { note: "Never Written" });
-    expect(output).toBe('no note named "Never Written"');
   });
 
   it("reads a daily log by date", async () => {

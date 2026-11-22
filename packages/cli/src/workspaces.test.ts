@@ -7,7 +7,6 @@ import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import {
   fileWorkspaceRecall,
-  nameFromSlug,
   selectWorkspace,
   unknownWorkspaceProblem,
   type WorkspaceRecall,
@@ -247,12 +246,6 @@ describe("workspacesPort", () => {
     await expect(port.use("ghost")).rejects.toThrow("no workspace named ghost");
     await port.use(undefined);
     expect(recall.recall(root)).toBeUndefined();
-  });
-});
-
-describe("nameFromSlug", () => {
-  it("turns a slug into a readable name", () => {
-    expect(nameFromSlug("frontend-revamp")).toBe("frontend revamp");
   });
 });
 

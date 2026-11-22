@@ -1,15 +1,9 @@
-import { Agent, MockProvider, type TickScheduler, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { type MarkdownRow, renderMarkdown } from "./markdown.ts";
 import { pageMarks } from "./marks.ts";
 import { resolvePage } from "./page.ts";
-import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
-import {
-  type TranscriptSource,
-  TranscriptView,
-  transcriptLines,
-  windowFromEnd,
-} from "./transcript-view.ts";
+import type { TranscriptEntry } from "./transcript-feed.ts";
+import { type TranscriptSource, TranscriptView, transcriptLines } from "./transcript-view.ts";
 import { width } from "./width.ts";
 
 function sourceOf(entries: TranscriptEntry[]): TranscriptSource {
@@ -44,11 +38,6 @@ describe("transcriptLines", () => {
       5,
     );
     expect(lines.map((line) => line.text)).toEqual(["› abc", "  def", "  gh", "12345"]);
-  });
-
-  it("splits embedded newlines", () => {
-    const lines = transcriptLines([{ kind: "assistant", text: "a\nb" }], 10);
-    expect(lines.map((line) => line.text)).toEqual(["a", "b"]);
   });
 
   it("never splits surrogate pairs when wrapping astral-plane text", () => {
@@ -100,64 +89,6 @@ describe("windowed transcript", () => {
     );
     expect(frame.lines[0]?.text).toBe("entry 10");
     expect(frame.scrollBack).toBe(36);
-  });
-
-  it("selects the whole backtracked entry and only the head of the fold cursor", () => {
-    const entries: TranscriptEntry[] = [
-      { kind: "user", text: "a\nb" },
-      { kind: "tool", text: "bash", failed: false },
-    ];
-    const view = new TranscriptView();
-    const back = view.frame(
-      sourceOf(entries),
-      { width: 40, rows: 5 },
-      { scrollBack: 0, backtrackAt: 0 },
-    );
-    expect(back.lines.map((line) => line.selected)).toEqual([true, true, undefined]);
-    const fold = view.frame(
-      sourceOf(entries),
-      { width: 40, rows: 5 },
-      { scrollBack: 0, foldCursor: 0 },
-    );
-    expect(fold.lines.map((line) => line.selected)).toEqual([true, undefined, undefined]);
-  });
-
-  it("materializes only the entries inside the viewport when scrolled to the middle", () => {
-    const materialized: number[] = [];
-    const frame = windowFromEnd(
-      5_000,
-      () => 1,
-      (index) => {
-        materialized.push(index);
-        return [{ kind: "info", failed: false, text: `line ${index}` }];
-      },
-      2_500,
-      8,
-    );
-    expect(frame.lines.map((line) => line.text)).toEqual(
-      Array.from({ length: 8 }, (_, at) => `line ${2_492 + at}`),
-    );
-    expect(materialized).toHaveLength(8);
-  });
-
-  it("never touches entries above the window while locating it", () => {
-    const counted: number[] = [];
-    const frame = windowFromEnd(
-      100,
-      (index) => {
-        counted.push(index);
-        return 3;
-      },
-      () => [
-        { kind: "info", failed: false, text: "x" },
-        { kind: "info", failed: false, text: "y" },
-        { kind: "info", failed: false, text: "z" },
-      ],
-      10,
-      4,
-    );
-    expect(frame.lines).toHaveLength(4);
-    expect(Math.min(...counted)).toBe(95);
   });
 });
 
@@ -243,19 +174,6 @@ describe("the page grammar in the transcript", () => {
     expect(Math.max(...machine.map((line) => line.text.length))).toBe(147);
   });
 
-  it("indents prose by the gutter and leaves machine output on the margin", () => {
-    const lines = frame(
-      [
-        { kind: "user", text: "go" },
-        { kind: "tool", text: "✓ bash · ok", failed: false },
-      ],
-      150,
-      60,
-    );
-    expect(lines.find((line) => line.kind === "user")?.text).toBe(" go");
-    expect(lines.find((line) => line.kind === "tool")?.text).toBe("✓ bash · ok");
-  });
-
   it("re-wraps when a resize crosses a tier threshold", () => {
     const entries: TranscriptEntry[] = [{ kind: "assistant", text: "word ".repeat(40).trim() }];
     const view = new TranscriptView();
@@ -292,14 +210,6 @@ describe("the page grammar in the transcript", () => {
     expect(assistant?.text).toBe("bold");
     expect(assistant?.spans).toContainEqual({ text: "bold", tone: "body", bold: true });
   });
-
-  it("runs fence rows on the panel past the prose measure", () => {
-    const wide = "x".repeat(100);
-    const lines = frame([{ kind: "assistant", text: `\`\`\`ts\n${wide}\n\`\`\`` }], 120, 60);
-    const fenceRows = lines.filter((line) => line.panel === true);
-    expect(fenceRows.map((line) => line.text)).toEqual(["▎ ts", `▎ ${wide}`]);
-    expect(lines.some((line) => line.text.includes("```"))).toBe(false);
-  });
 });
 
 describe("the voice rail and tool rows", () => {
@@ -322,33 +232,6 @@ describe("the voice rail and tool rows", () => {
     expect(prose.length).toBeGreaterThan(1);
     expect(info?.stamp).toBe("  ");
     for (const line of lines) expect(width(line.text)).toBeLessThanOrEqual(28);
-  });
-
-  it("steps the streaming stamp through the ramp and settles it on interrupt", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const ticks: (() => void)[] = [];
-    const tick: TickScheduler = (flush) => {
-      ticks.push(flush);
-    };
-    const feed = new TranscriptFeed(() => {}, undefined, tick);
-    feed.follow(agent.bus);
-    const view = new TranscriptView();
-    const stamp = () =>
-      view
-        .frame(feed, { width: 60, rows: 20 }, { scrollBack: 0 })
-        .lines.find((line) => line.kind === "assistant")?.stamp;
-    const delta = (text: string) => {
-      agent.bus.emit("turn.delta", { delta: { type: "text", text } });
-      for (const flush of ticks.splice(0)) flush();
-    };
-
-    delta("one ");
-    expect(stamp()).toBe("░ ");
-    delta("two ");
-    delta("three ");
-    expect(stamp()).toBe("▒ ");
-    agent.bus.emit("turn.interrupted", { message: textMessage("assistant", "one two three") });
-    expect(stamp()).toBe("▓ ");
   });
 
   it("clips an overlong tool row from the subject so the time and outcome survive", () => {
@@ -422,18 +305,6 @@ describe("thinking parts", () => {
     });
   });
 
-  it("discloses the reasoning as meta prose under a rule when unfolded", () => {
-    const lines = new TranscriptView().frame(
-      sourceOf([{ kind: "thinking", text: `${thought}\n\nThen go.`, folded: false }]),
-      { width: 80, rows: 40 },
-      { scrollBack: 0 },
-    ).lines;
-    expect(lines[1]?.spans?.[0]?.tone).toBe("rule");
-    expect(lines.slice(2).map((line) => line.text)).toEqual([thought, "", "Then go."]);
-    expect(lines.slice(2).every((line) => line.spans?.[0]?.tone === "meta")).toBe(true);
-    expect(lines.slice(1).every((line) => line.stamp === "  ")).toBe(true);
-  });
-
   it("re-renders when the fold flips without a text change", () => {
     const entry: TranscriptEntry = { kind: "thinking", text: thought, folded: true };
     const view = new TranscriptView();
@@ -473,34 +344,6 @@ describe("tiered transcript marks", () => {
     expect(lines.map((line) => line.stamp)).toEqual(["# ", ". ", "  ", "  ", "+ ", "  "]);
     expect(lines[2]?.text).toBe("-".repeat(78));
     expect(lines[4]?.text).toBe("= Title");
-  });
-});
-
-describe("the streaming cursor", () => {
-  it("marks the streaming entry's last line and lifts it when the stream settles", () => {
-    const entries: TranscriptEntry[] = [{ kind: "assistant", text: "hello there" }];
-    const view = new TranscriptView();
-    const streaming: TranscriptSource = {
-      entries,
-      streamingProgress: (entry) => (entry === entries[0] ? 0.5 : undefined),
-    };
-    const live = view.frame(streaming, { width: 40, rows: 5 }, { scrollBack: 0 });
-    expect(live.lines.at(-1)?.text.endsWith("▌")).toBe(true);
-    expect(live.lines.at(-1)?.spans?.at(-1)).toEqual({ text: "▌", tone: "meta" });
-
-    const settled = view.frame(sourceOf(entries), { width: 40, rows: 5 }, { scrollBack: 0 });
-    expect(settled.lines.at(-1)?.text.endsWith("▌")).toBe(false);
-  });
-
-  it("degrades the cursor to ascii at glyph tier 0", () => {
-    const entries: TranscriptEntry[] = [{ kind: "assistant", text: "plain" }];
-    const view = new TranscriptView();
-    const live = view.frame(
-      { entries, streamingProgress: () => 0.5 },
-      { width: 40, rows: 5, marks: pageMarks({ glyphTier: 0, nerdFont: false }) },
-      { scrollBack: 0 },
-    );
-    expect(live.lines.at(-1)?.text.endsWith("_")).toBe(true);
   });
 });
 

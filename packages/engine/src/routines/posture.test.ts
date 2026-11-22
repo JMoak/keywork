@@ -49,14 +49,6 @@ describe("a session's posture", () => {
     expect(sessionPosture("routine", "act")).toBe("act");
   });
 
-  it("is unconfined for the conversation, threads and children unless a run says so", () => {
-    expect(sessionPosture("conversation", undefined)).toBeUndefined();
-    expect(sessionPosture("thread", undefined)).toBeUndefined();
-    expect(sessionPosture("child", undefined)).toBeUndefined();
-    expect(sessionPosture(undefined, undefined)).toBeUndefined();
-    expect(sessionPosture(undefined, "read-only")).toBe("read-only");
-  });
-
   it("is decided for every kind of creature session, so a new kind cannot slip in unconfined", () => {
     const unprompted: Record<CreatureSessionKind, ToolPosture | undefined> = {
       conversation: undefined,

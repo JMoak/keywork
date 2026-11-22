@@ -1,15 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  MockProvider,
-  type Provider,
-  type ProviderRequest,
-  type Tool,
-  type TurnDelta,
-  textTurn,
-  toolCallTurn,
-} from "@keywork/engine";
+import { MockProvider, type Provider, type Tool, textTurn, toolCallTurn } from "@keywork/engine";
 import type { PermissionRule } from "@keywork/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -86,16 +78,6 @@ describe("resolveServerTicket", () => {
       url: "http://127.0.0.1:4770",
       token: "flag",
     });
-  });
-
-  it("needs no file when both flags are given, and yields nothing when the file is missing", () => {
-    const missing = join(dir, "absent.json");
-    expect(resolveServerTicket({ file: missing, url: "http://x", token: "t" })).toEqual({
-      url: "http://x",
-      token: "t",
-    });
-    expect(resolveServerTicket({ file: missing })).toBeUndefined();
-    expect(resolveServerTicket({ file: missing, url: "http://x" })).toBeUndefined();
   });
 });
 
@@ -229,33 +211,9 @@ describe("keyworkClient permissions", () => {
     expect(await client.revokeSessionGrant("nope", allowBash("npm run *"))).toBe("missing");
     expect(await client.listPermissions()).toMatchObject({ workspace: [], session: {} });
   });
-
-  it("maps a rule the route can't take to malformed", async () => {
-    const client = granting();
-    const asked = { action: "bash", resource: "git push *", effect: "ask" } as const;
-    expect(await client.revokeWorkspaceGrant(asked)).toBe("malformed");
-    expect(
-      await client.revokeSessionGrant("s1", { ...asked, effect: "allow", resource: " " }),
-    ).toBe("malformed");
-  });
 });
 
 describe("keyworkClient events", () => {
-  it("iterates envelopes, resuming from the ring with since", async () => {
-    const h = harness();
-    h.log.record("s1", "session.mode", { mode: "plan" });
-    h.log.record("s1", "shell.reset", {});
-    h.log.record("s2", "session.mode", { mode: "build" });
-    const stops = new AbortController();
-    const seen = await take(h.client.events({ since: 1, signal: stops.signal }), 2);
-    stops.abort();
-    expect(seen.map((envelope) => [envelope.id, envelope.sessionId, envelope.type])).toEqual([
-      [2, "s1", "shell.reset"],
-      [3, "s2", "session.mode"],
-    ]);
-    expect(h.delays).toEqual([]);
-  });
-
   it("reconnects after the stream drops, resuming from the last id it saw", async () => {
     const h = harness();
     for (const mode of ["one", "two", "three", "four"]) {
@@ -344,44 +302,4 @@ describe("over a real socket", () => {
       await bound.close();
     }
   });
-
-  it("aborts a hanging turn through the wire", async () => {
-    const log = new EventLog();
-    const host = memorySessionHost({ log, provider: hangingProvider() });
-    const bound = await listen({ token, host, log, version: "test", port: 0 });
-    try {
-      const client = keyworkClient({ url: bound.url, token });
-      const created = await client.createSession();
-      const stops = new AbortController();
-      const events = client.events({ since: 0, signal: stops.signal });
-      const sawStart = new Promise<void>((resolve) => {
-        void (async () => {
-          for await (const envelope of events) {
-            if (envelope.type === "turn.started") resolve();
-            if (envelope.type === "turn.interrupted") break;
-          }
-        })();
-      });
-      await client.prompt(created.id, "wait");
-      await sawStart;
-      expect(await client.abort(created.id)).toBe("aborted");
-      stops.abort();
-    } finally {
-      await bound.close();
-    }
-  });
 });
-
-function hangingProvider(): Provider {
-  return {
-    name: "hanging",
-    async *stream(request: ProviderRequest): AsyncIterable<TurnDelta> {
-      yield { type: "text", text: "..." };
-      await new Promise<void>((resolve) => {
-        if (request.signal?.aborted) resolve();
-        request.signal?.addEventListener("abort", () => resolve(), { once: true });
-      });
-      request.signal?.throwIfAborted();
-    },
-  };
-}

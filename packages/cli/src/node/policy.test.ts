@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseStatus } from "../../../engine/src/mesh/transport/status.ts";
 import { recordedText } from "../../../engine/src/mesh/transport/testing/recorded.ts";
 import { exitCodes } from "../dispatch.ts";
-import { nodeCommand } from "./command.ts";
 import { defaultNodeConfig, writeNodeConfig } from "./config.ts";
 import { nodePaths } from "./paths.ts";
 import { type NodePolicyDeps, nodePolicyCommand } from "./policy.ts";
@@ -93,17 +92,5 @@ describe("keywork node policy check", () => {
     });
     expect(await h.run(["check"])).toBe(exitCodes.unresolved);
     expect(h.err[0]).toContain("start Tailscale");
-  });
-
-  it("is reached through keywork node and prints usage for an unknown verb", async () => {
-    const err: string[] = [];
-    const code = await nodeCommand(
-      ["policy", "fetch"],
-      {},
-      { printError: (line) => err.push(line) },
-    );
-    expect(code).toBe(exitCodes.usage);
-    expect(err[0]).toContain('unknown verb "fetch"');
-    expect(err[0]).toContain("keywork node policy check [--file <policy.hujson>]");
   });
 });

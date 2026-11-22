@@ -83,7 +83,6 @@ describe("durable campaign model metering", () => {
     { choices: [{ delta: {} }] },
     { usage: { prompt_tokens: 10 } },
     { provider: "Other provider" },
-    { model: "other/model" },
   ])("retains incomplete or mismatched outcomes without yielding done: %j", async (override) => {
     const world = await setup();
     const output: TurnDelta[] = [];

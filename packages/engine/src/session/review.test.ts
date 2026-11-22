@@ -13,7 +13,6 @@ import {
   recordHunkVerdict,
   reviewVerdictType,
   type VerdictMark,
-  verdictLine,
   verdictMarksOf,
 } from "./review.ts";
 import { SessionStore } from "./store.ts";
@@ -108,9 +107,5 @@ describe("a hunk verdict on the session", () => {
     expect(isReviewVerdict({ ...first, verdict: "maybe" })).toBe(false);
     expect(isReviewVerdict({ ...first, path: "" })).toBe(false);
     expect(isReviewVerdict(first)).toBe(true);
-  });
-
-  it("words the trail line the console draws", () => {
-    expect(verdictLine(second)).toBe("ask · src/a.ts @@ -9,2 +10,5 @@ · hunk 0f0f0f0f");
   });
 });

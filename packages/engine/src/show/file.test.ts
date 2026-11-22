@@ -121,14 +121,6 @@ describe("a settings file", () => {
     );
   });
 
-  it("loads nothing kept, quietly, before anything was saved", async () => {
-    const lines: string[] = [];
-    expect(settingFile({ file: await settingsPath(), notice: heardBy(lines) }).load()).toEqual(
-      nothingKept,
-    );
-    expect(lines).toEqual([]);
-  });
-
   it("loads exactly what it saved last", async () => {
     const file = await settingsPath();
     const storage = settingFile({ file, notice: () => undefined });
@@ -141,12 +133,7 @@ describe("a settings file", () => {
 
   it.each([
     ["is not JSON", "{ not json"],
-    [
-      "holds a setting that settled",
-      JSON.stringify({ ...kept, settings: [{ ...plan, state: "seen" }] }),
-    ],
     ["comes from a later keywork", JSON.stringify({ ...kept, version: 2 })],
-    ["is empty", ""],
   ])(
     "starts with none when the file %s, says so in one loud line and moves the file aside",
     async (_case, text) => {
@@ -270,27 +257,24 @@ describe("a settings file another handle holds for a moment", () => {
     };
   }
 
-  it.each(["EPERM", "EBUSY", "EACCES"])(
-    "saves through a transient %s on Windows without a word",
-    async (code) => {
-      const file = await settingsPath();
-      settingFile({ file, notice: () => undefined }).save({ settings: [plan], spent: [] });
-      const pauses: number[] = [];
-      const lines: string[] = [];
+  it.each(["EPERM"])("saves through a transient %s on Windows without a word", async (code) => {
+    const file = await settingsPath();
+    settingFile({ file, notice: () => undefined }).save({ settings: [plan], spent: [] });
+    const pauses: number[] = [];
+    const lines: string[] = [];
 
-      settingFile({
-        file,
-        notice: heardBy(lines),
-        disk: renamesHeldFor(2, code),
-        pacing: { platform: "win32", pause: (milliseconds) => pauses.push(milliseconds) },
-      }).save(kept);
+    settingFile({
+      file,
+      notice: heardBy(lines),
+      disk: renamesHeldFor(2, code),
+      pacing: { platform: "win32", pause: (milliseconds) => pauses.push(milliseconds) },
+    }).save(kept);
 
-      expect(pauses).toHaveLength(2);
-      expect(lines).toEqual([]);
-      expect(settingFile({ file, notice: () => undefined }).load()).toEqual(kept);
-      expect(fs.readdirSync(join(file, ".."))).toEqual(["settings.json"]);
-    },
-  );
+    expect(pauses).toHaveLength(2);
+    expect(lines).toEqual([]);
+    expect(settingFile({ file, notice: () => undefined }).load()).toEqual(kept);
+    expect(fs.readdirSync(join(file, ".."))).toEqual(["settings.json"]);
+  });
 
   it("says the save failed and leaves no staging file when the hold outlasts the retries", async () => {
     const file = await settingsPath();

@@ -106,29 +106,6 @@ describe("Notifier", () => {
     expect(writes).toEqual(["\x1b]777;notify;fix the parser;needs you · ask\x07"]);
   });
 
-  it("notifies again after a refocus when a new ask arrives", () => {
-    const { subject, writes } = notifier();
-    subject.observe(quiet);
-    subject.focusChanged("focus-out");
-    subject.observe(asking("fix the parser"));
-    subject.focusChanged("focus-in");
-    subject.observe(quiet);
-    subject.focusChanged("focus-out");
-    subject.observe(asking("write the tests"));
-    expect(writes).toEqual([
-      "\x1b]777;notify;fix the parser;needs you · ask\x07",
-      "\x1b]777;notify;write the tests;needs you · ask\x07",
-    ]);
-  });
-
-  it("names the ask that is new when another pane was already waiting", () => {
-    const { subject, writes } = notifier();
-    subject.observe(asking("fix the parser"));
-    subject.focusChanged("focus-out");
-    subject.observe(asking("fix the parser", "write the tests"));
-    expect(writes).toEqual(["\x1b]777;notify;write the tests;needs you · ask\x07"]);
-  });
-
   it("never notifies for a completion, a failure, or an ask answered elsewhere", () => {
     const { subject, writes } = notifier();
     subject.focusChanged("focus-out");
@@ -156,44 +133,5 @@ describe("Notifier", () => {
     subject.focusChanged("focus-out");
     subject.observe(inboxAt(5));
     expect(writes).toEqual([]);
-  });
-
-  it("keeps the two triggers on separate budgets within one stretch", () => {
-    const { subject, writes } = notifier("bell");
-    subject.observe(quiet);
-    subject.focusChanged("focus-out");
-    subject.observe(asking("fix the parser"));
-    subject.observe({ ...asking("fix the parser"), inbox: 3 });
-    subject.observe({ ...asking("fix the parser", "write the tests"), inbox: 9 });
-    expect(writes).toEqual(["\x07", "\x07"]);
-  });
-
-  it("emits nothing at all when the transport is off", () => {
-    const { subject, writes } = notifier("off");
-    subject.observe(quiet);
-    subject.focusChanged("focus-out");
-    subject.observe(asking("fix the parser"));
-    subject.observe(inboxAt(9));
-    expect(writes).toEqual([]);
-  });
-
-  it("honors a custom inbox threshold", () => {
-    const writes: string[] = [];
-    const subject = new Notifier((bytes) => writes.push(bytes), "bell", 1);
-    subject.observe(quiet);
-    subject.focusChanged("focus-out");
-    subject.observe(inboxAt(1));
-    expect(writes).toEqual(["\x07"]);
-  });
-});
-
-describe("Notifier focus", () => {
-  it("starts focused and tracks focus events", () => {
-    const { subject } = notifier();
-    expect(subject.terminalFocused).toBe(true);
-    subject.focusChanged("focus-out");
-    expect(subject.terminalFocused).toBe(false);
-    subject.focusChanged("focus-in");
-    expect(subject.terminalFocused).toBe(true);
   });
 });

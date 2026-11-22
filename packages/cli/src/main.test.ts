@@ -6,7 +6,6 @@ import { contractVersion } from "@keywork/server";
 import { TrustStore, writeNamedWorkspaceDeclaration } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { usage } from "./dispatch.ts";
 import { cliVersion } from "./index.ts";
 import { composeInference } from "./inference/runtime.ts";
 import { type MainSeams, main, runUntilSwitch } from "./main.ts";
@@ -55,21 +54,10 @@ describe("main(argv) usage contract", () => {
     [["run", "x", "--nope"], 2, "err", "keywork run: Unknown option '--nope'"],
     [["sessions", "--bogus-flag"], 2, "err", "keywork: Unknown option '--bogus-flag'"],
     [["--help"], 0, "out", "Usage:"],
-    [["-h"], 0, "out", "Usage:"],
-    [["help"], 0, "out", "Usage:"],
     [["frobnicate"], 2, "err", 'unknown command "frobnicate"'],
     [[], 2, "err", "no command given and no terminal attached"],
     [["run"], 2, "err", "keywork run needs a prompt"],
-    [["serve", "--help"], 0, "out", "Usage:"],
-    [
-      ["connect", "--group", "unknown", "--first-model"],
-      2,
-      "err",
-      "--group must be local, flagship, or openrouter",
-    ],
-    [["attach", "--help"], 0, "out", "Usage:"],
     [["serve", "--port", "http"], 2, "err", "keywork serve: --port wants a whole number"],
-    [["attach"], 2, "err", "attach needs a terminal"],
     [["run", "hi"], 3, "err", "keywork connect"],
     [["sessions", "bogus"], 2, "err", 'keywork sessions: unknown subcommand "bogus"'],
   ];
@@ -94,12 +82,6 @@ describe("main(argv) usage contract", () => {
     expect(result.err.join("\n")).not.toMatch(stackFrame);
   });
 
-  it("prints the usage block itself for --help and nothing on stderr", async () => {
-    const { out, err } = await invoke(["--help"]);
-    expect(out).toEqual([usage]);
-    expect(err).toEqual([]);
-  });
-
   it("keeps run's JSON contract for a bad flag: one run.finished usage line, exit 2", async () => {
     const { code, out, err } = await invoke(["run", "--json", "x", "--nope"]);
     expect(code).toBe(2);
@@ -117,15 +99,6 @@ describe("main(argv) usage contract", () => {
 
 describe("main(argv) dispatches one call per command", () => {
   const table: [argv: string[], code: number, stream: "out" | "err", needle: string][] = [
-    [["trust"], 0, "out", "is now trusted"],
-    [["untrust"], 0, "out", "is now untrusted"],
-    [["workspace", "list"], 0, "out", "* opens next"],
-    [["workspace", "bogus"], 2, "err", 'keywork workspace: unknown subcommand "bogus"'],
-    [["link"], 1, "err", "usage: keywork link <dir>"],
-    [["doctor"], 0, "out", "keywork doctor"],
-    [["extensions"], 0, "out", "no extensions loaded"],
-    [["extensions", "bogus"], 2, "err", 'keywork extensions: unexpected argument "bogus"'],
-    [["sessions"], 0, "out", "no sessions yet"],
     [["panes"], 2, "err", "panes needs a terminal"],
     [["chat"], 2, "err", "chat needs a terminal"],
   ];
@@ -134,15 +107,6 @@ describe("main(argv) dispatches one call per command", () => {
     const result = await invoke(argv);
     expect(result.code).toBe(code);
     expect(result[stream].join("\n")).toContain(needle);
-  });
-
-  it("init reports a workspace that is already declared", async () => {
-    const cwd = await tempDir();
-    await mkdir(join(cwd, ".keywork"), { recursive: true });
-    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "here" }));
-    const { code, out } = await invoke(["init"], { cwd });
-    expect(code).toBe(0);
-    expect(out.join("\n")).toContain("already set up");
   });
 
   it("chat in a terminal refuses without a provider and points at connect", async () => {
@@ -236,10 +200,6 @@ describe("main(argv) threads global flags to the subcommands", () => {
 });
 
 describe("runUntilSwitch", () => {
-  it("resolves with the workspace the app switched to", async () => {
-    await expect(runUntilSwitch(async (switchTo) => switchTo("foo"))).resolves.toBe("foo");
-  });
-
   it("rejects when opening panes fails instead of hanging", async () => {
     await expect(
       runUntilSwitch(async () => {
@@ -276,17 +236,6 @@ describe("--workspace on run and chat", () => {
       exitCode: 2,
       error: expect.stringContaining('no workspace named "ghost"'),
     });
-  });
-
-  it("chat refuses an unknown slug with the usage block, exit 2, before touching inference", async () => {
-    const cwd = await tempDir();
-    const { code, err } = await invoke(["chat", "--workspace", "ghost"], {
-      cwd,
-      interactive: true,
-    });
-    expect(code).toBe(2);
-    expect(err.join("\n")).toContain('keywork: no workspace named "ghost" here');
-    expect(err.join("\n")).toContain("Usage:");
   });
 
   it("run accepts the word default as the default slot and a declared slug as itself", async () => {

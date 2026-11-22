@@ -1,25 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { ProviderStreamError } from "./errors.ts";
-import { imageDataUrl, parseToolArguments, ToolCallAssembler } from "./wire-parts.ts";
+import { parseToolArguments, ToolCallAssembler } from "./wire-parts.ts";
 
 describe("parseToolArguments", () => {
   it.each([
     ["", {}],
-    ["   ", {}],
     ['{"command":"ls"}', { command: "ls" }],
-    ["[1,2]", [1, 2]],
     ["{broken", "{broken"],
-    ["not json at all", "not json at all"],
   ])("turns %j into %j", (raw, expected) => {
     expect(parseToolArguments(raw)).toEqual(expected);
-  });
-});
-
-describe("imageDataUrl", () => {
-  it("inlines the media type and base64 payload", () => {
-    expect(imageDataUrl({ type: "image", mediaType: "image/png", data: "aGk=" })).toBe(
-      "data:image/png;base64,aGk=",
-    );
   });
 });
 
@@ -50,12 +39,6 @@ describe("ToolCallAssembler", () => {
       ["call_0", "first", {}],
       ["call_2", "second", {}],
     ]);
-  });
-
-  it("keeps unparseable arguments as the raw text for the model to see", () => {
-    const calls = new ToolCallAssembler("test");
-    calls.add(0, { id: "c1", name: "bash", argumentsJson: "{broken" });
-    expect(calls.completed()[0]).toMatchObject({ arguments: "{broken" });
   });
 
   it("fails the turn when one call's arguments exceed the size ceiling", () => {

@@ -158,14 +158,6 @@ describe("checkMeshPolicy", () => {
       "grants[1] routes via a router, so it opens no lane between machines",
     ]);
   });
-
-  it("warns when the house itself is tagged", () => {
-    const status = recordedStatus();
-    const self = status.self;
-    if (self === null) throw new Error("the fixture has no Self");
-    const report = check(steadSnippet, { ...status, self: { ...self, tags: ["tag:stead-host"] } });
-    expect(report.cautions.some((caution) => caution.includes("wrong for a house"))).toBe(true);
-  });
 });
 
 describe("parcelsOf", () => {

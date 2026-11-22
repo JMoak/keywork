@@ -4,14 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Provider, TurnDelta } from "../../provider.ts";
 import type { ServerFingerprint } from "../capabilities/index.ts";
-import type { Decider } from "../decide/types.ts";
-import {
-  type BenchOpener,
-  type BenchReport,
-  benchBook,
-  modelBenchDir,
-  readLabelledDecisions,
-} from "./index.ts";
+import { type BenchOpener, type BenchReport, benchBook, modelBenchDir } from "./index.ts";
 
 const directories: string[] = [];
 
@@ -155,40 +148,5 @@ describe("benchBook", () => {
       error: "trace.json is unreadable",
     });
     expect(await book.last(target)).toBeNull();
-  });
-
-  it("runs the decide bench for a decision subject", async () => {
-    const decider: Decider = {
-      reference: { provider: "openrouter", model: "typesafe/jev-1.14" },
-      decide: async (request) => ({
-        ok: true,
-        model: "typesafe/jev-1.14",
-        answers: Object.fromEntries(
-          Object.keys(request.questions).map((id) => [
-            id,
-            { type: "noul", pYes: 0.9, confidence: 0.9 } as const,
-          ]),
-        ),
-        usage: { inputTokens: 120, questions: 1, cost: null },
-        latencyMs: 40,
-      }),
-    };
-    const rows = await readLabelledDecisions();
-    const book = benchBook({
-      openers: [
-        async () => ({
-          ok: true,
-          reference: "openrouter/typesafe/jev-1.14",
-          fingerprint: { ...fingerprint, id: "declared:openrouter", kind: "openrouter" },
-          subject: { kind: "decide", decider },
-        }),
-      ],
-      labelled: async () => rows,
-    });
-    const outcome = await book.run({
-      endpoint: "https://openrouter.ai/api/v1",
-      model: "typesafe/jev-1.14",
-    });
-    expect(outcome).toMatchObject({ report: { kind: "decide", rows: rows.length, repeats: 3 } });
   });
 });

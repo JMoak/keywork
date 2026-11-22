@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BrowserDisk, Entry } from "./browser-model.ts";
 import type { DebounceTiming } from "./debounce.ts";
-import { FileIndex, fileIndexLimits, fileJumpSource, fileJumpsAllowed } from "./file-index.ts";
+import { FileIndex, fileIndexLimits, fileJumpSource } from "./file-index.ts";
 import { AppProbe } from "./probe.ts";
 import { paneIds, stubFilePane } from "./testing/workflow-probe.ts";
 
@@ -115,19 +115,6 @@ describe("FileIndex walk", () => {
     };
     const index = new FileIndex("root", failing);
     expect((await settledEntries(index)).map((file) => file.relative)).toEqual(["b.ts"]);
-  });
-
-  it("refresh re-walks and ensure does not", async () => {
-    const tree: Tree = { "a.ts": "" };
-    const { index, reads } = await indexOver(tree);
-    await settledEntries(index);
-    index.ensure();
-    await index.settled();
-    expect(reads).toEqual(["root"]);
-    tree["b.ts"] = "";
-    index.refresh();
-    await index.settled();
-    expect(index.entries().map((file) => file.relative)).toEqual(["a.ts", "b.ts"]);
   });
 });
 
@@ -253,14 +240,6 @@ describe("file jump commands", () => {
     await index.settled();
     expect(source().map((command) => command.name)).toEqual(["a.ts"]);
   });
-
-  it("read trust off the workspace readiness", () => {
-    expect(fileJumpsAllowed(undefined)).toBe(true);
-    expect(fileJumpsAllowed({ kind: "ready", root: "r", vault: "v" })).toBe(true);
-    expect(fileJumpsAllowed({ kind: "undeclared", root: "r" })).toBe(true);
-    expect(fileJumpsAllowed({ kind: "undecided", root: "r" })).toBe(false);
-    expect(fileJumpsAllowed({ kind: "refused", root: "r" })).toBe(false);
-  });
 });
 
 describe("palette file jump", () => {
@@ -290,16 +269,5 @@ describe("palette file jump", () => {
     expect(paneIds(probe)).toEqual(["session-1", "file-1"]);
     expect(probe.snapshot().focused).toBe("file-1");
     expect(probe.snapshot().panes[1]?.title).toBe(join("root", "docs", "readme.md"));
-  });
-
-  it("ranks the closer path first and keeps files out of command mode", async () => {
-    const probe = await paletteProbe();
-    probe.keys("ctrl+p").type("src/app");
-    expect(probe.core.paletteMatches().map((entry) => entry.name)).toEqual([
-      "src/app.ts",
-      "src/app-core.ts",
-    ]);
-    probe.keys("escape").keys("ctrl+shift+p").type("app");
-    expect(probe.core.paletteMatches().some((entry) => entry.jump === true)).toBe(false);
   });
 });

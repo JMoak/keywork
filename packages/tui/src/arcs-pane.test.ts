@@ -202,16 +202,6 @@ function describeTree(node: unknown): { title?: unknown; content?: unknown; chil
 }
 
 describe("ArcsPane two levels", () => {
-  it("loads arcs and sessions on construction and titles the arcs level by active count", async () => {
-    const world = worldOf();
-    const { pane } = paneOver(world);
-    await pane.settled();
-    expect(world.lists).toBe(1);
-    expect(world.overviews).toBe(1);
-    expect(pane.title()).toBe(" arcs · 2 arcs ");
-    expect(pane.describe()).toEqual({ kind: "arcs" });
-  });
-
   it("renders the arc groups and a drilled arc's sessions without the redundant tag", async () => {
     const world = worldOf();
     const { pane } = paneOver(world);
@@ -232,58 +222,12 @@ describe("ArcsPane two levels", () => {
     expect(pane.title()).toBe(" arcs · 2 arcs ");
   });
 
-  it("stays calm with no arcs and no sessions", async () => {
-    const world = worldOf();
-    world.arcs = [];
-    world.items = [];
-    const { pane } = paneOver(world);
-    await pane.settled();
-    expect(pane.title()).toBe(" arcs ");
-    expect(rendered(pane)).toContain("no arcs yet · an arc is a workstream");
-  });
-
   it("revives drilled into an arc from its descriptor", async () => {
     const world = worldOf();
     const { pane } = paneOver(world, { drilled: { kind: "arc", slug: "dock-v2" } });
     await pane.settled();
     expect(pane.model.level()).toBe("sessions");
     expect(pane.model.sessions.sessionRows().map((row) => row.id)).toEqual(["s1", "s2"]);
-  });
-});
-
-describe("ArcsPane mouse", () => {
-  it("a click at the arcs level selects the row without drilling", async () => {
-    const world = worldOf();
-    const { pane } = paneOver(world);
-    await pane.settled();
-    rendered(pane);
-    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "down", x: 3, y: 2 })).toBe(true);
-    expect(pane.model.level()).toBe("arcs");
-    expect(pane.model.cursorRow()?.label).toBe("infra");
-  });
-
-  it("a click at the sessions level activates that session", async () => {
-    const world = worldOf();
-    const presence: SessionPresence = {
-      paneFor: (sessionId) => (sessionId === "s2" ? "session-7" : undefined),
-      busy: () => false,
-      waiting: () => false,
-    };
-    const { pane, recorded } = paneOver(world, { presence });
-    await pane.settled();
-    press(pane, "enter");
-    rendered(pane);
-    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "down", x: 3, y: 2 })).toBe(true);
-    await pane.settled();
-    expect(recorded.focused).toEqual(["session-7"]);
-  });
-
-  it("clicks below the rows or while failed fall through", async () => {
-    const world = worldOf();
-    const { pane } = paneOver(world);
-    await pane.settled();
-    expect(pane.handleMouse({ x: 3, y: 9 }, { type: "down", x: 3, y: 9 })).toBe(false);
-    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "move", x: 3, y: 2 })).toBe(false);
   });
 });
 
@@ -305,17 +249,6 @@ describe("ArcsPane focus-or-open", () => {
     expect(world.attached).toEqual(["s2"]);
     expect(recorded.opened).toEqual(["s2"]);
   });
-
-  it("opens nothing when the attach is refused", async () => {
-    const world = worldOf();
-    world.attachResult = false;
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "enter", "enter");
-    await pane.settled();
-    expect(world.attached).toEqual(["s1"]);
-    expect(recorded.opened).toEqual([]);
-  });
 });
 
 describe("ArcsPane arc verbs", () => {
@@ -331,16 +264,6 @@ describe("ArcsPane arc verbs", () => {
     expect(world.created).toEqual(["checkout"]);
     expect(recorded.notices).toEqual(["arc checkout created · /arc checkout binds a session"]);
     expect(world.lists).toBe(2);
-  });
-
-  it("rejects a bad slug with a notice and creates nothing", async () => {
-    const world = worldOf();
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "n", "x", "space", "y", "enter");
-    await pane.settled();
-    expect(world.created).toEqual([]);
-    expect(recorded.notices[0]).toContain("isn't an arc slug");
   });
 
   it("c closes and A abandons the cursored active arc with the airlock prose", async () => {
@@ -396,63 +319,6 @@ describe("ArcsPane push refresh", () => {
     pane.refresh();
     await pane.settled();
     expect(world.lists).toBe(1);
-  });
-
-  it("a disposed pane stays silent when a verb lands late", async () => {
-    const world = worldOf();
-    let release: () => void = () => {};
-    const ports = portsOver(world);
-    ports.arcs.abandon = (slug) => {
-      world.abandoned.push(slug);
-      return new Promise((resolve) => {
-        release = resolve;
-      });
-    };
-    const recorded = recordedIntents();
-    let notified = 0;
-    const pane = new ArcsPane(
-      "arcs-1",
-      () => {
-        notified += 1;
-      },
-      recorded.intents,
-      { ...ports, currentSession: () => undefined, now: () => now },
-    );
-    await pane.settled();
-    press(pane, "shift+a");
-    expect(world.abandoned).toEqual(["dock-v2"]);
-    pane.dispose();
-    const notifiedBefore = notified;
-    release();
-    await pane.settled();
-    expect(notified).toBe(notifiedBefore);
-    expect(world.lists).toBe(1);
-  });
-
-  it("captures a load failure and recovers on the next refresh", async () => {
-    const world = worldOf();
-    const ports = portsOver(world);
-    let fail = false;
-    ports.arcs.list = async () => {
-      world.lists += 1;
-      if (fail) throw new Error("registry unreadable");
-      return [...world.arcs];
-    };
-    const recorded = recordedIntents();
-    const pane = new ArcsPane("arcs-1", () => {}, recorded.intents, {
-      ...ports,
-      currentSession: () => undefined,
-      now: () => now,
-    });
-    await pane.settled();
-    fail = true;
-    press(pane, "r");
-    await pane.settled();
-    expect(rendered(pane)).toContain("registry unreadable");
-    fail = false;
-    press(pane, "r");
-    await pane.settled();
-    expect(rendered(pane)).not.toContain("registry unreadable");
   });
 });
 

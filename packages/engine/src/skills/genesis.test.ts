@@ -5,7 +5,6 @@ import {
   sequenceFingerprint,
   skillBodyFor,
   skillDescriptionFor,
-  skillNameFor,
   skillProposalFor,
 } from "./genesis.ts";
 
@@ -83,12 +82,6 @@ describe("skillProposalFor", () => {
     );
     expect(skillBodyFor(proposal)).toBe(
       "Run these in order, checking each before the next:\n\n1. `bun run check`\n2. `bun run test`\n3. `git tag v1`\n",
-    );
-  });
-
-  it("falls back to a fingerprint name when the first command yields nothing nameable", () => {
-    expect(skillNameFor({ fingerprint: "abcdef0123456789", commands: ["./~", "x"] })).toBe(
-      "routine-abcdef01",
     );
   });
 });

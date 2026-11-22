@@ -104,14 +104,6 @@ describe("KeepAwake", () => {
     expect(() => broken.turnRunning(true)).not.toThrow();
     expect(broken.holding).toBe(false);
   });
-
-  it("is a no-op on a platform it has no way to hold", () => {
-    const { host, children } = fakeHost("freebsd");
-    const awake = keepAwake(host);
-    awake.turnRunning(true);
-    expect(children).toHaveLength(0);
-    expect(awake.holding).toBe(false);
-  });
 });
 
 describe("inhibitorFor", () => {

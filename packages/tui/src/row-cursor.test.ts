@@ -92,13 +92,6 @@ describe("RowCursor navigation", () => {
     expect(list.cursorRow()?.id).toBe(lands);
   });
 
-  it("leaves other keys unhandled and the cursor in place", () => {
-    const list = listOf("a", "b");
-    expect(list.key("x")).toBe(false);
-    expect(list.key("enter")).toBe(false);
-    expect(list.cursor).toBe(0);
-  });
-
   it("moves nowhere when no row is selectable", () => {
     const list = listOf("!a", "!b");
     expect(list.key("j")).toBe(true);

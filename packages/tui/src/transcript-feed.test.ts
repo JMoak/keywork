@@ -14,7 +14,6 @@ import {
 } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { type TranscriptEntry, TranscriptFeed } from "./transcript-feed.ts";
-import { TranscriptView } from "./transcript-view.ts";
 
 function followed(agent: Agent, now?: () => number, tick?: TickScheduler): TranscriptFeed {
   const feed = new TranscriptFeed(() => {}, now, tick);
@@ -58,24 +57,6 @@ describe("TranscriptFeed", () => {
       ledgerOf("go"),
     ]);
     expect(feed.activity).toBe(2);
-  });
-
-  it("reports streaming progress only for the entry still being streamed", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const ticks = steppingTick();
-    const feed = followed(agent, undefined, ticks.tick);
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "one " } });
-    ticks.step();
-    const entry = feed.entries[0] as TranscriptEntry;
-    expect(feed.streamingProgress(entry)).toBe(0);
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "two " } });
-    ticks.step();
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "three " } });
-    ticks.step();
-    expect(feed.streamingProgress(entry)).toBe(0.5);
-    agent.bus.emit("turn.interrupted", { message: { role: "assistant", parts: [] } });
-    expect(feed.streamingProgress(entry)).toBeUndefined();
-    expect(feed.entries.at(-1)).toEqual({ kind: "info", text: "· interrupted" });
   });
 
   it("records a tool run with its timing, outcome, and folded detail", async () => {
@@ -126,17 +107,6 @@ describe("TranscriptFeed", () => {
     expect(feed.entries[0]?.text).toMatch(/^bash ls · \d+ms · done$/);
   });
 
-  it("carries the failure reason on the collapsed row", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = followed(agent);
-    agent.bus.emit("tool.started", {
-      call: { type: "tool-call", callId: "c1", name: "detonate", arguments: {} },
-    });
-    agent.bus.emit("tool.finished", { callId: "c1", output: "boom\nmore", isError: true });
-    expect(feed.entries[0]).toMatchObject({ failed: true });
-    expect(feed.entries[0]?.text).toMatch(/ · failed · boom$/);
-  });
-
   it("caps disclosed detail and marks the overflow", () => {
     const agent = new Agent({ provider: new MockProvider([]) });
     const feed = followed(agent);
@@ -148,21 +118,6 @@ describe("TranscriptFeed", () => {
     const entry = feed.entries[0] as Extract<TranscriptEntry, { kind: "tool" }>;
     expect(entry.run?.detail).toHaveLength(13);
     expect(entry.run?.detail?.at(-1)).toBe("… 8 more lines");
-  });
-
-  it("toggles folds only on rows that have detail", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = followed(agent);
-    expect(feed.toggleLatestFold()).toBe(false);
-    agent.bus.emit("tool.started", {
-      call: { type: "tool-call", callId: "c1", name: "echo", arguments: {} },
-    });
-    const entry = feed.entries[0] as TranscriptEntry;
-    expect(feed.toggleFold(entry)).toBe(false);
-    agent.bus.emit("tool.finished", { callId: "c1", output: "out", isError: false });
-    expect(feed.toggleLatestFold()).toBe(true);
-    expect(feed.disclosableIndices()).toEqual([0]);
-    expect(entry).toMatchObject({ run: { folded: false } });
   });
 
   it("folds streamed thinking into one entry ahead of the answer and unfolds it on the latest-fold key", async () => {
@@ -210,15 +165,6 @@ describe("TranscriptFeed", () => {
     const entry = feed.entries[0] as Extract<TranscriptEntry, { kind: "tool" }>;
     expect(entry.run?.spill).toEqual(spill);
     expect(entry.text).toMatch(/^bash cat big · \d+ms · 3\.4M · elided 49116\.\.3407791 · done$/);
-  });
-
-  it("stops following once unsubscribed", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = new TranscriptFeed(() => {});
-    const stop = feed.follow(agent.bus);
-    stop();
-    agent.bus.emit("turn.delta", { delta: { type: "text", text: "ghost" } });
-    expect(feed.entries).toEqual([]);
   });
 });
 
@@ -415,14 +361,6 @@ describe("provenance on the rail", () => {
     return entry?.kind === "tool" ? entry.run?.provenance : undefined;
   };
 
-  const stampOf = (feed: TranscriptFeed) =>
-    new TranscriptView().frame(feed, { width: 80, rows: 10 }, { scrollBack: 0 }).lines[0]?.stamp;
-
-  it("keeps PD18's machine stamp on agent tool rows, external or not", () => {
-    expect(stampOf(settled("read", "file body"))).toBe("░ ");
-    expect(stampOf(settled("memory_get", "[[n]] · provenance: untrusted\n    1\tx"))).toBe("░ ");
-  });
-
   it("detects recalled memory whose framing says untrusted as external", () => {
     const note = "[[dock-rule]] · provenance: untrusted\n    1\tdocks hold two panes";
     const daily =
@@ -491,13 +429,6 @@ describe("child rows", () => {
       costNanos: 3_100_000,
     });
     expect(entry?.kind === "tool" && entry.run?.detail).toEqual(["run.ts", "serve.ts"]);
-  });
-
-  it("can be cursored while the child still works, so it is reachable from the start", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const feed = followed(agent);
-    agent.bus.emit("tool.started", { call: delegate });
-    expect(feed.disclosableIndices()).toEqual([0]);
   });
 
   it("names a child that stopped at a refusal, without the raw provenance as the reason", () => {

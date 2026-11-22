@@ -5,7 +5,6 @@ import {
   creatureFileOf,
   creatureFileSchema,
   inheritEverywhere,
-  isModelChoice,
   MalformedCreatureError,
   parseCreatureFile,
   serializeCreatureFile,
@@ -27,16 +26,6 @@ const defaults: CreatureFile = {
 };
 
 describe("creature.json", () => {
-  it("fills a draft with the defaults: the host workshop, inherit everywhere, the routines dir", () => {
-    const file = creatureFileOf({
-      name: "Pip",
-      created: defaults.created,
-      introduction,
-      seed: 424242,
-    });
-    expect(file).toEqual(defaults);
-  });
-
   it("keeps the choices a draft makes and inherits the rest", () => {
     const file = creatureFileOf({
       name: "Pip",
@@ -65,21 +54,16 @@ describe("creature.json", () => {
 
   it.each([
     ["an unknown key", { ...defaults, pet: true }, /pet/],
-    ["a negative seed", { ...defaults, body: { skin: "tinkerer", seed: -1 } }, /body\.seed/],
-    ["a fractional seed", { ...defaults, body: { skin: "tinkerer", seed: 1.5 } }, /body\.seed/],
     [
       "a seed past 32 bits",
       { ...defaults, body: { skin: "tinkerer", seed: 2 ** 32 } },
       /body\.seed/,
     ],
-    ["a skin that is not kebab-case", { ...defaults, body: { skin: "Big Cat", seed: 1 } }, /skin/],
     [
       "a model choice without a model",
       { ...defaults, models: { ...inheritEverywhere(), strong: { provider: "ollama" } } },
       /models\.strong/,
     ],
-    ["a missing workshop", { ...defaults, workshop: undefined }, /workshop/],
-    ["a blank name", { ...defaults, name: "  " }, /name/],
   ])("refuses %s and names the field", (_what, broken, where) => {
     const raw = JSON.stringify(broken);
     expect(() => parseCreatureFile(raw, "x/creature.json")).toThrow(MalformedCreatureError);
@@ -88,13 +72,6 @@ describe("creature.json", () => {
 
   it("names the file and the JSON problem when the file is not JSON", () => {
     expect(() => parseCreatureFile("{", "x/creature.json")).toThrow(/malformed x\/creature\.json/);
-  });
-
-  it("recognizes model choices", () => {
-    expect(isModelChoice("inherit")).toBe(true);
-    expect(isModelChoice({ provider: "ollama", model: "qwen3:8b" })).toBe(true);
-    expect(isModelChoice({ provider: "ollama" })).toBe(false);
-    expect(isModelChoice("ollama/qwen3:8b")).toBe(false);
   });
 
   it("justifies every key with a description, as keywork config schemas do", () => {

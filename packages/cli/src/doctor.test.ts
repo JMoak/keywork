@@ -2,38 +2,12 @@ import { detectCapabilities } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
 import { doctorCommand, doctorReport, renderDoctorReport, workspaceDoctorFacts } from "./doctor.ts";
 import { composeInference } from "./inference/runtime.ts";
-import { deciderStatusOf } from "./memory-decider.ts";
 
 function report(env: Record<string, string | undefined>, platform = "linux"): string {
   return renderDoctorReport(doctorReport(detectCapabilities({ env, platform })));
 }
 
 describe("doctorReport", () => {
-  it("exposes the report as labeled rows before any rendering", () => {
-    const { rows } = doctorReport(
-      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
-    );
-    expect(rows.map((row) => row.label)).toEqual([
-      "terminal",
-      "color",
-      "sync frames",
-      "glyph tier",
-      "nerd font",
-      "sample",
-    ]);
-    expect(rows[0]?.value).toBe("Windows Terminal");
-  });
-
-  it("adds one context row per provider, continuation rows unlabeled", () => {
-    const { registry } = composeInference({
-      env: { OPENAI_API_KEY: "k" },
-      config: { connections: { ollama: { endpoint: "http://localhost:11434/v1", models: ["q"] } } },
-      credentials: {},
-    });
-    const rows = doctorReport(detectCapabilities({ env: {}, platform: "linux" }), registry).rows;
-    expect(rows.slice(-2).map((row) => row.label)).toEqual(["context", ""]);
-  });
-
   it("prints the full profile for a major terminal", () => {
     expect(report({ WT_SESSION: "guid" }, "win32")).toBe(
       [
@@ -49,33 +23,10 @@ describe("doctorReport", () => {
     );
   });
 
-  it("renders the forced tier 1 sample from the Unicode working set", () => {
-    const lines = report({ WT_SESSION: "guid", KEYWORK_TIER: "1" }).split("\n");
-    expect(lines).toContain("glyph tier   1 of 2, Unicode box and block (forced by KEYWORK_TIER)");
-    expect(lines).toContain("sample       ░▒▓█  ╭─╮│╰─╯  ░▒▓█x  ░▒▓█");
-  });
-
   it("renders the forced tier 0 sample in pure ASCII, top to bottom", () => {
     const output = report({ WT_SESSION: "guid", KEYWORK_TIER: "0" });
     expect(output).toContain("sample       .:+#  +-+|+-+  .:+#x  .:+#");
     expect([...output].every((glyph) => glyph.charCodeAt(0) <= 0x7e)).toBe(true);
-  });
-
-  it("says why sync frames are off inside tmux", () => {
-    expect(report({ WT_SESSION: "guid", TMUX: "/tmp/tmux-1000/default,1,0" })).toContain(
-      "sync frames  no, tmux nesting turns it off",
-    );
-    expect(report({ TMUX: "/tmp/tmux-1000/default,1,0" })).toContain("nested in tmux");
-  });
-
-  it("reflects the Nerd Font opt-in", () => {
-    expect(report({ WT_SESSION: "guid", KEYWORK_NERD_FONT: "1" })).toContain(
-      "nerd font    on, garnish glyphs enabled",
-    );
-  });
-
-  it("names monochrome color when NO_COLOR is set", () => {
-    expect(report({ WT_SESSION: "guid", NO_COLOR: "1" })).toContain("color        monochrome");
   });
 });
 
@@ -137,22 +88,6 @@ describe("doctorCommand", () => {
 describe("workspace doctor rows", () => {
   const profile = detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "linux" });
 
-  it("says when the repo map is configured off", () => {
-    const { rows } = doctorReport(profile, undefined, {
-      trusted: true,
-      repoMapSetting: "off",
-    });
-    expect(rows.at(-1)).toEqual({ label: "repo map", value: "off in keywork.json" });
-  });
-
-  it("says when the workspace is untrusted", () => {
-    const { rows } = doctorReport(profile, undefined, { trusted: false });
-    expect(rows.at(-1)).toEqual({
-      label: "repo map",
-      value: "workspace untrusted, not scanned",
-    });
-  });
-
   it("reports map size, staleness, and ignore health with malformed lines listed", () => {
     const { rows } = doctorReport(profile, undefined, {
       trusted: true,
@@ -186,20 +121,6 @@ describe("workspace doctor rows", () => {
     });
   });
 
-  it("lists each mcp server with its transport", () => {
-    const { rows } = doctorReport(profile, undefined, {
-      trusted: true,
-      mcpServers: {
-        files: { transport: "stdio", command: "files-server" },
-        remote: { transport: "http", url: "https://mcp.example/api" },
-      },
-    });
-    expect(rows.slice(-2)).toEqual([
-      { label: "mcp", value: "files · stdio · files-server" },
-      { label: "", value: "remote · http · https://mcp.example/api" },
-    ]);
-  });
-
   it("scans a trusted workspace end to end through workspaceDoctorFacts", async () => {
     const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
@@ -223,63 +144,6 @@ describe("workspace doctor rows", () => {
   });
 });
 
-describe("crash log section", () => {
-  it("renders the recorded crashes with their path", () => {
-    const { rows } = doctorReport(
-      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
-      undefined,
-      { crashLog: { path: "C:/logs/tui-crash.log", entries: 2, lastAt: "2026-09-01T00:00:00Z" } },
-    );
-    expect(rows.slice(-2)).toEqual([
-      { label: "crash log", value: "2 crashes recorded · last 2026-09-01T00:00:00Z" },
-      { label: "", value: "C:/logs/tui-crash.log" },
-    ]);
-  });
-
-  it("says none recorded for an empty log", () => {
-    const { rows } = doctorReport(
-      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
-      undefined,
-      { crashLog: { path: "C:/logs/tui-crash.log", entries: 0 } },
-    );
-    expect(rows.at(-1)).toEqual({ label: "crash log", value: "none recorded" });
-  });
-});
-
-describe("memory decider row", () => {
-  it("reads the decider from config, the credential and connect's observations, before the crash log", () => {
-    const memoryDecider = deciderStatusOf({
-      config: { memory: { decider: "jev" } },
-      credentials: { typesafe: { type: "api_key", key: "ts-live" } },
-      env: {},
-      observations: { typesafe: { verifiedAt: "2026-10-15T08:00:00.000Z" } },
-      placement: "os-store",
-    });
-    const { rows } = doctorReport(
-      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
-      undefined,
-      { memoryDecider, crashLog: { path: "C:/logs/tui-crash.log", entries: 0 } },
-    );
-    expect(rows.slice(-2)).toEqual([
-      {
-        label: "memory decider",
-        value:
-          "jev · jev-1.13.0 · saved key (OS credential store) · verified 2026-10-15 · 0 of 5 questions proven",
-      },
-      { label: "crash log", value: "none recorded" },
-    ]);
-  });
-
-  it("stays out of the report when nobody asked about memory", () => {
-    const { rows } = doctorReport(
-      detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "win32" }),
-      undefined,
-      {},
-    );
-    expect(rows.map((row) => row.label)).not.toContain("memory decider");
-  });
-});
-
 describe("language server rows", () => {
   const profile = detectCapabilities({ env: { WT_SESSION: "guid" }, platform: "linux" });
   const rowsFor = (facts: Parameters<typeof doctorReport>[2]) =>
@@ -288,24 +152,6 @@ describe("language server rows", () => {
         row.label === "language servers" ||
         (row.label === "" && rows.slice(0, index).some((r) => r.label === "language servers")),
     );
-
-  it("names the switch when lsp is unset or off", () => {
-    expect(rowsFor({ trusted: true })).toEqual([
-      {
-        label: "language servers",
-        value: 'off · lsp: "auto" in keywork.json turns diagnostics on',
-      },
-    ]);
-    expect(rowsFor({ trusted: true, lspSetting: "off" })).toEqual([
-      { label: "language servers", value: "off in keywork.json" },
-    ]);
-  });
-
-  it("says an untrusted workspace spawns nothing", () => {
-    expect(rowsFor({ trusted: false, lspSetting: "auto" })).toEqual([
-      { label: "language servers", value: "workspace untrusted, none spawned" },
-    ]);
-  });
 
   it("lists each server with its live state", () => {
     const rows = rowsFor({

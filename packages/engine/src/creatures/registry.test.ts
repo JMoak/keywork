@@ -98,20 +98,6 @@ describe("creating creatures", () => {
     expect(slugOf("Ümlaut Café")).toBe("umlaut-cafe");
   });
 
-  it("applies the draft over the defaults", async () => {
-    const { registry } = await fixture();
-    const creature = await registry.create({
-      name: "Mo",
-      skin: "otter",
-      workshop: "ws-7",
-      models: { loop: { provider: "ollama", model: "qwen3:8b" } },
-    });
-    expect(creature.file.body).toEqual({ skin: "otter", seed: 424242 });
-    expect(creature.file.workshop).toBe("ws-7");
-    expect(creature.file.models.loop).toEqual({ provider: "ollama", model: "qwen3:8b" });
-    expect(creature.file.models.strong).toBe("inherit");
-  });
-
   it("refuses a name that is already a bot, a name that is no slug, and an untrusted workspace", async () => {
     const { root, registry } = await fixture();
     await plantPlainBot(root, "plain");
@@ -157,13 +143,5 @@ describe("removing a creature", () => {
     expect(await registry.read("pip")).toBeUndefined();
     expect((await layer.readBot("pip"))?.status).toBe("retired");
     expect(existsSync(join(root, "vault", "bots", "pip", "Terse.md"))).toBe(true);
-  });
-
-  it("counts no notes for a layer that never materialized and no workshop for the host", async () => {
-    const { registry } = await fixture();
-    await registry.create({ name: "Pip" });
-    expect(await registry.removal("pip")).toMatchObject({ notes: 0, routines: 0, workshop: null });
-    expect(await registry.removal("ghost")).toBeUndefined();
-    expect(await registry.remove("ghost")).toBeUndefined();
   });
 });

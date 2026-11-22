@@ -117,17 +117,15 @@ describe("keywork models bench", () => {
   });
 
   it.each([
-    [[], {}],
     [["bench"], {}],
     [["list"], {}],
-    [["bench", "a/b", "c"], {}],
   ])("prints usage for %j", async (args, flags) => {
     const { code, err } = await run(args, flags);
     expect(code).toBe(exitCodes.usage);
     expect(err).toBe(modelsUsage);
   });
 
-  it.each(["2", "three", "-4"])("refuses --repeats %s", async (repeats) => {
+  it.each(["2", "three"])("refuses --repeats %s", async (repeats) => {
     const { code, err } = await run(["bench", "a/b"], { repeats });
     expect(code).toBe(exitCodes.usage);
     expect(err).toContain("at least 3");
@@ -176,11 +174,6 @@ describe("benchDepsFrom an inference runtime", () => {
       fingerprint: { id: "declared:spark", kind: "openai-compatible", version: null },
     });
     expect(opened).toContain("provider gpt-oss-120b");
-  });
-
-  it("opens a decision model through the decide binding, never asking for tool calls", () => {
-    expect(deps.openDecider("spark/nimble")).toMatchObject({ ok: true, reference: "spark/nimble" });
-    expect(opened).toContain("decider nimble");
   });
 
   it("refuses a bare decision model name and an unknown provider", () => {

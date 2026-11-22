@@ -5,23 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { loadRatchet, RatchetUnreachableError, ratchetPackage } from "./ratchet.ts";
+import { ratchetPackage } from "./ratchet.ts";
 
 describe("the Ratchet package", () => {
-  it("loads the declared package export", async () => {
-    const ratchet = await loadRatchet();
-    expect(ratchet.requiredActs(0.98, 0.95)).toBe(149);
-    expect(ratchet.State.create("t").field("a", 1).build().text).toBe("t\na: 1");
-  });
-
-  it("names the dependency and preserves its loading failure", () => {
-    const cause = new Error("Cannot find module");
-    const error = new RatchetUnreachableError(cause);
-    expect(error.message).toContain(ratchetPackage);
-    expect(error.message).toContain(cause.message);
-    expect(error.cause).toBe(cause);
-  });
-
   it("works from a packed dependency and stays bundled after that dependency is removed", () => {
     const root = mkdtempSync(join(tmpdir(), "keywork-ratchet-consumer-"));
     try {

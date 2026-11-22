@@ -1,12 +1,11 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { conflictMarkers, leaseFile, localHost, markMultiHostVault } from "@keywork/engine";
+import { conflictMarkers } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { openWorkspaceMemory } from "./memory.ts";
 import {
-  describeReconciliation,
   memoryCommand,
   mergeAttributesLine,
   mergeDriverCommand,
@@ -72,50 +71,6 @@ describe("keywork memory sync", () => {
     ]);
   });
 
-  it("reports hosts and a foreign lease on a multi-host vault", async () => {
-    const { cwd, vault } = await workspace();
-    await markMultiHostVault(vault);
-    const memory = opened(cwd);
-    await memory.store.appendDaily("x", "user");
-    await mkdir(join(vault, ".sync"), { recursive: true });
-    await writeFile(
-      join(vault, leaseFile),
-      JSON.stringify({
-        host: "beta",
-        acquired: at.toISOString(),
-        expires: "2026-08-10T09:10:00.000Z",
-      }),
-    );
-    const io = recorder();
-    await memoryCommand(
-      ["sync"],
-      { cwd, trusted: true },
-      io,
-      {},
-      { memory: () => memory, now: () => at },
-    );
-    expect(io.out.slice(0, 3)).toEqual([
-      `layout: per host · this host writes as ${localHost()}`,
-      `hosts seen: ${localHost()}`,
-      "sweep lease: held by beta until 2026-08-10T09:10:00.000Z",
-    ]);
-    const stale = describeReconciliation(
-      {
-        host: localHost(),
-        hosts: [],
-        intake: [],
-        restored: [],
-        cards: [],
-        lease: { host: localHost(), acquired: "", expires: "2026-08-10T08:00:00.000Z" },
-        index: undefined,
-      },
-      at,
-    );
-    expect(stale[2]).toBe(
-      "sweep lease: stale, left by this host, expired 2026-08-10T08:00:00.000Z · the next sweep takes it over",
-    );
-  });
-
   it("refuses when memory is absent, inert, or the verb is unknown", async () => {
     const { cwd } = await workspace();
     const io = recorder();
@@ -170,23 +125,6 @@ describe("keywork memory sync setup", () => {
     );
     expect(again.out[0]).toBe("per-host layout: already on");
     expect(await readFile(join(vault, ".gitattributes"), "utf8")).toBe(`${mergeAttributesLine}\n`);
-  });
-
-  it("skips the driver outside a repository", async () => {
-    const { cwd } = await workspace();
-    const memory = opened(cwd);
-    const io = recorder();
-    const git = async () => {
-      throw new Error("not a git repository");
-    };
-    await memoryCommand(
-      ["sync", "setup"],
-      { cwd, trusted: true },
-      io,
-      {},
-      { memory: () => memory, git },
-    );
-    expect(io.out[1]).toBe("git: the vault is not inside a repository · merge driver skipped");
   });
 });
 

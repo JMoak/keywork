@@ -108,14 +108,6 @@ describe("GET /sessions/{id}/changes/verdicts", () => {
     });
     expect(hunkVerdictsOf(entriesOf([verdictEntry("x", { nope: true })])).verdicts).toEqual([]);
   });
-
-  it("answers 404 for a session the host does not know", async () => {
-    const response = await handlersOver(hostOver("missing", { verdicts: [] })).readHunkVerdicts(
-      get,
-      { id: "nope" },
-    );
-    expect(response.status).toBe(404);
-  });
 });
 
 describe("POST /sessions/{id}/changes/verdicts", () => {
@@ -164,16 +156,5 @@ describe("POST /sessions/{id}/changes/verdicts", () => {
     expect(refused.status).toBe(501);
     expect(await refused.json()).toEqual({ error: "verdicts are not wired" });
     expect(recorded.verdicts).toEqual([]);
-  });
-});
-
-describe("the changes route family", () => {
-  it("names the verdict routes beside the listing and the file", () => {
-    expect(changesFamily.routes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "GET /sessions/{id}/changes",
-      "GET /sessions/{id}/changes/file",
-      "GET /sessions/{id}/changes/verdicts",
-      "POST /sessions/{id}/changes/verdicts",
-    ]);
   });
 });

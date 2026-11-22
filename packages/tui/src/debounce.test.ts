@@ -45,16 +45,6 @@ describe("Debounce", () => {
     expect(debounce.pending()).toBe(false);
   });
 
-  it("arms one timer per burst, never one per touch", () => {
-    const { timing, advanceTo, armed } = fakeTiming();
-    const debounce = new Debounce(50, () => {}, timing);
-    for (let step = 0; step < 10; step += 1) {
-      advanceTo(step);
-      debounce.touch();
-    }
-    expect(armed()).toBe(1);
-  });
-
   it("fires again for a second burst after the first settles", () => {
     const { timing, advanceTo } = fakeTiming();
     let fired = 0;

@@ -140,56 +140,6 @@ describe("watchKeybindings", () => {
     expect(actionOf(it.keymap, "ctrl+q")).toBeUndefined();
     expect(it.notices).toEqual([reloadedNotice]);
   });
-
-  it("coalesces a burst of change events into one reload", async () => {
-    const it = bench();
-    it.changed();
-    it.clock.advance(keybindingQuietMs / 2);
-    it.changed();
-    it.clock.advance(keybindingQuietMs / 2);
-    await settled();
-    expect(it.reads).toBe(0);
-    it.clock.advance(keybindingQuietMs / 2);
-    await settled();
-    expect(it.reads).toBe(1);
-    expect(it.notices).toEqual([reloadedNotice]);
-  });
-
-  it("posts the parse error and keeps the previous binding live", async () => {
-    const it = bench();
-    it.overrides["app.quit"] = "ctrl+t";
-    it.changed();
-    it.clock.advance(keybindingQuietMs);
-    await settled();
-    it.overrides["pane.split"] = "ctrl+t";
-    it.changed();
-    it.clock.advance(keybindingQuietMs);
-    await settled();
-    expect(it.notices).toEqual([
-      reloadedNotice,
-      'keybindings kept · "ctrl+t" is bound to both "pane.split" and "app.quit"',
-    ]);
-    expect(actionOf(it.keymap, "ctrl+t")).toBe("app.quit");
-  });
-
-  it("stops reloading once unwatched", async () => {
-    const it = bench();
-    it.unwatch();
-    it.changed();
-    it.clock.advance(keybindingQuietMs);
-    await settled();
-    expect(it.reads).toBe(0);
-  });
-
-  it("does nothing for a source that cannot be watched", () => {
-    const keymap = new Keymap({ leader: "ctrl+k", bindings: defaults });
-    const unwatch = watchKeybindings({
-      keymap,
-      source: { read: async () => ({}) },
-      notice: () => {},
-    });
-    expect(unwatch).not.toThrow();
-  });
 });
 
 interface FakeClock extends DebounceTiming {

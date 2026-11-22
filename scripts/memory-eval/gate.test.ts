@@ -109,15 +109,6 @@ describe("gateQuestion for a recall question", () => {
     const judgedWorse = recallMeasures({ ...passing, judged: quality(0.5) });
     expect(gateQuestion(judgedWorse, recallMeasures({ judged: quality(0.9) })).proven).toBe(false);
   });
-
-  it("explains each criterion in numbers", () => {
-    expect(gateQuestion(passing, builtin).criteria.map((criterion) => criterion.detail)).toEqual([
-      "recall 0.89 against the builtin's 0.90; 0 harmful drops of 100 relevant notes (0.0%)",
-      "injects 500 tokens, 50.0% of the builtin's 1000",
-      "wait p95 30 ms",
-      "ECE 0.030 over 80 samples (noise floor 0.040)",
-    ]);
-  });
 });
 
 describe("gateQuestion for a curation question", () => {

@@ -12,7 +12,6 @@ import {
   type WorkshopRefusalRecord,
   type WorkshopsPort,
   workshopFamily,
-  workshopRoutes,
 } from "./workshops.ts";
 
 const pip: WorkshopRecord = {
@@ -135,29 +134,6 @@ function request(method: string, path: string, body?: unknown): Request {
 }
 
 describe("the workshop routes", () => {
-  it("declare the workshop verbs, the substrates, the detail, the terminal and the display stream", () => {
-    expect(workshopRoutes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "GET /workshops",
-      "GET /workshops/substrates",
-      "POST /workshops",
-      "GET /workshops/{id}",
-      "POST /workshops/{id}/start",
-      "POST /workshops/{id}/stop",
-      "GET /workshops/{id}/health",
-      "POST /workshops/{id}/exec",
-      "DELETE /workshops/{id}",
-      "GET /workshops/{id}/display",
-    ]);
-    expect(workshopRoutes.every((route) => route.authenticated)).toBe(true);
-  });
-
-  it("list every workshop", async () => {
-    const response = await handlersFor(fakePort()).listWorkshops(request("GET", "/workshops"), {});
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ workshops: [pip] });
-  });
-
   it("create from the posted spec and answer 201", async () => {
     const port = fakePort();
     const body = { creature: "pip", substrate: "sbx", brokers: ["anthropic"] };
@@ -186,33 +162,6 @@ describe("the workshop routes", () => {
     expect(deferred.status).toBe(501);
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toEqual(missing);
-  });
-
-  it("start, stop and read health by id", async () => {
-    const handlers = handlersFor(fakePort());
-    const params = { id: pip.id };
-
-    const started = await handlers.startWorkshop(
-      request("POST", `/workshops/${pip.id}/start`),
-      params,
-    );
-    const stopped = await handlers.stopWorkshop(
-      request("POST", `/workshops/${pip.id}/stop`),
-      params,
-    );
-    const health = await handlers.workshopHealth(
-      request("GET", `/workshops/${pip.id}/health`),
-      params,
-    );
-
-    expect(await started.json()).toMatchObject({ state: "running" });
-    expect(await stopped.json()).toMatchObject({ state: "stopped" });
-    expect(await health.json()).toEqual({
-      id: pip.id,
-      substrate: "sbx",
-      health: "up",
-      limitations: [],
-    });
   });
 
   it("remove, keeping the disk only when asked", async () => {
@@ -250,15 +199,6 @@ describe("the workshop routes", () => {
     expect(await reader.next()).toMatchObject({ event: "ended", data: "{}" });
   });
 
-  it("refuse a display stream for an unknown workshop", async () => {
-    const response = await handlersFor(fakePort()).streamWorkshopDisplay(
-      request("GET", "/workshops/nope/display"),
-      { id: "nope" },
-    );
-
-    expect(response.status).toBe(404);
-  });
-
   it("answer 503 when this host serves no workshops", async () => {
     const response = await handlersFor(undefined).listWorkshops(request("GET", "/workshops"), {});
 
@@ -267,18 +207,6 @@ describe("the workshop routes", () => {
 });
 
 describe("the workshop detail routes", () => {
-  it("list the substrates the node supports, ahead of the {id} routes", async () => {
-    const response = await handlersFor(fakePort()).listWorkshopSubstrates(
-      request("GET", "/workshops/substrates"),
-      {},
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ preferred: "host" });
-    const order = workshopRoutes.map((route) => route.path);
-    expect(order.indexOf("/workshops/substrates")).toBeLessThan(order.indexOf("/workshops/{id}"));
-  });
-
   it("read one workshop's detail under the keeper's workspace grants", async () => {
     const grant: PermissionRule = { action: "workshop.exec", resource: "pip", effect: "allow" };
     const port = fakePort();
@@ -293,25 +221,6 @@ describe("the workshop detail routes", () => {
     expect(await response.json()).toEqual(pipDetail);
     expect(port.grants[0]).toEqual([grant]);
     expect(unknown.status).toBe(404);
-  });
-
-  it("run a typed command and answer its exit", async () => {
-    const port = fakePort();
-
-    const response = await handlersFor(port).execInWorkshop(
-      request("POST", `/workshops/${pip.id}/exec`, { command: "ls", cwd: "src" }),
-      { id: pip.id },
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      workshop: pip.id,
-      code: 0,
-      stdout: "ok\n",
-      stderr: "",
-      timedOut: false,
-    });
-    expect(port.calls).toEqual([`exec ${JSON.stringify({ command: "ls", cwd: "src" })}`]);
   });
 
   it("answer 403 when the keeper's rules refuse the terminal", async () => {

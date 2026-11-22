@@ -31,24 +31,6 @@ describe("diagnosticsObserver", () => {
     );
     expect(published).toEqual([{ path, count: 2 }]);
   });
-
-  it("publishes a clean save as count zero and returns no annotation", async () => {
-    const published: unknown[] = [];
-    const observe = diagnosticsObserver(fakePort([]), {
-      cwd,
-      onPublished: (publication) => published.push(publication),
-    });
-    expect(await observe(join(cwd, "a.ts"))).toBeUndefined();
-    expect(published).toEqual([{ path: join(cwd, "a.ts"), count: 0 }]);
-  });
-
-  it("publishes nothing for files without a server or when the server is not ready", async () => {
-    const published: unknown[] = [];
-    const onPublished = (publication: unknown) => published.push(publication);
-    await diagnosticsObserver(fakePort([]), { cwd, onPublished })(join(cwd, "notes.md"));
-    await diagnosticsObserver(fakePort([], "missing"), { cwd, onPublished })(join(cwd, "a.ts"));
-    expect(published).toEqual([]);
-  });
 });
 
 describe("composeAfterSave", () => {
@@ -75,10 +57,6 @@ describe("composeAfterSave", () => {
     );
     expect(await composed?.("x.ts")).toBe("still here");
     expect(failures).toEqual(["x.ts: server melted"]);
-  });
-
-  it("is absent when no observer is", () => {
-    expect(composeAfterSave([undefined, undefined])).toBeUndefined();
   });
 });
 

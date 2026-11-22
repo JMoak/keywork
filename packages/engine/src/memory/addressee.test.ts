@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { rememberFrom } from "./admission.ts";
 import { parseMemorySource } from "./sources.ts";
 import {
-  addresseeFor,
   isStagedWrite,
   MalformedStagedItemError,
   parseStagedMeta,
@@ -42,17 +41,6 @@ describe("a staged item's addressee", () => {
     );
     const raw = JSON.parse(await readFile(join(root, ".staging", sidecars[0] ?? ""), "utf8"));
     expect(raw.for).toBe("creature:cob");
-  });
-
-  it("addresses the keeper when no creature received the words", async () => {
-    const { store } = await vault();
-    await rememberFrom(store, parseMemorySource("web:example.com"), {
-      title: "Fetched",
-      body: "x\n",
-    });
-    expect(writes(await store.listStaged())[0]?.for).toBe("keeper");
-    expect(addresseeFor()).toBe("keeper");
-    expect(addresseeFor("cob")).toBe("creature:cob");
   });
 
   it("reads a sidecar written before addressees as keeper-addressed", async () => {

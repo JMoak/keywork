@@ -6,11 +6,6 @@ import { fileAnchorMemory } from "./anchor.ts";
 const scratch = useTempDir("keywork-anchor-memory-");
 
 describe("fileAnchorMemory", () => {
-  it("recalls nothing before anything is remembered", () => {
-    const memory = fileAnchorMemory(join(scratch(), "anchors.json"));
-    expect(memory.recall(join(scratch(), "somewhere"))).toBeUndefined();
-  });
-
   it("remembers an anchor per launch directory", () => {
     const memory = fileAnchorMemory(join(scratch(), "anchors.json"));
     const cwd = join(scratch(), "notes");

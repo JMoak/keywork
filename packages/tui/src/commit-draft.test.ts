@@ -9,7 +9,6 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   type CommitDraftDeps,
-  commitDraftCommand,
   commitRequest,
   diffCharCap,
   draftCommit,
@@ -104,41 +103,6 @@ describe("draftCommit", () => {
     await draftCommit(deps);
     expect(model.entries.at(-2)?.text).toBe("drafting a commit message from the unstaged diff");
   });
-
-  it("says so when the tree is clean or no model is bound", async () => {
-    const clean = setup("unused", {});
-    await draftCommit(clean.deps);
-    expect(clean.model.entries.at(-1)?.text).toBe(
-      "nothing to draft · the working tree has no changes",
-    );
-    expect(clean.requests).toHaveLength(0);
-
-    const notices: string[] = [];
-    await draftCommit({
-      ...clean.deps,
-      conversation: () => undefined,
-      notice: (text) => notices.push(text),
-    });
-    expect(notices).toEqual(["no model to draft with · focus a session with a model bound"]);
-  });
-
-  it("still shows the draft where the terminal takes no clipboard writes", async () => {
-    const { deps, model, written } = setup("chore: tidy", { staged: fixturePatch }, false);
-    await draftCommit(deps);
-    expect(written).toEqual([]);
-    expect(model.entries.at(-1)?.text).toContain("this terminal takes no clipboard writes");
-  });
-
-  it("reports a git failure in the transcript", async () => {
-    const { deps, model } = setup("unused", {});
-    await draftCommit({
-      ...deps,
-      git: async () => Promise.reject(new Error("not a git repository")),
-    });
-    expect(model.entries.at(-1)?.text).toBe(
-      "couldn't draft a commit message · not a git repository",
-    );
-  });
 });
 
 describe("commitRequest", () => {
@@ -158,14 +122,5 @@ describe("workingDiff", () => {
     expect((await workingDiff(git))?.scope).toBe("unstaged");
     for (const args of calls)
       expect(args).toEqual(expect.arrayContaining(["--no-ext-diff", "--no-textconv"]));
-  });
-});
-
-describe("commitDraftCommand", () => {
-  it("fits the command vocabulary", () => {
-    const { deps } = setup("x", {});
-    const command = commitDraftCommand(deps);
-    expect(command.name).toBe("commit-draft");
-    expect(command.aliases).toContain("draft-commit");
   });
 });

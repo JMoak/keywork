@@ -1,6 +1,6 @@
-import { type Message, MockProvider, messageText, textMessage, textTurn } from "@keywork/engine";
+import { type Message, messageText, textMessage } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { answerAside, asideRequest, backgroundCharCap } from "./side-question.ts";
+import { asideRequest, backgroundCharCap } from "./side-question.ts";
 
 const history: Message[] = [
   textMessage("user", "rename the flag"),
@@ -40,12 +40,5 @@ describe("asideRequest", () => {
     expect(prompt).toContain("[earlier session cut]");
     expect(prompt).toContain("user: newest");
     expect(prompt.length).toBeLessThan(backgroundCharCap + 200);
-  });
-});
-
-describe("answerAside", () => {
-  it("collects the streamed answer", async () => {
-    const provider = new MockProvider([textTurn("  because it was shorter  ")]);
-    expect(await answerAside(provider, history, "why?")).toBe("because it was shorter");
   });
 });

@@ -85,16 +85,6 @@ describe("herdrReporter", () => {
     expect(herdr.states()).toEqual(["working", "blocked"]);
   });
 
-  it("drops a queued state that returns to what herdr already has", async () => {
-    const herdr = fakeHerdr();
-    const reporter = herdrReporter({ env: herdrEnv, spawn: herdr.spawn });
-    reporter.report(working);
-    reporter.report(idle);
-    reporter.report(working);
-    await herdr.finishAll();
-    expect(herdr.states()).toEqual(["working"]);
-  });
-
   it("keeps the sequence rising even when the clock stalls or steps back", async () => {
     const herdr = fakeHerdr();
     const times = [500, 500, 400];

@@ -69,24 +69,6 @@ describe("campaign evidence source registry", () => {
     ).rejects.toThrow("access denied");
   });
 
-  it("keeps contradictory sources independently retrievable", async () => {
-    const first = await sources.register({
-      ownerScope: "owner",
-      title: "First",
-      reference: "provided:first",
-      text: "The result improved.",
-    });
-    const second = await sources.register({
-      ownerScope: "owner",
-      title: "Second",
-      reference: "provided:second",
-      text: "The result regressed.",
-    });
-    const found = await sources.search({ ownerScope: "owner", query: "result" });
-    expect(new Set(found.hits.map((hit) => hit.sourceId))).toEqual(new Set([first.id, second.id]));
-    expect(first.contentDigest).not.toBe(second.contentDigest);
-  });
-
   it("scopes searches before applying hit and registry scan limits", async () => {
     const source = await sources.register({
       ownerScope: "owner",

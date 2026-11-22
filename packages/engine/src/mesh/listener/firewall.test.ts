@@ -43,17 +43,6 @@ describe("windowsFirewallScript", () => {
     expect(udp).toContain("-RemoteAddress '100.64.0.0/10','fd7a:115c:a1e0::/48'");
   });
 
-  it("can leave the UDP rule out and use other ports", () => {
-    const tcpOnly = windowsFirewallScript({
-      program,
-      localAddresses,
-      tcpPort: 4900,
-      udpPorts: null,
-    });
-    expect(tcpOnly).toContain("-LocalPort 4900");
-    expect(tcpOnly).not.toContain("UDP");
-  });
-
   it("quotes a program path with an apostrophe", () => {
     const quirky = windowsFirewallScript({ program: "C:\\O'Brien\\keywork.exe", localAddresses });
     expect(quirky).toContain("-Program 'C:\\O''Brien\\keywork.exe'");

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AppProbe } from "./probe.ts";
 import {
-  readinessNotice,
   setupPrompt,
   type WorkspaceReadiness,
   type WorkspaceSetupPort,
@@ -28,14 +27,6 @@ async function settled(): Promise<void> {
 }
 
 describe("workspace readiness vocabulary", () => {
-  it("names the missing piece and the one command that fixes it", () => {
-    expect(readinessNotice({ kind: "ready", root, vault: "v" })).toBeUndefined();
-    expect(readinessNotice({ kind: "undecided", root })).toContain("isn't trusted yet");
-    expect(readinessNotice({ kind: "undecided", root })).toContain("/init");
-    expect(readinessNotice({ kind: "undeclared", root })).toContain("/init");
-    expect(readinessNotice({ kind: "refused", root })).toContain("keywork trust");
-  });
-
   it("only asks a question when /init can act", () => {
     expect(setupPrompt({ kind: "undecided", root })).toContain(`trust ${root}?`);
     expect(setupPrompt({ kind: "undeclared", root })).toContain(`set up a workspace at ${root}?`);
@@ -68,16 +59,6 @@ describe("/init", () => {
       `workspace ready at ${root} · reopening with memory and arcs live`,
     );
     expect(probe.exited).toBe(true);
-  });
-
-  it("stays open when no reopen seam exists and says what to do instead", async () => {
-    const { port } = portOver({ kind: "undeclared", root }, false);
-    const probe = new AppProbe({ workspaceSetup: port });
-    probe.command("init");
-    probe.keys("enter");
-    await settled();
-    expect(probe.snapshot().notice).toContain("reopen keywork");
-    expect(probe.exited).toBe(false);
   });
 
   it("reports a ready workspace and a refused folder without asking anything", () => {

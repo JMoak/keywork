@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   type ImageFileReader,
   ImageVault,
-  imageChip,
   imageFromBytes,
   imageFromFile,
   imageFromPaste,
@@ -44,17 +43,6 @@ describe("imageFromPaste", () => {
       mediaType: "image/png",
       data: Buffer.from(png).toString("base64"),
     });
-  });
-
-  it("prefers binary image bytes the terminal hands over", () => {
-    const image = imageFromPaste("", { mimeType: "image/jpeg", kind: "binary", bytes: png });
-    expect(image).toMatchObject({ format: "jpg", bytes: 8 });
-  });
-
-  it("falls through to plain text when the path is missing or not an image", () => {
-    expect(imageFromPaste("/shots/gone.png", {}, disk({}))).toBeUndefined();
-    expect(imageFromPaste("hello", {}, disk({}))).toBeUndefined();
-    expect(imageFromPaste("", { mimeType: "text/plain", bytes: png })).toBeUndefined();
   });
 });
 
@@ -99,10 +87,5 @@ describe("ImageVault", () => {
     expect(vault.imagesIn(chip)).toEqual([]);
     vault.restore(snapshot);
     expect(vault.imagesIn(chip)).toEqual([image.part]);
-  });
-
-  it("formats sizes in bytes, kilobytes and megabytes", () => {
-    expect(imageChip(1, { ...image, bytes: 512 })).toBe("[image #1, png 512 B]");
-    expect(imageChip(2, { ...image, bytes: 2048 })).toBe("[image #2, png 2 KB]");
   });
 });

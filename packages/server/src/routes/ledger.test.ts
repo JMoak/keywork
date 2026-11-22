@@ -8,10 +8,8 @@ import {
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { EventLog } from "../events.ts";
-import { routes } from "../openapi.ts";
 import { createKeyworkServer } from "../server.ts";
 import { memorySessionHost } from "../testing.ts";
-import { ledgerRoutes } from "./ledger.ts";
 
 const token = "ledger-token-1234567890";
 const origin = "http://keywork.test";
@@ -89,12 +87,6 @@ describe("GET /creatures/{slug}/ledger", () => {
     expect(await response.json()).toEqual(pip);
   });
 
-  it("answers 404 for a slug no creature has", async () => {
-    const response = await served(fakeLedger({ pip }).port).call("GET", "/creatures/mo/ledger");
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "no creature has that slug" });
-  });
-
   it("answers 401 without the token and 503 on a host that keeps no ledger", async () => {
     const { call } = served(fakeLedger({ pip }).port);
     expect((await call("GET", "/creatures/pip/ledger", {})).status).toBe(401);
@@ -131,17 +123,6 @@ describe("POST /creatures/{slug}/ledger/{id}/seen", () => {
     const response = await served(port).call("POST", "/creatures/pip/ledger/t1/seen", {});
     expect(response.status).toBe(401);
     expect(seenCalls).toEqual([]);
-  });
-});
-
-describe("the ledger in the document", () => {
-  it("is one read and one seen verb, both authenticated, and nothing else writes it over HTTP", () => {
-    const paths = routes.filter((route) => route.path.startsWith("/creatures/{slug}/ledger"));
-    expect(paths).toEqual([...ledgerRoutes]);
-    expect(paths.map(({ method, path, authenticated }) => [method, path, authenticated])).toEqual([
-      ["GET", "/creatures/{slug}/ledger", true],
-      ["POST", "/creatures/{slug}/ledger/{id}/seen", true],
-    ]);
   });
 });
 

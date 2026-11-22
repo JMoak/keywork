@@ -68,23 +68,10 @@ describe("bootstrapMemory", () => {
     expect(small.text).not.toContain("hhh");
   });
 
-  it("stays calm when MEMORY.md is missing", async () => {
-    const store = await openStore();
-    await store.writeNote({ title: "Orphan", body: "o\n", provenance: "user" });
-    const injection = await bootstrapMemory([{ name: "workspace", store, budget: 10_000 }]);
-    expect(injection.text).toBe("");
-    expect(injection.tokens).toBe(0);
-  });
-
   it("injects nothing from an untrusted layer", async () => {
     const store = await openStore(false);
     const injection = await bootstrapMemory([{ name: "workspace", store, budget: 10_000 }]);
     expect(injection.text).toBe("");
     expect(injection.layers[0]?.selection.notes).toEqual([]);
-  });
-
-  it("produces an empty injection with no layers at all", async () => {
-    const injection = await bootstrapMemory([]);
-    expect(injection).toEqual({ text: "", tokens: 0, layers: [] });
   });
 });

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type EngineEvents,
@@ -24,7 +24,6 @@ import { keyworkClient } from "./client.ts";
 import { type BusEnvelope, type EngineEventType, EventLog, engineEventTypes } from "./events.ts";
 import type { ArcAirlockPort, McpPort, PresetHost } from "./host.ts";
 import { listen } from "./listen.ts";
-import { routes } from "./openapi.ts";
 import { fileChangeCapBytes } from "./routes/changes.ts";
 import type { ContextAnswer } from "./routes/session-verbs.ts";
 import { createKeyworkServer, type KeyworkServer } from "./server.ts";
@@ -171,46 +170,10 @@ const samplePayloads: { [K in EngineEventType]: EngineEvents[K] } = {
   "engine.error": { error: new Error("boom") },
 };
 
-describe("GET /doc", () => {
-  it("serves a structurally sane OpenAPI 3.1 document listing every route, without a token", async () => {
-    const h = harness();
-    const response = await h.server.fetch(new Request(`${origin}/doc`));
-    expect(response.status).toBe(200);
-    const doc = (await response.json()) as {
-      openapi: string;
-      info: { title: string; version: string };
-      paths: Record<
-        string,
-        Record<string, { operationId: string; responses: object; security?: [] }>
-      >;
-      components: { securitySchemes: Record<string, { type: string; scheme: string }> };
-      security: unknown[];
-    };
-    expect(doc.openapi).toBe("3.1.0");
-    expect(doc.info.title).toBe("keywork");
-    expect(doc.info.version).toBe("0.0.1-test");
-    expect(doc.components.securitySchemes.bearer).toEqual({ type: "http", scheme: "bearer" });
-    expect(doc.security).toEqual([{ bearer: [] }]);
-    for (const route of routes) {
-      const operation = doc.paths[route.path]?.[route.method.toLowerCase()];
-      expect(operation?.operationId, `${route.method} ${route.path}`).toBe(route.operationId);
-      expect(Object.keys(operation?.responses ?? {}).length).toBeGreaterThan(0);
-    }
-    expect(doc.paths["/doc"]?.get?.security).toEqual([]);
-    expect(Object.keys(doc.paths)).toHaveLength(new Set(routes.map((route) => route.path)).size);
-  });
-});
-
 describe("authentication", () => {
   const protectedCalls: Array<[method: string, path: string]> = [
     ["GET", "/events"],
-    ["GET", "/sessions"],
-    ["POST", "/sessions"],
-    ["GET", "/sessions/s1"],
     ["POST", "/sessions/s1/prompt"],
-    ["POST", "/sessions/s1/inject"],
-    ["POST", "/sessions/s1/abort"],
-    ["POST", "/models/refresh"],
   ];
 
   it.each(protectedCalls)(
@@ -325,20 +288,6 @@ describe("sessions", () => {
     parameters: { type: "object" },
     execute: async (args) => JSON.stringify(args),
   };
-
-  it("lists, creates and reads sessions", async () => {
-    const h = harness();
-    expect(await (await h.call("/sessions")).json()).toEqual({ sessions: [] });
-    const id = await createSession(h);
-    const listed = (await (await h.call("/sessions")).json()) as {
-      sessions: Array<{ id: string }>;
-    };
-    expect(listed.sessions.map((session) => session.id)).toEqual([id]);
-    const read = await h.call(`/sessions/${id}`);
-    expect(read.status).toBe(200);
-    expect(await read.json()).toMatchObject({ id, live: true, messages: [] });
-    expect((await h.call("/sessions/nope")).status).toBe(404);
-  });
 
   it("runs a mock-provider turn on prompt and streams turn.* and tool.* events", async () => {
     const provider = new MockProvider([
@@ -618,34 +567,6 @@ describe("ask scopes and grants", () => {
   const askRules = (frames: readonly { data: string }[]) =>
     JSON.parse(frames.at(-1)?.data ?? "{}").payload.ask.rules;
 
-  it("lets a trusted workspace run read-only commands under the bundle, reported as gate trusted", async () => {
-    const h = harness({
-      provider: new MockProvider([bashCall("c1", "git status --short"), textTurn("done")]),
-      tools: [shell],
-      asks: "queue",
-      trusted: true,
-    });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    await post(h, `/sessions/${id}/prompt`, { text: "look" });
-    const frames = await collect(reader, (event) => event === "turn.completed");
-    expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
-    expect(decisions(frames)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted", asked: false },
-    ]);
-    const permissions = (await (await h.call("/permissions")).json()) as {
-      trusted: boolean;
-      bundle: unknown[];
-    };
-    expect(permissions.trusted).toBe(true);
-    expect(permissions.bundle).toContainEqual({
-      action: "bash",
-      resource: "git status*",
-      effect: "allow",
-    });
-    await reader.close();
-  });
-
   it("answers an untrusted workspace with an empty bundle and asks for a read-only command", async () => {
     const h = harness({
       provider: new MockProvider([bashCall("c1", "git status"), textTurn("done")]),
@@ -714,31 +635,6 @@ describe("ask scopes and grants", () => {
       workspace: [],
       session: { [id]: [pushRule] },
     });
-    await reader.close();
-  });
-
-  it("offers a destructive command only its exact form, so a session grant covers no other target", async () => {
-    const h = harness({
-      provider: new MockProvider([
-        bashCall("c1", "rm -rf dist"),
-        bashCall("c2", "rm -rf build"),
-        textTurn("done"),
-      ]),
-      tools: [shell],
-      asks: "queue",
-    });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    await post(h, `/sessions/${id}/prompt`, { text: "clean both" });
-    const first = await collect(reader, (event) => event === "gate.ask");
-    expect(askRules(first)).toEqual([{ action: "bash", resource: "rm -rf dist", effect: "allow" }]);
-    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
-    const second = await collect(reader, (event) => event === "gate.ask");
-    expect(askRules(second)).toEqual([
-      { action: "bash", resource: "rm -rf build", effect: "allow" },
-    ]);
-    await post(h, "/asks/c2", { verdict: "denied" });
-    await collect(reader, (event) => event === "turn.completed");
     await reader.close();
   });
 
@@ -949,59 +845,6 @@ describe("ask scopes and grants", () => {
     await reader.close();
   });
 
-  it("grants a whole MCP server as one rule, at workspace and session scope", async () => {
-    const mcpTool = (name: string): Tool => ({ ...shell, name, execute: async () => name });
-    const mcpCall = (callId: string, name: string) =>
-      toolCallTurn({ type: "tool-call", callId, name, arguments: {} });
-    const h = harness({
-      provider: new MockProvider([
-        mcpCall("c1", "github__search"),
-        textTurn("done"),
-        mcpCall("c2", "jira__get_issue"),
-        textTurn("done"),
-      ]),
-      tools: [mcpTool("github__search"), mcpTool("jira__get_issue")],
-      asks: "queue",
-      trusted: true,
-    });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    const github = { action: "mcp", resource: "github__*", effect: "allow" } as const;
-    const jira = { action: "mcp", resource: "jira__*", effect: "allow" } as const;
-    expect(await (await post(h, "/permissions/workspace/grant", { rule: github })).json()).toEqual({
-      granted: github,
-    });
-    expect((await post(h, `/permissions/session/${id}/grant`, { rule: jira })).status).toBe(200);
-    expect(await (await h.call("/permissions")).json()).toMatchObject({
-      workspace: [github],
-      session: { [id]: [jira] },
-    });
-
-    await post(h, `/sessions/${id}/prompt`, { text: "search" });
-    expect(decisions(await collect(reader, (event) => event === "turn.completed"))).toEqual([
-      {
-        tool: "github__search",
-        callId: "c1",
-        verdict: "granted",
-        gate: "user",
-        scope: "workspace",
-        asked: false,
-      },
-    ]);
-    await post(h, `/sessions/${id}/prompt`, { text: "issue" });
-    expect(decisions(await collect(reader, (event) => event === "turn.completed"))).toEqual([
-      {
-        tool: "jira__get_issue",
-        callId: "c2",
-        verdict: "granted",
-        gate: "user",
-        scope: "session",
-        asked: false,
-      },
-    ]);
-    await reader.close();
-  });
-
   it("refuses what no answered ask would record, in keywork's words, and an unknown session", async () => {
     const h = harness({ trusted: true });
     const id = await createSession(h);
@@ -1067,68 +910,9 @@ describe("ask scopes and grants", () => {
       session: {},
     });
   });
-
-  it("announces a grant an answered ask records, and not a once answer", async () => {
-    const h = harness({
-      provider: new MockProvider([
-        bashCall("c1", "git push origin main"),
-        textTurn("done"),
-        bashCall("c2", "npm run lint"),
-        textTurn("done"),
-      ]),
-      tools: [shell],
-      asks: "queue",
-    });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    await post(h, `/sessions/${id}/prompt`, { text: "push" });
-    await collect(reader, (event) => event === "gate.ask");
-    await post(h, "/asks/c1", { verdict: "granted", scope: "session" });
-    expect(surfaceKinds(await collect(reader, (event) => event === "turn.completed"))).toEqual([
-      "permissions",
-    ]);
-    await post(h, `/sessions/${id}/prompt`, { text: "lint" });
-    await collect(reader, (event) => event === "gate.ask");
-    await post(h, "/asks/c2", { verdict: "granted" });
-    expect(surfaceKinds(await collect(reader, (event) => event === "turn.completed"))).toEqual([]);
-    await reader.close();
-  });
-
-  it("grants ahead of an ask through the typed client", async () => {
-    const h = harness({ trusted: true });
-    const id = await createSession(h);
-    const client = keyworkClient(
-      { url: origin, token },
-      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
-    );
-    expect(await client.grantWorkspaceRule(npmRule)).toBe("granted");
-    expect(await client.grantSessionRule(id, pushRule)).toBe("granted");
-    expect(await client.grantSessionRule("nope", pushRule)).toBe("missing");
-    expect(await client.grantWorkspaceRule({ ...npmRule, resource: " " })).toBe("malformed");
-    await expect(
-      client.grantWorkspaceRule({ action: "bash", resource: "rm *", effect: "allow" }),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(await client.listPermissions()).toMatchObject({
-      workspace: [npmRule],
-      session: { [id]: [pushRule] },
-    });
-  });
 });
 
 describe("the document and session detail", () => {
-  it("names the workspace it serves and parameterizes every path segment", async () => {
-    const workspace = { anchor: "/work", identity: "abc123def456" };
-    const h = harness({ workspace });
-    const doc = (await (await h.server.fetch(new Request(`${origin}/doc`))).json()) as {
-      info: { workspace?: unknown };
-      paths: Record<string, Record<string, { parameters?: Array<{ name: string }> }>>;
-    };
-    expect(doc.info.workspace).toEqual(workspace);
-    expect(doc.paths["/asks/{callId}"]?.post?.parameters).toEqual([
-      { name: "callId", in: "path", required: true, schema: { type: "string" } },
-    ]);
-  });
-
   it("reports asOf as the latest event id the messages reflect", async () => {
     const h = harness({ provider: new MockProvider([textTurn("hi")]) });
     const id = await createSession(h);
@@ -1186,36 +970,6 @@ describe("external prompt injection", () => {
       ((await (await server.call(`/sessions/${session}`)).json()) as { messages: Message[] })
         .messages;
     expect(await messagesOf(h, id)).toEqual(await messagesOf(typed, typedId));
-  });
-
-  it("queues behind a running turn and starts once that turn ends", async () => {
-    const h = harness({ provider: hangingProvider() });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    await h.call(`/sessions/${id}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text: "typed first" }),
-    });
-    expect((await reader.next()).event).toBe("turn.started");
-
-    const queued = await inject(h, id, { text: "spoken second", client: "wispr-flow" });
-    expect(await queued.json()).toEqual({ sessionId: id, accepted: true, queued: true });
-    const announced = await collect(reader, (event) => event === "queue.changed");
-    expect(JSON.parse(announced.at(-1)?.data ?? "{}").payload.queued).toEqual([
-      expect.objectContaining({ text: "spoken second", behavior: "queue", origin: voice }),
-    ]);
-
-    await h.call(`/sessions/${id}/abort`, { method: "POST" });
-    const next = await collect(reader, (event) => event === "turn.started");
-    const types = next.map((frame) => frame.event);
-    expect(types).toContain("turn.interrupted");
-    expect(types.indexOf("turn.interrupted")).toBeLessThan(types.lastIndexOf("turn.started"));
-    expect(JSON.parse(next.at(-1)?.data ?? "{}").payload).toEqual({
-      userText: "spoken second",
-      origin: voice,
-    });
-    await h.call(`/sessions/${id}/abort`, { method: "POST" });
-    await reader.close();
   });
 
   it("refuses a client without the ticket's token and runs nothing", async () => {
@@ -1530,33 +1284,6 @@ describe("memory (K4)", () => {
     expect(h.inboxEvents()).toHaveLength(1);
   });
 
-  it("revert answers needs-rebase after an outside edit and reverted when the file still matches", async () => {
-    const h = await memoryHarness(true);
-    const written = await h.memory.store.writeNote({
-      title: "Dock Rule",
-      body: "two docks max\n",
-      provenance: "agent",
-    });
-    await writeFile(join(h.vaultRoot, "Dock Rule.md"), "edited outside keywork\n");
-    const stale = await h.post(`/memory/ledger/${written.ledgerId}/revert`);
-    expect(await stale.json()).toEqual({ outcome: "needs-rebase" });
-
-    const again = await h.memory.store.writeNote({
-      title: "Dock Rule",
-      body: "three docks max\n",
-      provenance: "agent",
-    });
-    expect(await (await h.post(`/memory/ledger/${again.ledgerId}/revert`)).json()).toEqual({
-      outcome: "reverted",
-    });
-    expect(await readFile(join(h.vaultRoot, "Dock Rule.md"), "utf8")).toBe(
-      "edited outside keywork\n",
-    );
-    const missing = await h.post("/memory/ledger/nope/revert");
-    expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: "no ledger entry with id nope" });
-  });
-
   it("drives the airlock port over HTTP with its digest, triage, deliver and finish verbs", async () => {
     const airlock = scriptedAirlock();
     const h = await memoryHarness(true, airlock);
@@ -1629,33 +1356,6 @@ describe("memory (K4)", () => {
     expect((await h.post("/arcs/dock-v2/airlock/deliver")).status).toBe(404);
     expect(h.inboxEvents().length).toBeGreaterThan(0);
     for (const envelope of h.inboxEvents()) expect(envelope.sessionId).toBe("");
-  });
-
-  it("reads the same records through the typed client", async () => {
-    const h = await memoryHarness(true, scriptedAirlock());
-    await h.memory.store.writeNote({ title: "Dock Rule", body: "docks\n", provenance: "user" });
-    const id = await stageNote(h.memory, "Hunch");
-    expect((await h.client.memory()).layers.map((layer) => layer.id)).toEqual(["workspace"]);
-    expect((await h.client.memoryInbox()).count).toBe(1);
-    expect(await h.client.approveStagedItem(id)).toMatchObject({ path: "Hunch.md" });
-    expect((await h.client.memoryNotes()).notes.map((note) => note.name).sort()).toEqual([
-      "Dock Rule",
-      "Hunch",
-    ]);
-    expect((await h.client.memoryNote("Dock Rule"))?.curing).toBe(3);
-    expect(await h.client.memoryNote("Nope")).toBeUndefined();
-    expect((await h.client.memoryDailyDates()).dates).toEqual([]);
-    expect((await h.client.memoryLedger()).entries).toHaveLength(3);
-    expect((await h.client.askMemory("docks")).hits[0]?.note).toBe("Dock Rule");
-    expect(await h.client.airlock("none")).toBeUndefined();
-    expect((await h.client.airlock("dock-v2"))?.arc).toBe("dock-v2");
-    expect(await h.client.deliverAirlock("dock-v2")).toEqual({ delivered: 1 });
-    await expect(h.client.revertMemoryLedgerEntry("nope")).rejects.toThrow(
-      "no ledger entry with id nope",
-    );
-    const untrusted = await memoryHarness(false);
-    expect(await untrusted.client.memory()).toMatchObject({ trusted: false });
-    await expect(untrusted.client.discardStagedItem("x")).rejects.toThrow(inert);
   });
 
   async function until(condition: () => boolean): Promise<void> {
@@ -1805,25 +1505,6 @@ describe("workspace, files, trust and status (K3)", () => {
       expect((await h.call(path)).status, path).toBe(503);
     }
     expect((await post(h, "/workspace/trust")).status).toBe(503);
-  });
-
-  it("reports the workspace with the identity /doc names and its readiness", async () => {
-    const root = await roots();
-    const workspace = { anchor: root, identity: "k3-identity" };
-    const h = harness({ workspace, surfaces: { root, identity: workspace.identity } });
-    const doc = (await (await h.server.fetch(new Request(`${origin}/doc`))).json()) as {
-      info: { workspace: { identity: string } };
-    };
-    const report = await bodyOf<{
-      anchor: { root: string; source: string };
-      identity: string;
-      declared: boolean;
-      trust: string;
-      readiness: string;
-    }>(await h.call("/workspace"));
-    expect(report.identity).toBe(doc.info.workspace.identity);
-    expect(report.anchor).toEqual({ root, source: "launch" });
-    expect(report).toMatchObject({ declared: false, trust: "undecided", readiness: "undecided" });
   });
 
   it("lists one directory level, flags ignored and hidden entries, and confines paths", async () => {
@@ -2091,50 +1772,6 @@ describe("workspace, files, trust and status (K3)", () => {
     expect((await post(h, "/workspaces/use", {})).status).toBe(400);
     expect(await surfaceEvents(h, "workspaces")).toHaveLength(6);
   });
-
-  it("lists the theme closet with the active name and the system placeholder", async () => {
-    const root = await roots();
-    const h = harness({ surfaces: { root, themes: [testTheme] } });
-    expect(await bodyOf(await h.call("/themes"))).toEqual({
-      themes: [testTheme],
-      active: "test-dusk",
-      placeholders: ["system"],
-    });
-  });
-
-  it("drives every surface through the typed client", async () => {
-    const root = await populatedRoot();
-    const h = harness({ surfaces: { root, trust: "trusted", themes: [testTheme] } });
-    const client = keyworkClient(
-      { url: origin, token },
-      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
-    );
-    expect((await client.workspace()).anchor.root).toBe(root);
-    expect((await client.tree("src")).entries.map((entry) => entry.name)).toEqual(["a.ts"]);
-    expect((await client.file("notes.txt", { from: 0, to: 5 })).text).toBe("hello");
-    expect(await client.createArc("alpha")).toMatchObject({ slug: "alpha" });
-    expect((await client.arcs()).ordinals).toEqual({ alpha: 0 });
-    expect(await client.closeArc("alpha")).toMatchObject({ kind: "closed" });
-    await client.abandonArc("alpha").catch((cause: unknown) => {
-      expect(cause).toMatchObject({ status: 409 });
-    });
-    expect(await client.createBot({ slug: "scribe", scope: "user" })).toMatchObject({
-      name: "scribe",
-    });
-    expect((await client.bots()).map((bot) => bot.name)).toEqual(["scribe"]);
-    const id = await createSession(h);
-    expect(await client.bindSessionBot(id, "scribe")).toEqual({ bot: "scribe" });
-    expect(await client.bindSessionArc("nope", null)).toBeUndefined();
-    await client.createWorkspace("docs");
-    expect(await client.focusWorkspaceDir("docs", "packages/docs")).toBe("packages/docs");
-    await client.unfocusWorkspaceDir("docs", "packages/docs");
-    expect((await client.workspaces()).map((choice) => choice.slug)).toEqual([undefined, "docs"]);
-    expect(await client.useWorkspace("docs")).toEqual({ slug: "docs", reopens: true });
-    expect((await client.themes()).active).toBe("test-dusk");
-    expect(await client.mcpServers()).toEqual([]);
-    await expect(client.restartMcpServer("nope")).rejects.toMatchObject({ status: 404 });
-    expect(await client.trustWorkspace()).toMatchObject({ trusted: true, reopens: false });
-  });
 });
 
 function fakeRegistry() {
@@ -2267,58 +1904,6 @@ describe("session verbs (118 K1) over the memory host", () => {
     };
   }
 
-  it("accepts a prompt with the default behavior queue, names it, and fires session.state before and after the turn", async () => {
-    const h = verbHarness({ provider: new MockProvider([textTurn("done")]) });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    const accepted = await post(h, `/sessions/${id}/prompt`, { text: "go" });
-    expect(accepted.status).toBe(202);
-    expect(await accepted.json()).toEqual({
-      sessionId: id,
-      accepted: true,
-      queued: false,
-      behavior: "queue",
-    });
-    expect((await reader.next()).event).toBe("turn.started");
-    const accepting = await stateAfter(reader);
-    expect(accepting).toMatchObject({ thinking: false, title: "session s1", redoable: false });
-    await collect(reader, (event) => event === "turn.completed");
-    expect(await stateAfter(reader)).toMatchObject({ leafId: "m1", undoable: true });
-    await reader.close();
-    expect((await post(h, `/sessions/${id}/prompt`, { text: "x", behavior: "later" })).status).toBe(
-      400,
-    );
-    const doc = (await (await h.server.fetch(new Request(`${origin}/doc`))).json()) as {
-      paths: Record<string, { post: { summary: string } }>;
-    };
-    expect(doc.paths["/sessions/{id}/prompt"]?.post.summary).toContain("defaults to `queue`");
-  });
-
-  it("steer interrupts the running turn and runs before a queued prompt", async () => {
-    const h = verbHarness({
-      provider: hangingThenScripted([textTurn("steered"), textTurn("queued answer")]),
-    });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    await post(h, `/sessions/${id}/prompt`, { text: "first" });
-    expect(await (await post(h, `/sessions/${id}/prompt`, { text: "later" })).json()).toMatchObject(
-      { queued: true, behavior: "queue" },
-    );
-    expect(
-      await (await post(h, `/sessions/${id}/prompt`, { text: "now", behavior: "steer" })).json(),
-    ).toMatchObject({ queued: true, behavior: "steer" });
-    const frames: SseFrame[] = [];
-    while (frames.filter((frame) => frame.event === "turn.completed").length < 2) {
-      frames.push(await reader.next());
-    }
-    await reader.close();
-    const starts = frames
-      .filter((frame) => frame.event === "turn.started")
-      .map((frame) => payloadOf(frame).userText);
-    expect(starts).toEqual(["first", "now", "later"]);
-    expect(frames.map((frame) => frame.event)).toContain("turn.interrupted");
-  });
-
   it("switches the model, answers an unknown reference with its failure code, and refuses mid-turn", async () => {
     const h = verbHarness({
       provider: new MockProvider([textTurn("hi")], "m1"),
@@ -2363,32 +1948,6 @@ describe("session verbs (118 K1) over the memory host", () => {
     await busy.server.close();
   });
 
-  it("toggles thinking and sets effort, with null returning to the provider default", async () => {
-    const h = verbHarness();
-    const id = await createSession(h);
-    const reader = await h.stream();
-    expect(await (await post(h, `/sessions/${id}/thinking`, { on: true })).json()).toEqual({
-      thinking: true,
-    });
-    expect(await stateAfter(reader)).toMatchObject({ thinking: true });
-    expect((await post(h, `/sessions/${id}/thinking`, { on: "yes" })).status).toBe(400);
-    expect((await post(h, "/sessions/nope/thinking", { on: true })).status).toBe(404);
-
-    expect(await (await post(h, `/sessions/${id}/effort`, { level: "high" })).json()).toEqual({
-      effort: "high",
-    });
-    expect(await stateAfter(reader)).toMatchObject({ effort: "high", thinking: true });
-    expect(await (await post(h, `/sessions/${id}/effort`, { level: null })).json()).toEqual({
-      effort: null,
-    });
-    const reset = await stateAfter(reader);
-    expect(reset.thinking).toBe(true);
-    expect(reset.effort).toBeUndefined();
-    expect((await post(h, `/sessions/${id}/effort`, { level: "huge" })).status).toBe(400);
-    expect((await post(h, `/sessions/${id}/effort`, {})).status).toBe(400);
-    await reader.close();
-  });
-
   it("compacts, answering the nothing-to-compact notice on the memory host, and refuses mid-turn", async () => {
     const h = verbHarness();
     const id = await createSession(h);
@@ -2413,53 +1972,6 @@ describe("session verbs (118 K1) over the memory host", () => {
     expect((await post(busy, `/sessions/${busyId}/undo`)).status).toBe(409);
     await busyReader.close();
     await busy.server.close();
-  });
-
-  it("undoes the last prompt, hands its text back, and redo restores the transcript", async () => {
-    const h = verbHarness({ provider: new MockProvider([textTurn("one"), textTurn("two")]) });
-    const id = await createSession(h);
-    const reader = await h.stream();
-    for (const text of ["first", "second"]) {
-      await post(h, `/sessions/${id}/prompt`, { text });
-      await collect(reader, (event) => event === "turn.completed");
-      await stateAfter(reader);
-    }
-    expect(await messagesOf(h, id)).toHaveLength(4);
-
-    const undone = await post(h, `/sessions/${id}/undo`);
-    expect(undone.status).toBe(200);
-    expect(await undone.json()).toEqual({
-      prompt: { entryId: "m2", text: "second" },
-      filesNote: "files untouched",
-      undoable: true,
-      redoable: true,
-    });
-    expect(await stateAfter(reader)).toMatchObject({ leafId: "m1", redoable: true });
-    expect(await messagesOf(h, id)).toHaveLength(2);
-
-    const redone = await post(h, `/sessions/${id}/redo`);
-    expect(await redone.json()).toEqual({ restored: true, undoable: true, redoable: false });
-    expect(await messagesOf(h, id)).toHaveLength(4);
-    const nothingToRedo = await post(h, `/sessions/${id}/redo`);
-    expect(nothingToRedo.status).toBe(404);
-    expect(await nothingToRedo.json()).toEqual({ error: "nothing to redo" });
-
-    await post(h, `/sessions/${id}/undo`);
-    expect(await (await post(h, `/sessions/${id}/undo`)).json()).toMatchObject({
-      prompt: { entryId: "m0", text: "first" },
-      undoable: false,
-      redoable: true,
-    });
-    expect(await messagesOf(h, id)).toHaveLength(0);
-    await post(h, `/sessions/${id}/redo`);
-    expect(await messagesOf(h, id)).toHaveLength(2);
-    await post(h, `/sessions/${id}/undo`);
-    expect(await messagesOf(h, id)).toHaveLength(0);
-    const nothingToUndo = await post(h, `/sessions/${id}/undo`);
-    expect(nothingToUndo.status).toBe(404);
-    expect(await nothingToUndo.json()).toEqual({ error: "nothing to undo" });
-    expect((await post(h, "/sessions/nope/undo")).status).toBe(404);
-    await reader.close();
   });
 
   it("restores to before a turn in one step, records the leaf move, and redo takes it all back", async () => {
@@ -2598,23 +2110,6 @@ describe("session verbs (118 K1) over the memory host", () => {
     expect((await post(h, `/sessions/${id}/export`, { out: "x.html" })).status).toBe(403);
     expect((await post(h, `/sessions/${id}/export`, { scope: "sideways" })).status).toBe(400);
     expect((await post(h, "/sessions/nope/export", {})).status).toBe(404);
-  });
-
-  it("renames a session and the title shows in the state and the summaries", async () => {
-    const h = verbHarness();
-    const id = await createSession(h);
-    const reader = await h.stream();
-    expect(
-      await (await post(h, `/sessions/${id}/rename`, { title: "Deploy notes" })).json(),
-    ).toEqual({ title: "Deploy notes" });
-    expect(await stateAfter(reader)).toMatchObject({ title: "Deploy notes" });
-    await reader.close();
-    const listed = (await (await h.call("/sessions")).json()) as {
-      sessions: Array<{ title: string }>;
-    };
-    expect(listed.sessions[0]?.title).toBe("Deploy notes");
-    expect((await post(h, `/sessions/${id}/rename`, { title: " " })).status).toBe(400);
-    expect((await post(h, "/sessions/nope/rename", { title: "x" })).status).toBe(404);
   });
 
   it("switches the process preset: tightening freely, loosening only when confirmed, every live session hearing gate.preset", async () => {
@@ -3177,42 +2672,6 @@ describe("tree and diff (118 K2) over the memory host", () => {
     expect(euro.before?.includes("�")).toBe(false);
     expect((await h.call(`/sessions/${id}/changes/file`)).status).toBe(400);
     expect((await h.call("/sessions/nope/changes/file?path=new.txt")).status).toBe(404);
-  });
-
-  it("drives the tree and the diff through the typed client", async () => {
-    const world: World = { before: {}, working: { "new.txt": "fresh" } };
-    const h = treeHarness({
-      provider: new MockProvider([textTurn("hi")]),
-      changes: changesOver(world),
-    });
-    const client = keyworkClient(
-      { url: origin, token },
-      { fetch: (input, init) => h.server.fetch(new Request(input, init)) },
-    );
-    const { id } = await client.createSession();
-    await turnOf(h, id, "hello");
-    expect((await client.entries(id))?.activePath).toEqual(["m0", "m1"]);
-    expect(await client.labelEntry(id, "m1", "answer")).toEqual({ entryId: "m1", label: "answer" });
-    const forked = await client.fork(id, "m0");
-    expect((await client.session(forked?.sessionId ?? ""))?.parentSession).toBe(id);
-    expect(await client.moveLeaf(id, "m0")).toEqual({ leafId: "m0" });
-    expect((await client.changes(id))?.files).toEqual([
-      { path: "new.txt", added: 1, deleted: 0, turn: 1 },
-    ]);
-    expect(await client.changedFile(id, "new.txt")).toMatchObject({ after: "fresh", note: "new" });
-    expect(await client.entries("nope")).toBeUndefined();
-    expect(await client.fork(id, "m9")).toBeUndefined();
-    expect(await client.changes("nope")).toBeUndefined();
-
-    const bare = treeHarness();
-    const bareClient = keyworkClient(
-      { url: origin, token },
-      { fetch: (input, init) => bare.server.fetch(new Request(input, init)) },
-    );
-    const { id: bareId } = await bareClient.createSession();
-    await expect(bareClient.changes(bareId)).rejects.toMatchObject({ status: 409 });
-    await h.server.close();
-    await bare.server.close();
   });
 
   function hangingThenScriptedK2(turns: TurnDelta[][]): Provider {

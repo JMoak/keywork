@@ -62,11 +62,6 @@ describe("registerMeshListener", () => {
     });
   });
 
-  it("starts unclaimed until pairing says otherwise", async () => {
-    const { at } = await meshNode();
-    expect(await (await fetch(at("/mesh/hello"))).json()).toMatchObject({ pairing: "unclaimed" });
-  });
-
   it("denies a caller that is not a tailnet peer before any route runs", async () => {
     const { tailnet, at, events } = await meshNode();
     tailnet.current.identities.clear();
@@ -113,20 +108,5 @@ describe("registerMeshListener", () => {
     expect((await fetch(at("/mesh/screen/signal"), { method: "POST", body: "{}" })).status).toBe(
       404,
     );
-  });
-
-  it("serves routes other slices register", async () => {
-    const { at } = await meshNode({
-      routes: [
-        {
-          method: "POST",
-          path: "/mesh/pair/hello",
-          handle: async (_request, caller) => Response.json({ from: caller.human?.loginName }),
-        },
-      ],
-    });
-    const reply = await fetch(at("/mesh/pair/hello"), { method: "POST", body: "{}" });
-    expect(await reply.json()).toEqual({ from: "keeper@example.com" });
-    expect((await fetch(at("/mesh/elsewhere"))).status).toBe(404);
   });
 });

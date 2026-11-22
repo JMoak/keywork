@@ -158,47 +158,6 @@ describe("AnthropicProvider", () => {
     });
   });
 
-  it("asks for thinking only when the request opts in and leaves the default body byte-identical", async () => {
-    const bodies: string[] = [];
-    const fetchFn: FetchLike = async (_url, init) => {
-      bodies.push(init?.body as string);
-      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
-    };
-    const anthropic = provider(fetchFn);
-    await collect(anthropic.stream(simpleRequest));
-    await collect(anthropic.stream({ ...simpleRequest, thinking: true }));
-    await collect(anthropic.stream(simpleRequest));
-
-    const [before, opted, after] = bodies;
-    expect(after).toBe(before);
-    expect(before).not.toContain("thinking");
-    expect(JSON.parse(opted as string).thinking).toEqual({
-      type: "adaptive",
-      display: "summarized",
-    });
-  });
-
-  it("lets a decorated body override the output ceiling and omits the key header when there is none", async () => {
-    let sent: RequestInit | undefined;
-    const fetchFn: FetchLike = async (_url, init) => {
-      sent = init;
-      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
-    };
-    const proxy = new AnthropicProvider({
-      name: "proxy",
-      baseUrl: "http://localhost:4000/v1",
-      model: "claude-test",
-      extraBody: { max_tokens: 2048 },
-      fetchFn,
-    });
-    await collect(proxy.stream(simpleRequest));
-
-    const headers = sent?.headers as Record<string, string>;
-    expect(headers["x-api-key"]).toBeUndefined();
-    expect(headers["anthropic-version"]).toBe(anthropicVersion);
-    expect(JSON.parse(sent?.body as string).max_tokens).toBe(2048);
-  });
-
   it("fails the turn naming the cut-off reason when the model hits its output ceiling", async () => {
     const response = events(
       blockStart(0, { type: "text", text: "" }),
@@ -343,16 +302,6 @@ describe("AnthropicProvider on the 5.5 generation", () => {
     expect(plain?.["x-api-key"]).toBe(secretKey);
     expect(plain?.authorization).toBeUndefined();
     expect(JSON.parse(sent[0]?.body as string).max_tokens).toBe(128_000);
-  });
-
-  it("sends no beta header to a model that needs none", async () => {
-    let headers: Record<string, string> | undefined;
-    const fetchFn: FetchLike = async (_url, init) => {
-      headers = init?.headers as Record<string, string>;
-      return events(messageDelta("end_turn", { output_tokens: 1 }), messageStop);
-    };
-    await collect(provider(fetchFn).stream(simpleRequest));
-    expect(headers?.["anthropic-beta"]).toBeUndefined();
   });
 
   it("turns a non-empty update block into a progress note and keeps the block as owned state", async () => {

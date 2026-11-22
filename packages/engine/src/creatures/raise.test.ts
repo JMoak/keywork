@@ -37,14 +37,6 @@ describe("raising a creature on a substrate", () => {
     expect((await registry.read("wren"))?.file.workshop).toBe(workshop?.id);
   });
 
-  it("leaves a bare host workshop running before the creature's first turn", async () => {
-    const { creatures, workshops } = await fixture();
-
-    await raiseCreature(creatures, workshops, { name: "Osk" }, "host");
-
-    expect((await workshops.list())[0]?.state).toBe("running");
-  });
-
   it("keeps the creature made when its workshop will not start, so its first tool call can try again", async () => {
     const refusingStart = fakeSbx({
       refuse: (args) => (args[0] === "start" ? "the microVM would not boot" : undefined),

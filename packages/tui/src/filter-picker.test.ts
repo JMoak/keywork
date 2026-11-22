@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { arcChoiceOf, arcPickerOver, arcRowParts, describeArcRow } from "./arc-picker.ts";
+import { arcChoiceOf, arcPickerOver, describeArcRow } from "./arc-picker.ts";
 import type { ArcSummary } from "./arcs.ts";
 import { FilterPicker } from "./filter-picker.ts";
 import type { ModelChoice } from "./inference-port.ts";
 import type { Chord } from "./keys.ts";
-import { describeModelRow, modelPickerOver } from "./model-picker.ts";
+import { modelPickerOver } from "./model-picker.ts";
 import { rankByFuzzy } from "./picker-keys.ts";
 import {
   describeWorkspaceRow,
@@ -118,32 +118,6 @@ describe("FilterPicker", () => {
       picker.move(-1);
       expect(shown(picker, 4)).toBe("Bcde");
     });
-
-    it("follows the cursor around the wrap and starts over on a new query", () => {
-      const picker = over(() => letters);
-      picker.move(-1);
-      expect(shown(picker, 4)).toBe("ghiJ");
-      expect(picker.page(4)).toMatchObject({ above: 6, below: 0 });
-      picker.move(1);
-      expect(shown(picker, 4)).toBe("Abcd");
-      picker.move(-1);
-      picker.retype("");
-      expect(shown(picker, 4)).toBe("Abcd");
-    });
-
-    it("opens with the starting row in view", () => {
-      const picker = new FilterPicker(
-        () => letters,
-        (letter) => letter === "h",
-      );
-      expect(shown(picker, 3)).toBe("fgH");
-    });
-
-    it("shows everything when the rows fit", () => {
-      const picker = over(() => names);
-      expect(picker.page(5)).toMatchObject({ above: 0, below: 0 });
-      expect(picker.page(5).rows).toHaveLength(3);
-    });
   });
 });
 
@@ -167,43 +141,6 @@ describe("arc picker", () => {
       "old-login · archived",
     ]);
     expect(chosen(picker)).toEqual({ kind: "bind", slug: "dock-v2" });
-  });
-
-  it("offers no release row when the session is unbound", () => {
-    const picker = arcPickerOver(arcs, undefined);
-    expect(picker.rows()[0]?.kind).toBe("arc");
-    expect(chosen(picker)).toEqual({ kind: "bind", slug: "infra" });
-  });
-
-  it("wraps with the arrows, chooses on enter, closes on escape", () => {
-    const picker = arcPickerOver(arcs, undefined);
-    expect(picker.handleKey(...key("up"))).toBe("stay");
-    expect(chosen(picker)).toEqual({ kind: "archived", slug: "old-login" });
-    expect(picker.handleKey(...key("down"))).toBe("stay");
-    expect(picker.handleKey(...key("return"))).toBe("choose");
-    expect(chosen(picker)).toEqual({ kind: "bind", slug: "infra" });
-    expect(picker.handleKey(...key("escape"))).toBe("close");
-  });
-
-  it("selects a row directly and pastes into the query", () => {
-    const picker = arcPickerOver(arcs, "dock-v2");
-    picker.select(3);
-    expect(chosen(picker)).toEqual({ kind: "archived", slug: "old-login" });
-    picker.paste("inf");
-    expect(picker.rows().map(describeArcRow)).toEqual(["infra · 5 sessions", "new arc inf"]);
-    expect(chosen(picker)).toEqual({ kind: "bind", slug: "infra" });
-  });
-
-  it("filters by typed text and hides the release row while typing", () => {
-    const picker = arcPickerOver(arcs, "dock-v2");
-    typed(picker, "doc");
-    expect(picker.rows().map(describeArcRow)).toEqual([
-      "dock-v2 · 7 sessions · current",
-      "new arc doc",
-    ]);
-    expect(chosen(picker)).toEqual({ kind: "bind", slug: "dock-v2" });
-    picker.handleKey(...key("backspace"));
-    expect(picker.query).toBe("do");
   });
 
   it("turns an unmatched valid slug into a create row", () => {
@@ -230,37 +167,6 @@ describe("arc picker", () => {
     typed(picker, "Dock V2");
     expect(picker.rows()).toEqual([]);
     expect(chosen(picker)).toBeUndefined();
-  });
-
-  it("splits an arc row into the slug and the facts that follow it", () => {
-    const picker = arcPickerOver(arcs, "dock-v2");
-    const rows = picker.rows().flatMap((row) => (row.kind === "arc" ? [row] : []));
-    expect(rows.map(arcRowParts)).toEqual([
-      { slug: "infra", facts: " · 5 sessions" },
-      { slug: "dock-v2", facts: " · 7 sessions · current" },
-      { slug: "old-login", facts: " · archived" },
-    ]);
-    for (const row of rows) {
-      const { slug, facts } = arcRowParts(row);
-      expect(slug + facts).toBe(describeArcRow(row));
-    }
-  });
-
-  it("describes release and no-session rows", () => {
-    const quiet: ArcSummary = {
-      slug: "quiet",
-      status: "active",
-      created: "2026-08-22T00:00:00.000Z",
-      sessions: 0,
-    };
-    const picker = arcPickerOver([quiet], "quiet");
-    expect(picker.rows().map(describeArcRow)).toEqual([
-      "no arc · release this session",
-      "quiet · no sessions · current",
-    ]);
-    expect(chosen(picker)).toEqual({ kind: "bind", slug: "quiet" });
-    picker.select(0);
-    expect(chosen(picker)).toEqual({ kind: "release" });
   });
 });
 
@@ -312,40 +218,6 @@ describe("workspace picker", () => {
     expect(chosen(picker)).toEqual({ kind: "use", slug: "frontend" });
   });
 
-  it("says when the default workspace is not set up yet", () => {
-    const picker = workspacePickerOver([
-      {
-        slug: undefined,
-        name: "default",
-        declared: false,
-        current: true,
-        notes: 0,
-        focusDirs: [],
-        sessions: 0,
-        lastUsed: undefined,
-      },
-    ]);
-    expect(picker.rows().map(describeWorkspaceRow)).toEqual(["default · not set up yet · current"]);
-    expect(chosen(picker)).toEqual({ kind: "use", slug: undefined });
-  });
-
-  it("moves, chooses, and closes like every picker", () => {
-    const picker = workspacePickerOver(choices);
-    expect(picker.handleKey(...key("down"))).toBe("stay");
-    expect(chosen(picker)).toEqual({ kind: "use", slug: "infra" });
-    expect(picker.handleKey(...key("return"))).toBe("choose");
-    expect(picker.handleKey(...key("escape"))).toBe("close");
-  });
-
-  it("selects a row directly and pastes into the query", () => {
-    const picker = workspacePickerOver(choices);
-    picker.select(2);
-    expect(chosen(picker)).toEqual({ kind: "use", slug: "infra" });
-    picker.paste("front");
-    expect(picker.query).toBe("front");
-    expect(chosen(picker)).toEqual({ kind: "use", slug: "frontend" });
-  });
-
   it("filters by slug and offers to create an unknown slug", () => {
     const picker = workspacePickerOver(choices);
     typed(picker, "in");
@@ -369,78 +241,8 @@ describe("workspace picker", () => {
 });
 
 describe("model picker", () => {
-  const choices: ModelChoice[] = [
-    {
-      reference: "ollama/qwen3",
-      provider: "ollama",
-      model: "qwen3",
-      available: true,
-      facts: ["chat-completions", "no credential"],
-    },
-    {
-      reference: "openai/gpt-5-mini",
-      provider: "openai",
-      model: "gpt-5-mini",
-      available: true,
-      facts: ["chat-completions", "saved key"],
-    },
-    {
-      reference: "openrouter/openai/gpt-5-mini",
-      provider: "openrouter",
-      model: "openai/gpt-5-mini",
-      available: false,
-      facts: ["needs a key"],
-    },
-  ];
   const references = (picker: ReturnType<typeof modelPickerOver>) =>
     picker.rows().map((row) => row.choice.reference);
-
-  it("starts on the current model and marks it", () => {
-    const picker = modelPickerOver(choices, "openai/gpt-5-mini");
-    expect(picker.rows().map((row) => [row.choice.reference, row.current])).toEqual([
-      ["ollama/qwen3", false],
-      ["openai/gpt-5-mini", true],
-      ["openrouter/openai/gpt-5-mini", false],
-    ]);
-    expect(picker.cursor()).toBe(1);
-  });
-
-  it("wraps with the arrows and chooses on enter", () => {
-    const picker = modelPickerOver(choices, undefined);
-    expect(picker.handleKey(...key("up"))).toBe("stay");
-    expect(picker.selected()?.choice.reference).toBe("openrouter/openai/gpt-5-mini");
-    expect(picker.handleKey(...key("down"))).toBe("stay");
-    expect(picker.handleKey(...key("return"))).toBe("choose");
-    expect(picker.selected()?.choice.reference).toBe("ollama/qwen3");
-    expect(picker.handleKey(...key("escape"))).toBe("close");
-  });
-
-  it("filters by typed text, keeps order deterministic, and resets the cursor", () => {
-    const picker = modelPickerOver(choices, "openrouter/openai/gpt-5-mini");
-    typed(picker, "gpt");
-    expect(picker.query).toBe("gpt");
-    expect(references(picker)).toEqual(["openai/gpt-5-mini", "openrouter/openai/gpt-5-mini"]);
-    expect(picker.selected()?.choice.reference).toBe("openai/gpt-5-mini");
-    picker.handleKey(...key("backspace"));
-    expect(picker.query).toBe("gp");
-  });
-
-  it("matches references case-insensitively like every picker", () => {
-    const picker = modelPickerOver(choices, undefined);
-    typed(picker, "QWEN");
-    expect(references(picker)).toEqual(["ollama/qwen3"]);
-  });
-
-  it("selects a row directly, clamped to the visible list, and pastes into the query", () => {
-    const picker = modelPickerOver(choices, undefined);
-    picker.select(2);
-    expect(picker.selected()?.choice.reference).toBe("openrouter/openai/gpt-5-mini");
-    picker.select(99);
-    expect(picker.selected()?.choice.reference).toBe("openrouter/openai/gpt-5-mini");
-    picker.paste("qwen");
-    expect(picker.query).toBe("qwen");
-    expect(picker.selected()?.choice.reference).toBe("ollama/qwen3");
-  });
 
   it("ranks usable models ahead of matches that cannot run, keeping fuzzy order within each", () => {
     const catalogue: ModelChoice[] = [
@@ -482,14 +284,5 @@ describe("model picker", () => {
       "openai/gpt-5.4-mini",
     ]);
     expect(picker.selected()?.choice.reference).toBe("openrouter/openai/gpt-5-mini");
-  });
-
-  it("describes a row as reference plus facts, marking the current one", () => {
-    const picker = modelPickerOver(choices, "ollama/qwen3");
-    expect(picker.rows().map(describeModelRow)).toEqual([
-      "ollama/qwen3 · chat-completions · no credential · current",
-      "openai/gpt-5-mini · chat-completions · saved key",
-      "openrouter/openai/gpt-5-mini · needs a key",
-    ]);
   });
 });

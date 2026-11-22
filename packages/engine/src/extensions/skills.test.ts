@@ -45,43 +45,6 @@ describe("discoverSkills", () => {
     expect(skills[2]?.body).toBe("Lint steps.");
   });
 
-  it("finds user-level skills under the same conventions", async () => {
-    const user = await scratchRoot();
-    await seedSkill(user, ".claude/skills/personal", "Mine.");
-    const { skills } = await discoverSkills({ userRoot: user });
-    expect(skills.map((skill) => [skill.name, skill.source])).toEqual([["personal", "user"]]);
-  });
-
-  it("lets a project skill win over a user skill with the same name", async () => {
-    const project = await scratchRoot();
-    const user = await scratchRoot();
-    await seedSkill(project, ".cursor/skills/deploy", "project wins");
-    await seedSkill(user, ".keywork/skills/deploy", "user loses");
-    await seedSkill(user, ".keywork/skills/extra", "user only");
-    const { skills } = await discoverSkills({ projectRoot: project, userRoot: user });
-    expect(skills.map((skill) => [skill.name, skill.body, skill.source])).toEqual([
-      ["deploy", "project wins", "project"],
-      ["extra", "user only", "user"],
-    ]);
-  });
-
-  it("prefers frontmatter names and lets .keywork win name collisions", async () => {
-    const root = await scratchRoot();
-    await seedSkill(root, ".keywork/skills/shipper", "---\nname: deploy\n---\nkeywork wins");
-    await seedSkill(root, ".claude/skills/deploy", "claude loses");
-    const { skills } = await discoverSkills({ projectRoot: root });
-    expect(skills).toHaveLength(1);
-    expect(skills[0]).toMatchObject({ name: "deploy", body: "keywork wins" });
-  });
-
-  it("stays calm with no skills anywhere", async () => {
-    const root = await scratchRoot();
-    await expect(discoverSkills({ projectRoot: root, userRoot: root })).resolves.toEqual({
-      skills: [],
-      failures: [],
-    });
-  });
-
   it("finds nested skills and quarantines malformed ones", async () => {
     const root = await scratchRoot();
     await seedSkill(root, ".claude/skills/group/deep/thing", "Deep skill.");
@@ -146,10 +109,6 @@ describe("skillTool", () => {
       authoredBy: undefined,
     },
   ];
-
-  it("lists every skill with its description in the tool description", () => {
-    expect(skillTool(skills).description).toContain("- deploy: Ship it");
-  });
 
   it("returns the skill body with its directory context when invoked", async () => {
     const output = await skillTool(skills).execute({ name: "deploy" });

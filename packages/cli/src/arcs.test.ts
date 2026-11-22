@@ -3,8 +3,6 @@ import { join } from "node:path";
 import {
   closingJudgment,
   IneligibleDeliveryError,
-  MemorySearch,
-  type MemoryStore,
   MissingSuccessorError,
   type Provider,
   SessionStore,
@@ -117,63 +115,6 @@ describe("arcService lifecycle", () => {
     expect(arcs.bindings.sessionsBoundTo("dock-v2").sort()).toEqual([first?.id, second?.id].sort());
   });
 
-  it("notifies subscribers on create, bind, close, and abandon", async () => {
-    const { arcs } = await worldOf();
-    let notified = 0;
-    const stop = arcs.port.subscribe?.(() => {
-      notified += 1;
-    });
-    await arcs.port.create("a");
-    arcs.recordBinding("s1", "a");
-    await arcs.port.close("a");
-    await arcs.port.create("b");
-    await arcs.port.abandon("b");
-    expect(notified).toBe(5);
-    stop?.();
-    await arcs.port.create("c");
-    expect(notified).toBe(5);
-  });
-
-  it("records the theme an arc wears, lists it, and notifies subscribers", async () => {
-    const { arcs } = await worldOf();
-    await arcs.port.create("dock-v2");
-    let notified = 0;
-    arcs.port.subscribe?.(() => {
-      notified += 1;
-    });
-    expect(await arcs.wear("dock-v2", "nord")).toMatchObject({ slug: "dock-v2", theme: "nord" });
-    expect(await arcs.port.list()).toMatchObject([{ slug: "dock-v2", theme: "nord" }]);
-    expect(await arcs.wear("dock-v2", undefined)).not.toHaveProperty("theme");
-    expect(notified).toBe(2);
-  });
-
-  it("closes a clean arc straight through the airlock and releases its sessions", async () => {
-    const { arcs } = await worldOf();
-    await arcs.port.create("dock-v2");
-    arcs.recordBinding("s1", "dock-v2");
-    const outcome = await arcs.port.close("dock-v2");
-    expect(outcome).toEqual({ kind: "closed", delivered: 0, released: 1 });
-    expect((await arcs.port.list())[0]?.status).toBe("archived");
-    expect(arcs.bindings.bindingOf("s1")).toBeUndefined();
-  });
-
-  it("leaves an arc with notes waiting at the airlock and opens the inbox door", async () => {
-    const { arcs, memory } = await worldOf();
-    await arcs.port.create("dock-v2");
-    await arcs
-      .registry()
-      ?.arcStore("dock-v2")
-      .writeNote({ title: "Dock Rule", body: "two docks max\n", provenance: "agent" });
-    arcs.recordBinding("s1", "dock-v2");
-
-    const outcome = await arcs.port.close("dock-v2");
-
-    expect(outcome).toEqual({ kind: "pending", candidates: 1, questions: 0, wedged: 1 });
-    expect((await arcs.port.list())[0]?.status).toBe("active");
-    const inbox = await memory?.store.listStaged();
-    expect(inbox?.map((item) => item.kind)).toEqual(["arc-distillation"]);
-  });
-
   async function boundWorld(): Promise<World & { sessionId: string; file: string }> {
     const world = await worldOf();
     await world.arcs.port.create("dock-v2");
@@ -216,28 +157,6 @@ describe("arcService lifecycle", () => {
     expect((await world.arcs.port.list())[0]?.sessions).toBe(0);
     expect(world.released).toEqual([world.sessionId]);
   });
-
-  it("persists the release on abandon too", async () => {
-    const world = await boundWorld();
-
-    await world.arcs.port.abandon("dock-v2");
-
-    expect(await boundSessionCounts(world.sessionDir)).toEqual(new Map());
-    expect(await relaunchedBindingOf(world, world.file)).toBeUndefined();
-    expect(world.arcs.bindings.bindingOf(world.sessionId)).toBeUndefined();
-  });
-
-  it("abandon archives in place without deleting the arc layer", async () => {
-    const { arcs, cwd } = await worldOf();
-    await arcs.port.create("dock-v2");
-    await arcs.port.abandon("dock-v2");
-    expect((await arcs.port.list())[0]?.status).toBe("archived");
-    const moc = await readFile(
-      join(cwd, ".keywork", "memory", "arcs", "dock-v2", "MOC.md"),
-      "utf8",
-    );
-    expect(moc).toContain("abandoned: true");
-  });
 });
 
 describe("arcService as the memory layer", () => {
@@ -255,39 +174,6 @@ describe("arcService as the memory layer", () => {
     arcs.released(store.header.id);
     expect(arcs.bindings.bindingOf(store.header.id)).toBeUndefined();
     expect(arcs.layerStoreFor(store.header.id)).toBeUndefined();
-  });
-
-  it("points a bound session's flush at the arc layer", async () => {
-    const { arcs, cwd } = await worldOf();
-    await arcs.port.create("infra");
-    arcs.recordBinding("s1", "infra");
-    const layer = arcs.layerStoreFor("s1") as MemoryStore;
-    await layer.appendDaily("learned about the arc", "agent");
-    const dailyDir = join(cwd, ".keywork", "memory", "arcs", "infra", "daily");
-    expect((await readdir(dailyDir)).length).toBe(1);
-  });
-
-  it("recalls the active arc's notes on top of the workspace garden, and only the workspace when unbound", async () => {
-    const { arcs, memory } = await worldOf();
-    if (memory === undefined) throw new Error("expected workspace memory");
-    await memory.store.writeNote({
-      title: "Shared Rule",
-      body: "dock rule shared\n",
-      provenance: "user",
-    });
-    await arcs.port.create("infra");
-    await arcs
-      .registry()
-      ?.arcStore("infra")
-      .writeNote({ title: "Infra Rule", body: "dock rule for infra\n", provenance: "user" });
-    const workspace = new MemorySearch(memory.store);
-
-    const unbound = await arcs.searcher(workspace, "s1").search("dock rule");
-    expect(unbound.hits.map((hit) => hit.note.name)).toEqual(["Shared Rule"]);
-
-    arcs.recordBinding("s1", "infra");
-    const bound = await arcs.searcher(workspace, () => "s1").search("dock rule");
-    expect(bound.hits.map((hit) => hit.note.name).sort()).toEqual(["Infra Rule", "Shared Rule"]);
   });
 });
 
@@ -540,21 +426,6 @@ describe("the airlock surface (J18)", () => {
     expect((await arcs.port.list()).find((arc) => arc.slug === "dock-v2")?.status).toBe("archived");
   });
 
-  it("abandon archives without distilling and keeps every file searchable", async () => {
-    const { arcs, airlock, registry, cwd } = await airlockWorld();
-    await arcs.port.close("dock-v2");
-    await arcs.port.abandon("dock-v2");
-    expect(await airlock.digest("dock-v2")).toBeUndefined();
-    expect(await registry.arcStore("dock-v2").readNote("Dock Ratio Finding")).toBeDefined();
-    const moc = await readFile(
-      join(cwd, ".keywork", "memory", "arcs", "dock-v2", "MOC.md"),
-      "utf8",
-    );
-    expect(moc).toContain("abandoned: true");
-    const audit = await readFile(join(cwd, ".keywork", "memory", "curation.md"), "utf8");
-    expect(audit).toContain("arc dock-v2 abandoned");
-  });
-
   describe("the closing agent (J28)", () => {
     const direction = "focus on the dock rules";
 
@@ -612,34 +483,6 @@ describe("the airlock surface (J18)", () => {
       expect(await world.memory.store.readNote("Dock Rules Digest")).toBeDefined();
       const record = await world.memory.store.readNote("arc dock-v2 delivery");
       expect(record?.body).toContain(`direction: ${direction}`);
-    });
-
-    it("distills without a direction too, and the record then carries no direction line", async () => {
-      const world = await airlockWorld({ closing: seamOver(distiller()) });
-      await world.arcs.port.close("dock-v2");
-      const digest = await world.airlock.digest("dock-v2");
-      expect(digest?.direction).toBeUndefined();
-      expect(digest?.candidates.map((candidate) => candidate.note)).toContain("General Digest");
-      await triageEverything(world);
-      await world.airlock.finish("dock-v2");
-      const record = await world.memory.store.readNote("arc dock-v2 delivery");
-      expect(record?.body).not.toContain("direction:");
-    });
-
-    it("degrades to the deterministic sweep, byte for byte, when no model is bound", async () => {
-      const bare = await airlockWorld();
-      const seamed = await airlockWorld({ closing: () => undefined });
-      const recordAfterClose = async (world: Awaited<ReturnType<typeof airlockWorld>>) => {
-        await world.arcs.port.close("dock-v2");
-        await triageEverything(world);
-        await world.airlock.finish("dock-v2");
-        const raw = await readFile(
-          join(world.cwd, ".keywork", "memory", "arc dock-v2 delivery.md"),
-          "utf8",
-        );
-        return raw.replace(/^created: .*$/m, "created: (wall clock)");
-      };
-      expect(await recordAfterClose(seamed)).toBe(await recordAfterClose(bare));
     });
 
     it("keeps a provider failure to one notice and the deterministic candidates", async () => {

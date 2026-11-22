@@ -3,7 +3,6 @@ import {
   canonicalRequest,
   credentialsFromEnv,
   regionFromEnv,
-  rfc3986Encode,
   type SigningInput,
   signRequest,
 } from "./sigv4.ts";
@@ -54,10 +53,6 @@ describe("signRequest", () => {
     expect(headers.authorization).toContain("SignedHeaders=content-type;host;x-amz-date");
   });
 
-  it("is deterministic for identical input", () => {
-    expect(signRequest(suiteInput)).toEqual(signRequest(suiteInput));
-  });
-
   it("double-encodes the already-encoded path in the canonical request", () => {
     const input: SigningInput = {
       ...suiteInput,
@@ -66,22 +61,6 @@ describe("signRequest", () => {
     const canonical = canonicalRequest(input, { host: input.url.host }, ["host"], "hash");
 
     expect(canonical.split("\n")[1]).toBe("/model/amazon.nova-lite-v1%253A0/converse-stream");
-  });
-
-  it("sorts and encodes query parameters canonically", () => {
-    const input: SigningInput = {
-      ...suiteInput,
-      url: new URL("https://example.amazonaws.com/?b=2&a=has space"),
-    };
-    const canonical = canonicalRequest(input, { host: input.url.host }, ["host"], "hash");
-
-    expect(canonical.split("\n")[2]).toBe("a=has%20space&b=2");
-  });
-});
-
-describe("rfc3986Encode", () => {
-  it("escapes the characters encodeURIComponent leaves bare", () => {
-    expect(rfc3986Encode("a!'()*b:c")).toBe("a%21%27%28%29%2Ab%3Ac");
   });
 });
 

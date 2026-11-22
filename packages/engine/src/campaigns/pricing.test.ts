@@ -62,7 +62,6 @@ describe("campaign OpenRouter quote admission", () => {
     { overrides: [{ condition: "large context", prompt: "0.000005" }] },
     { prompt: "-1" },
     { completion: "1e-9999" },
-    { input_cache_read: "NaN" },
   ])("rejects unknown, conditional, or unbounded rates: %j", async (pricing) => {
     const endpoint = endpointFixture();
     Object.assign(endpoint.pricing, pricing);

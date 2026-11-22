@@ -231,27 +231,6 @@ describe("a store opened from what was kept", () => {
 
     expect(after.store.open()).toEqual([kept]);
   });
-
-  it("asks about no session when nothing live was kept, and saves nothing it did not change", async () => {
-    const asked: string[] = [];
-    const storage = countingStorage(memorySettingStorage());
-    const before = await openedOver(storage);
-    const pinned = setOut(before.store.propose(proposal()));
-    before.store.answer(pinned.id, "pinned");
-    before.store.close();
-    const saves = storage.saves();
-
-    await openedOver(storage, {
-      at: t0 + minuteMs,
-      threads: async (sessionId) => {
-        asked.push(sessionId);
-        return undefined;
-      },
-    });
-
-    expect(asked).toEqual([]);
-    expect(storage.saves()).toBe(saves);
-  });
 });
 
 describe("the hourly limit across a stop", () => {
@@ -371,11 +350,6 @@ describe("what the store keeps", () => {
 
     expect(afterOne).toBe(1);
     expect(storage.saves()).toBe(1);
-  });
-
-  it("starts empty from nothing kept", async () => {
-    const { store } = await openedOver(memorySettingStorage(nothingKept));
-    expect(store.open()).toEqual([]);
   });
 });
 

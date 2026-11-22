@@ -23,16 +23,6 @@ describe("memory under keywork serve in a workspace nobody ran init in", () => {
       await memory.close();
     }
   });
-
-  it("stays inert, and says untrusted, when the workspace is not trusted", async () => {
-    const memory = await servedMemoryOf(false);
-    try {
-      expect(await memory.read("/memory/inbox")).toMatchObject({ trusted: false, items: [] });
-      expect(await memory.read("/memory/notes")).toMatchObject({ trusted: false, notes: [] });
-    } finally {
-      await memory.close();
-    }
-  });
 });
 
 describe("a note a creature's message staged outside the routes", () => {

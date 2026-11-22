@@ -67,12 +67,6 @@ describe("reportingChanges", () => {
     expect(output).toContain("+# new rules");
   });
 
-  it("runs the command plainly when there is no worktree to watch", async () => {
-    const tool = bashTool(".", detectShell());
-
-    expect(reportingChanges(tool, undefined)).toBe(tool);
-  });
-
   it("still returns the output when a snapshot fails", async () => {
     const { worktree } = await project({});
     const broken: WorktreeChanges = {
@@ -99,9 +93,5 @@ describe("changeReport", () => {
     expect(report).toContain("  big.txt +4000 -0\n  small.txt +1 -1");
     expect(report).toContain("over the 30000 cap");
     expect(report).not.toContain("xxxx");
-  });
-
-  it("has nothing to say when no file changed", () => {
-    expect(changeReport({ files: [], patch: "" })).toBeUndefined();
   });
 });

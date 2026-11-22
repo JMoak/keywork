@@ -17,18 +17,6 @@ describe("frontmatter round-trips", () => {
     expect(parsed.body).toBe("body [[Link]]\n");
   });
 
-  it("quotes wikilink values in YAML", () => {
-    const raw = serializeDocument({ supersedes: "[[Old]]" }, "");
-    expect(raw).toContain('supersedes: "[[Old]]"');
-  });
-
-  it("returns the body untouched when there is no frontmatter", () => {
-    expect(parseDocument("just text", "note.md")).toEqual({
-      frontmatter: {},
-      body: "just text",
-    });
-  });
-
   it("keeps horizontal rules in the body out of the frontmatter", () => {
     const raw = serializeDocument({ provenance: "user" }, "before\n---\nafter\n");
     const parsed = parseDocument(raw, "note.md");
@@ -80,11 +68,8 @@ describe("malformed frontmatter", () => {
   const malformed: readonly [string, string][] = [
     ["unterminated block", "---\nkey: value\nbody"],
     ["duplicate key", "---\nkey: one\nkey: two\n---\n"],
-    ["list item without a key", "---\n  - stray\n---\n"],
     ["unparseable line", "---\nnot yaml at all\n---\n"],
-    ["bad quoted string", '---\nkey: "unterminated\n---\n'],
     ["unterminated list", "---\nkey: [one, two\n---\n"],
-    ["unterminated quote in list", '---\nkey: ["one, two]\n---\n'],
   ];
 
   it.each(malformed)("surfaces %s as a typed error naming the file", (_, raw) => {

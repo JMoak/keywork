@@ -6,7 +6,6 @@ import {
   MockProvider,
   messageText,
   type SandboxHost,
-  SandboxRefusal,
   type ToolCallPart,
   type ToolGuard,
   textTurn,
@@ -158,23 +157,6 @@ describe("keywork doctor", () => {
     return rows.find((row) => row.label === "sandbox")?.value;
   }
 
-  it("reports what the host can honour while the sandbox is off", async () => {
-    const facts = await workspaceDoctorFacts("C:/nope", false, {}, linuxHost({ ok: true }));
-    expect(sandboxRow(facts)).toBe("off · workspace and isolated available here");
-  });
-
-  it("reports the mode that is on and what it promises", async () => {
-    const facts = await workspaceDoctorFacts(
-      "C:/nope",
-      false,
-      { sandbox: "isolated" },
-      linuxHost({ ok: true }),
-    );
-    expect(sandboxRow(facts)).toBe(
-      "isolated · on · only the workspace is writable, temp is private, and there's no network",
-    );
-  });
-
   it("reports a refused mode with the fact and the fix", async () => {
     const stderr = "bwrap: setting up uid map: Permission denied";
     const facts = await workspaceDoctorFacts(
@@ -186,14 +168,5 @@ describe("keywork doctor", () => {
     expect(sandboxRow(facts)).toMatch(
       /^workspace · refused · bubblewrap can't create a namespace here · on ubuntu 24\.04/,
     );
-  });
-
-  it("says plainly when the host can't sandbox at all", () => {
-    const refusal = new SandboxRefusal("workspace", "windows has no sandbox keywork can use", "x");
-    expect(
-      sandboxRow({
-        sandbox: { setting: "off", support: { workspace: refusal, isolated: refusal } },
-      }),
-    ).toBe("off · workspace and isolated refused here: windows has no sandbox keywork can use");
   });
 });

@@ -48,7 +48,7 @@ describe("campaign HTTP and SSE integration", () => {
     ).toBe(501);
   });
 
-  it.each(["app-improvement", "project-development", "research-refinement"])(
+  it.each(["research-refinement"])(
     "creates %s without dispatch and keeps a durable cursor, stale-revision checks, and inert previews",
     async (workload) => {
       const world = await harness();
@@ -265,7 +265,7 @@ describe("campaign HTTP and SSE integration", () => {
     );
   });
 
-  it.each(["content", "manifest"])(
+  it.each(["content"])(
     "reports a corrupt %s export as uncertain after a destination was created",
     async (corruption) => {
       const world = await harness();

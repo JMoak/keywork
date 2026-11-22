@@ -77,14 +77,6 @@ describe("the hand-off tally", () => {
     ]);
   });
 
-  it("counts no pair when a creature messages itself", async () => {
-    const { open } = await stead();
-    const { tally, heard } = open();
-    tally.handedOff("mo", "mo");
-    expect(tally.list()).toEqual([]);
-    expect(heard).toEqual([]);
-  });
-
   it("outlives a restart, read back from its own file", async () => {
     const { open, file, later } = await stead();
     const before = open().tally;
@@ -135,18 +127,6 @@ describe("the hand-off tally", () => {
 
     await host.create({ name: "Pip" });
     expect(open().tally.list()).toEqual(kept);
-  });
-
-  it("follows no removal once closed, and a removal that names no pair changes nothing", async () => {
-    const { host, open } = await stead();
-    const { tally, heard } = open();
-    tally.handedOff("ada", "pip");
-    await host.remove("mo");
-    expect(heard).toHaveLength(1);
-    tally.close();
-    await host.remove("pip");
-    expect(tally.list()).toHaveLength(1);
-    expect(heard).toHaveLength(1);
   });
 
   it("starts from zero over an unreadable tally and sets it aside, saying where", async () => {

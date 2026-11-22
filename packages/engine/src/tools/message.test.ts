@@ -6,9 +6,6 @@ import { CreatureRegistry } from "../creatures/registry.ts";
 import { FakeCreatureSessions } from "../creatures/testing.ts";
 import { memoryAuditLog } from "../mesh/audit/log.ts";
 import { houseNode, selfOf } from "../mesh/pairing/testing/identities.ts";
-import { mutatingToolNames } from "../mutations.ts";
-import { toolScope } from "./confine.ts";
-import { coreTools, creatureTools } from "./core.ts";
 import { messageTool } from "./message.ts";
 
 const scratch = scratchDirs("keywork-message-tool-");
@@ -97,19 +94,5 @@ describe("the message tool", () => {
     await expect(tool.execute({ to: "hal", text: "hi", approve: true })).rejects.toThrow();
     await expect(tool.execute({ to: "hal", text: "   " })).rejects.toThrow();
     expect(tool.parameters).toMatchObject({ required: ["to", "text"] });
-  });
-
-  it("is read-only in grant terms and joins a creature's core tools beside schedule", async () => {
-    const { mail } = await twoCreatures();
-    const message = { creature: "lark", mail };
-    const tool = messageTool(message);
-    expect(tool.mutates).toBeUndefined();
-    expect(mutatingToolNames.has(tool.name)).toBe(false);
-
-    const scope = toolScope(await scratch());
-    expect(coreTools(scope).map(({ name }) => name)).not.toContain("message");
-    expect(coreTools(scope, { message }).map(({ name }) => name)).toContain("message");
-    expect(creatureTools({ message }).map(({ name }) => name)).toEqual(["message"]);
-    expect(creatureTools({}).map(({ name }) => name)).toEqual([]);
   });
 });

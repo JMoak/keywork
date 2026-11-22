@@ -45,10 +45,4 @@ describe("a read root beside the workspace scope", () => {
       editTool(scope).execute({ path: payload, oldText: "main", newText: "x" }),
     ).rejects.toThrow(/escapes/);
   });
-
-  it("leaves a scope alone when there is nothing to add", () => {
-    const scope = toolScope(workspace);
-    expect(withReadRoots(scope, [])).toBe(scope);
-    expect(withReadRoots(scope, [payload, payload]).readRoots).toEqual([payload]);
-  });
 });

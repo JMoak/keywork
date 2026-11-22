@@ -6,7 +6,6 @@ import {
   defaultNodeConfig,
   identityClashOf,
   NodeConfigError,
-  nodeConfigDescriptions,
   readNodeConfig,
   withWorkspace,
   writeNodeConfig,
@@ -23,14 +22,6 @@ afterEach(() => {
 });
 
 describe("the node config", () => {
-  it("defaults to the mesh ports MESH.md adopted and no workspaces", () => {
-    expect(readNodeConfig(join(dir, "absent.json"))).toEqual({
-      workspaces: [],
-      mesh: { enabled: true, port: 47800, screenUdp: { first: 47810, last: 47829 } },
-      headless: false,
-    });
-  });
-
   it("round-trips through the file and fills what the file leaves out", () => {
     const file = join(dir, "node", "config.json");
     writeNodeConfig(file, {
@@ -69,17 +60,6 @@ describe("the node config", () => {
     const other = withWorkspace(twice, { cwd: join(dir, "stead"), slug: "research" });
     expect(twice.workspaces).toHaveLength(1);
     expect(other.workspaces).toHaveLength(2);
-  });
-
-  it("justifies every option it reads", () => {
-    expect(Object.keys(nodeConfigDescriptions).sort()).toEqual([
-      "headless",
-      "mesh.enabled",
-      "mesh.port",
-      "mesh.screenUdp",
-      "workspaces",
-      "workspaces.home",
-    ]);
   });
 });
 

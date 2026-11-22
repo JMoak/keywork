@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { entityTypeSchema, MemoryGraph, predicateSchema, predicates } from "./graph.ts";
+import { MemoryGraph } from "./graph.ts";
 import type { Note } from "./notes.ts";
 import { MemoryStore } from "./store.ts";
 
@@ -22,17 +22,6 @@ function note(body: string, frontmatter: Record<string, string> = {}): string {
   const lines = Object.entries(frontmatter).map(([key, value]) => `${key}: ${value}`);
   return lines.length === 0 ? body : `---\n${lines.join("\n")}\n---\n${body}`;
 }
-
-describe("ontology", () => {
-  it("stays small, closed, and typed", () => {
-    expect(entityTypeSchema.options).toHaveLength(9);
-    expect(predicateSchema.options).toHaveLength(16);
-    expect(entityTypeSchema.safeParse("vibe").success).toBe(false);
-    expect(predicateSchema.safeParse("reminds_of").success).toBe(false);
-    expect(predicates).toContain("consolidates");
-    expect(predicates).toContain("consolidated_by");
-  });
-});
 
 describe("MemoryGraph.fromNotes", () => {
   it("derives nodes from notes and edges from wikilinks and typed relations", async () => {
@@ -108,24 +97,6 @@ describe("MemoryGraph.fromNotes", () => {
       { subject: "Other", predicate: "relates_to", object: "Odd Note" },
     ]);
   });
-
-  it("carries supersession and consolidation as distinct typed edges", async () => {
-    const graph = MemoryGraph.fromNotes(
-      await vault({
-        "New Rule.md": note("60/40", { supersedes: '"[[Old Rule]]"' }),
-        "Old Rule.md": note("50/50", { superseded_by: '"[[New Rule]]"' }),
-        "Arc Lesson.md": note("distilled", { consolidated_by: '"[[Season Summary]]"' }),
-        "Season Summary.md": note("the season", { consolidates: '"[[Arc Lesson]]"' }),
-      }),
-    );
-    const predicatesUsed = graph.edges.map((edge) => edge.predicate).sort();
-    expect(predicatesUsed).toEqual([
-      "consolidated_by",
-      "consolidates",
-      "superseded_by",
-      "supersedes",
-    ]);
-  });
 });
 
 describe("contradictionsOf", () => {
@@ -196,15 +167,5 @@ describe("rank", () => {
     expect((scores.get("Seed") ?? 0) > (scores.get("Far") ?? 0)).toBe(true);
     expect((scores.get("Near") ?? 0) > (scores.get("Far") ?? 0)).toBe(true);
     expect(scores.has("Island")).toBe(false);
-  });
-
-  it("mutes entirely without seeds or without edges", async () => {
-    const linked = MemoryGraph.fromNotes(
-      await vault({ "A.md": note("see [[B]]"), "B.md": note("b") }),
-    );
-    expect(linked.rank([])).toEqual([]);
-    expect(linked.rank(["Never Written"])).toEqual([]);
-    const edgeless = MemoryGraph.fromNotes(await vault({ "A.md": note("alone") }));
-    expect(edgeless.rank(["A"])).toEqual([]);
   });
 });

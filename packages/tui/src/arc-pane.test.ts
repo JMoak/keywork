@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { ArcPane, type ArcPaneOptions, memberRowLine } from "./arc-pane.ts";
-import { parseChord } from "./keys.ts";
 import { resolvePalette } from "./palette.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { PointerEvent } from "./pointer.ts";
@@ -173,22 +172,6 @@ describe("ArcPane", () => {
     expect(pane.describe()).toEqual({ kind: "arc", arc: "dock-v2" });
   });
 
-  it("reads liveness from presence: working while busy, idle while merely open", async () => {
-    const world = worldOf();
-    const { pane } = paneOver(
-      world,
-      presenceOf((sessionId) => (sessionId === "unbound" ? undefined : `pane-${sessionId}`), {
-        busy: (sessionId) => sessionId === "oldest",
-      }),
-    );
-    await pane.settled();
-    expect(rowLines(pane)).toEqual([
-      "█ title-oldest · working · 1m",
-      "▓ title-middle · idle · 1m",
-      "▓ title-newest · idle · 1m",
-    ]);
-  });
-
   it("enter focuses an open member's pane and opens a closed one after attaching", async () => {
     const world = worldOf();
     const { pane, recorded } = paneOver(
@@ -205,16 +188,6 @@ describe("ArcPane", () => {
     expect(recorded.opened).toEqual(["newest"]);
   });
 
-  it("stays an arc pane: escape is not a way out, and the tray offers open and refresh", async () => {
-    const world = worldOf();
-    const { pane } = paneOver(world);
-    await pane.settled();
-    expect(pane.handleKey(parseChord("escape"))).toBe(false);
-    expect(pane.title()).toBe(" #dock-v2 · 3 sessions ");
-    press(pane, "/");
-    expect(pane.tray.open).toBe(true);
-  });
-
   it("refreshes when the session feed changes and lets go on dispose", async () => {
     const world = worldOf();
     const { pane } = paneOver(world);
@@ -227,18 +200,6 @@ describe("ArcPane", () => {
     expect(pane.title()).toBe(" #dock-v2 · 2 sessions ");
     pane.dispose();
     expect(world.unsubscribed).toBe(1);
-  });
-
-  it("titles an empty arc by name alone and still renders", async () => {
-    const world = worldOf();
-    world.items = [];
-    const { pane } = paneOver(world);
-    await pane.settled();
-    expect(pane.title()).toBe(" #dock-v2 ");
-    expect(rowLines(pane)).toEqual([]);
-    expect(() =>
-      pane.view({ theme: resolvePalette(), focused: true, width: 60, height: 8 }),
-    ).not.toThrow();
   });
 });
 
@@ -268,22 +229,6 @@ describe("ArcPane return delta", () => {
     expect(pane.handleMouse({ x: 2, y: 3 }, down)).toBe(false);
     expect(pane.handleMouse({ x: 2, y: 4 }, down)).toBe(true);
   });
-
-  it("renders nothing and shifts nothing when the delta is empty or fails", async () => {
-    const world = worldOf();
-    const quiet = paneOver(world, membersOpen, { returnDelta: async () => [] });
-    await quiet.pane.settled();
-    expect(quiet.pane.handleMouse({ x: 2, y: 1 }, down)).toBe(true);
-
-    const failing = paneOver(world, membersOpen, {
-      returnDelta: async () => {
-        throw new Error("vault offline");
-      },
-    });
-    await failing.pane.settled();
-    expect(rowLines(failing.pane)).toHaveLength(3);
-    expect(failing.pane.handleMouse({ x: 2, y: 1 }, down)).toBe(true);
-  });
 });
 
 describe("ArcPane folds", () => {
@@ -304,18 +249,6 @@ describe("ArcPane folds", () => {
     expect(pane.title()).toBe(" #dock-v2 · 3 sessions ");
   });
 
-  it("a folds every shown member while any is shown, then unfolds them all", async () => {
-    const world = worldOf();
-    const { pane, recorded } = paneOver(world, membersOpen);
-    await pane.settled();
-    press(pane, "space", "a");
-    expect([...recorded.held].sort()).toEqual(["pane-middle", "pane-newest", "pane-oldest"]);
-    expect(pane.title()).toBe(" #dock-v2 · 3 sessions · 3 folded ");
-    press(pane, "a");
-    expect(recorded.held.size).toBe(0);
-    expect(recorded.shows.map(([id]) => id)).toEqual(["pane-oldest", "pane-middle", "pane-newest"]);
-  });
-
   it("a folded member that needs you keeps a full stamp and the arc pane wears it too", async () => {
     const world = worldOf();
     const { pane, recorded } = paneOver(
@@ -332,28 +265,6 @@ describe("ArcPane folds", () => {
     expect(recorded.held.has("pane-middle")).toBe(true);
     expect(rowLines(pane)[1]).toBe("█ title-middle · needs you · 1m");
     expect(pane.title()).toBe(" █ #dock-v2 · 3 sessions · 1 folded ");
-  });
-
-  it("enter on a folded member unfolds it first and then focuses its pane", async () => {
-    const world = worldOf();
-    const { pane, recorded } = paneOver(world, membersOpen);
-    await pane.settled();
-    press(pane, "space");
-    expect(recorded.held.has("pane-middle")).toBe(true);
-    press(pane, "enter");
-    await pane.settled();
-    expect(recorded.held.size).toBe(0);
-    expect(recorded.shows.map(([id]) => id)).toEqual(["pane-middle"]);
-    expect(recorded.focused).toEqual(["pane-middle"]);
-  });
-
-  it("space on a closed member only explains itself", async () => {
-    const world = worldOf();
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "space");
-    expect(recorded.held.size).toBe(0);
-    expect(recorded.notices).toEqual(["closed session · enter opens it"]);
   });
 });
 

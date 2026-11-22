@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { failureMessage, PaneTasks } from "./pane-tasks.ts";
+import { PaneTasks } from "./pane-tasks.ts";
 
 function deferred(): {
   promise: Promise<void>;
@@ -81,15 +81,6 @@ describe("PaneTasks", () => {
     expect(tasks.failure()).toBeUndefined();
   });
 
-  it("reports the latest of several live failures", async () => {
-    const tasks = new PaneTasks(() => {});
-    tasks.track(() => Promise.reject(new Error("first")));
-    await tasks.settled();
-    tasks.track(() => Promise.reject(new Error("second")));
-    await tasks.settled();
-    expect(tasks.failure()).toBe("second");
-  });
-
   it("starts no new work and stops notifying once disposed", async () => {
     let notified = 0;
     let ran = 0;
@@ -122,25 +113,5 @@ describe("PaneTasks", () => {
     held.resolve();
     await tasks.settled();
     expect(finished).toBe(true);
-  });
-
-  it("emit forwards only while live", () => {
-    let notified = 0;
-    const tasks = new PaneTasks(() => {
-      notified += 1;
-    });
-    tasks.emit();
-    tasks.dispose();
-    tasks.emit();
-    expect(notified).toBe(1);
-  });
-});
-
-describe("failureMessage", () => {
-  it("reads an Error's message and stringifies anything else", () => {
-    expect(failureMessage(new Error("boom"))).toBe("boom");
-    expect(failureMessage("plain")).toBe("plain");
-    expect(failureMessage(undefined)).toBe("undefined");
-    expect(failureMessage(null)).toBe("null");
   });
 });

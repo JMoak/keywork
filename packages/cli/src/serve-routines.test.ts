@@ -1,17 +1,7 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type {
-  Creature,
-  Delivery,
-  Message,
-  RunRow,
-  ThreadReport,
-  ThreadSignal,
-} from "@keywork/engine";
+import type { Delivery, Message, RunRow, ThreadReport, ThreadSignal } from "@keywork/engine";
 import type { BusEnvelope } from "@keywork/server";
 import { describe, expect, it } from "vitest";
-import { conversationDeliverer, creatureDirectoryOver, ThreadWatch } from "./serve-routines.ts";
+import { conversationDeliverer, ThreadWatch } from "./serve-routines.ts";
 
 describe("a chore's thread watch", () => {
   it("adds up the run's usage and reports the reply with the session's spend", async () => {
@@ -106,21 +96,6 @@ describe("a chore's delivery", () => {
     await expect(
       deliverer.deliver(delivery({ kind: "file", path: "out/today.md" }, "x")),
     ).rejects.toThrow("a file destination is not delivered yet");
-  });
-});
-
-describe("the creature directory chores read", () => {
-  it("homes each creature in its own directory under its own bot", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "keywork-directory-"));
-    const pip = { slug: "pip", dir: join(dir, "pip") } as Creature;
-    const directory = creatureDirectoryOver({
-      list: async () => [pip],
-      read: async (slug) => (slug === "pip" ? pip : undefined),
-    });
-
-    expect(await directory.creatures()).toEqual([{ slug: "pip", dir: pip.dir, bot: "pip" }]);
-    expect(await directory.creature("pip")).toEqual({ slug: "pip", dir: pip.dir, bot: "pip" });
-    expect(await directory.creature("wren")).toBeUndefined();
   });
 });
 

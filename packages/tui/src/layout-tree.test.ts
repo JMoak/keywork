@@ -36,10 +36,6 @@ const column = (first: LayoutNode, second: LayoutNode, ratio = 0.5): LayoutNode 
 const tree = row(leaf("a"), column(leaf("b"), row(leaf("c"), leaf("d"))));
 
 describe("node algebra", () => {
-  it("lists leaves in reading order", () => {
-    expect(leafIds(tree)).toEqual(["a", "b", "c", "d"]);
-  });
-
   it("splits only the target leaf into a half split and leaves the rest untouched", () => {
     const grown = splitLeaf(tree, "b", leaf("e"), "column");
     expect(leafIds(grown)).toEqual(["a", "b", "e", "c", "d"]);

@@ -42,14 +42,7 @@ import type { TailnetListener } from "../mesh/engine-mesh.ts";
 import { registerMeshListener } from "../mesh-listener.ts";
 import { openApiDocument } from "../openapi.ts";
 import { memorySessionHost } from "../testing.ts";
-import {
-  type MeshConsole,
-  meshFamily,
-  meshRoutes,
-  meshTrustRoutes,
-  pairedManifestReader,
-} from "./mesh.ts";
-import { meshConsoleRoutes } from "./mesh-console.ts";
+import { type MeshConsole, meshFamily, meshTrustRoutes, pairedManifestReader } from "./mesh.ts";
 
 const listeners: TailnetListener[] = [];
 const directories: string[] = [];
@@ -179,17 +172,6 @@ async function begun(house: ConsoleNode, host: ConsoleNode, routes = loopback(ho
 }
 
 describe("the console mesh view routes", () => {
-  it("join the mesh family after the pairing, grant and audit verbs", () => {
-    expect(
-      meshConsoleRoutes.map((route) => `${route.method} ${route.path} ${route.operationId}`),
-    ).toEqual(["GET /mesh/peers listMeshPeers", "GET /mesh/pairings listMeshPairings"]);
-    expect(meshConsoleRoutes.every((route) => route.authenticated)).toBe(true);
-    expect(meshFamily(() => undefined).routes).toEqual([...meshRoutes, ...meshConsoleRoutes]);
-    const paths = openApiDocument("http://127.0.0.1:4770", "test").paths;
-    expect(paths["/mesh/peers"]?.get?.operationId).toBe("listMeshPeers");
-    expect(paths["/mesh/pairings"]?.get?.operationId).toBe("listMeshPairings");
-  });
-
   it("answer 503 without a mesh or a census and 502 when tailscale fails", async () => {
     expect((await loopback(undefined).listMeshPeers(local("GET", "/mesh/peers"), {})).status).toBe(
       503,

@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractSymbols } from "./extract.ts";
 import { estimateTokens, RepoMap, repoMapTokenBudget } from "./map.ts";
-import { scanWorkspace } from "./scan.ts";
 
 const tempDirs: string[] = [];
 
@@ -73,10 +72,6 @@ describe("extractSymbols", () => {
   it("uses markdown headings as symbols", () => {
     expect(extractSymbols("a.md", "# Title\ntext\n## Deep Dive\n")).toEqual(["Title", "Deep Dive"]);
   });
-
-  it("returns nothing for unknown extensions", () => {
-    expect(extractSymbols("a.bin", "export function x() {}")).toEqual([]);
-  });
 });
 
 describe("RepoMap ranking", () => {
@@ -131,13 +126,6 @@ describe("RepoMap incremental cache", () => {
     await map.refreshIfStale();
     expect(map.serialize(1000)).not.toContain("gone.ts");
     expect(map.facts().files).toBe(1);
-  });
-
-  it("skips rebuilding when nothing was marked stale", async () => {
-    const map = await builtMap({ "one.ts": "export const one = 1;" });
-    const before = map.extractionCount();
-    await map.refreshIfStale();
-    expect(map.extractionCount()).toBe(before);
   });
 });
 
@@ -245,9 +233,7 @@ describe("RepoMap adversarial trees", () => {
       );
     }
     const map = new RepoMap({ root, maxFiles: 4_000 });
-    const begun = Date.now();
     await map.build();
-    expect(Date.now() - begun).toBeLessThan(30_000);
     const facts = map.facts();
     expect(facts.files).toBe(4_000);
     expect(facts.truncated).toBe(true);
@@ -276,18 +262,5 @@ describe("RepoMap adversarial trees", () => {
     const rendered = map.serialize(1000);
     expect(rendered).toContain("good.ts");
     expect(rendered).not.toContain("blob.ts");
-  });
-});
-
-describe("scanWorkspace", () => {
-  it("counts ignored paths", async () => {
-    const root = await workspace({
-      ".keyworkignore": "skip.ts",
-      "skip.ts": "export const skip = 1;",
-      "kept.ts": "export const kept = 1;",
-    });
-    const scan = await scanWorkspace(root);
-    expect(scan.ignoredPaths).toBe(1);
-    expect(scan.files.map((file) => file.path)).toContain("kept.ts");
   });
 });

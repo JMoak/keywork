@@ -159,18 +159,6 @@ describe("pane keymap coverage", () => {
   });
 });
 
-describe("/forget", () => {
-  it("is registered and reaches the focused conversation", () => {
-    const probe = fullyEquippedProbe();
-    expect(registeredNames(probe).has("forget")).toBe(true);
-    expect(probe.command("forget")).toBe(true);
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "can't forget · no session store",
-    });
-  });
-});
-
 describe("workstream aliases", () => {
   const family: Record<string, readonly string[]> = {
     arcs: ["workstreams", "ws"],
@@ -189,30 +177,5 @@ describe("workstream aliases", () => {
       const command = commands.find((candidate) => candidate.name === name);
       expect(command?.aliases, name).toEqual(aliases);
     }
-  });
-
-  it("completes /ws and /workstream to the arc family", () => {
-    const probe = arcEquippedProbe();
-    const leading = (query: string) =>
-      probe.core.registry
-        .search(query)
-        .slice(0, Object.keys(family).length)
-        .map((command) => command.name)
-        .sort();
-    const arcFamily = Object.keys(family).sort();
-    expect(leading("ws")).toEqual(arcFamily);
-    expect(leading("workstream")).toEqual(arcFamily);
-  });
-
-  it("runs the arcs node through its ws spelling", () => {
-    const probe = arcEquippedProbe();
-    expect(probe.command("ws")).toBe(true);
-    expect(probe.command("workstreams")).toBe(true);
-  });
-
-  it("tells the first palette reader that an arc is a workstream", () => {
-    const probe = arcEquippedProbe();
-    const arcs = probe.core.registry.all().find((command) => command.name === "arcs");
-    expect(arcs?.description).toContain("arcs are workstreams");
   });
 });

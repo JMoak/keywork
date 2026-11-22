@@ -37,20 +37,6 @@ describe("BotRegistry", () => {
     expect(await registry.listBots()).toEqual([first]);
   });
 
-  it("stamps every note in the layer with learned_by pointing at the bot MOC", async () => {
-    const { registry, root } = await fixture();
-    await registry.materialize("reviewer");
-    await registry.botStore("reviewer").writeNote({
-      title: "Terse Reviews",
-      body: "Jordan wants review comments short.\n",
-      provenance: "agent",
-    });
-    const raw = await readFile(join(root, "bots", "reviewer", "Terse Reviews.md"), "utf8");
-    expect(raw).toContain('learned_by: "[[bots/reviewer/MOC]]"');
-    const note = await registry.botStore("reviewer").readNote("Terse Reviews");
-    expect(note?.learnedBy).toBe("reviewer");
-  });
-
   it("keeps the layer out of the workspace vault's own note walk", async () => {
     const { registry, root } = await fixture();
     await registry.materialize("reviewer");

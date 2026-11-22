@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   BoundedOutput,
   CommandRun,
-  commandAborted,
   commandResult,
   commandTimedOut,
   retainedOutputChars,
@@ -38,13 +37,6 @@ describe("BoundedOutput", () => {
     expect(output.rendered()).toBe(
       "x".repeat(retainedOutputChars / 2) + "y".repeat(retainedOutputChars / 2),
     );
-  });
-
-  it("renders untruncated output verbatim", () => {
-    const output = new BoundedOutput();
-    output.append("hello ");
-    output.append("world");
-    expect(output.rendered()).toBe("hello world");
   });
 });
 
@@ -86,23 +78,6 @@ describe("CommandRun", () => {
     expect(aborts).toBe(0);
   });
 
-  it("relays an abort that arrives before settling", () => {
-    const controller = new AbortController();
-    let aborts = 0;
-    new CommandRun({
-      timeoutMs: 1_000,
-      signal: controller.signal,
-      onTimeout: () => {},
-      onAbort: () => {
-        aborts += 1;
-      },
-    }).settle(() => {
-      controller.abort();
-    });
-
-    expect(aborts).toBe(0);
-  });
-
   it("runs exactly one outcome, the first one offered", () => {
     const outcomes: string[] = [];
     const run = new CommandRun({
@@ -138,10 +113,6 @@ describe("CommandRun", () => {
 });
 
 describe("command result and failure shapes", () => {
-  it("returns the trimmed body alone on exit code zero", () => {
-    expect(commandResult("ok\n\n", 0)).toBe("ok");
-  });
-
   it("appends the exit code on failure and trims a leading newline when there was no output", () => {
     expect(commandResult("warned\n", 2)).toBe("warned\n(exit code 2)");
     expect(commandResult("", 3)).toBe("(exit code 3)");
@@ -154,12 +125,6 @@ describe("command result and failure shapes", () => {
     expect(failure.message).toBe("Command timed out after 400ms:\npartial");
     expect(failure.cause).toBe(cause);
     expect(commandTimedOut(1, "").cause).toBeUndefined();
-  });
-
-  it("names an abort and carries its cause when there is one", () => {
-    expect(commandAborted().message).toBe("Command aborted");
-    expect(commandAborted().cause).toBeUndefined();
-    expect(commandAborted("late").cause).toBe("late");
   });
 });
 

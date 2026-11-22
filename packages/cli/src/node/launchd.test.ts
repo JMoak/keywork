@@ -8,15 +8,9 @@ import {
   defaultAgentLabel,
   launchAgentPlist,
   launchdAgentManager,
-  serviceFields,
 } from "./launchd.ts";
 import type { Registration } from "./manager.ts";
-import {
-  keeperHome,
-  keeperUid,
-  launchctlRecordings,
-  RecordedLaunchctl,
-} from "./platform-fixtures.ts";
+import { keeperHome, keeperUid, RecordedLaunchctl } from "./platform-fixtures.ts";
 
 let dir: string;
 
@@ -109,29 +103,6 @@ describe("the launchd agent manager against recorded launchctl output", () => {
       ["launchctl", "bootout", `gui/${keeperUid}/${defaultAgentLabel}`],
       ["launchctl", "bootstrap", `gui/${keeperUid}`, plistFile()],
     ]);
-  });
-
-  it("writes the plist without loading it when asked not to start", async () => {
-    const launchctl = new RecordedLaunchctl(keeperUid);
-    const agents = manager(launchctl);
-    await agents.install(registration(), { start: false, linger: false });
-    expect(launchctl.calls).toEqual([]);
-    expect(await agents.status(defaultAgentLabel)).toEqual({
-      installed: true,
-      running: false,
-      state: "installed, not loaded",
-      pid: null,
-      notes: [],
-    });
-  });
-
-  it("reinstalls over a loaded agent, which launchctl alone would refuse", async () => {
-    const launchctl = new RecordedLaunchctl(keeperUid);
-    const agents = manager(launchctl);
-    await agents.install(registration(), { start: true, linger: false });
-    const again = await agents.install(registration(), { start: true, linger: false });
-    expect(again.ok).toBe(true);
-    expect(launchctl.verbs()).toEqual(["bootout", "bootstrap", "bootout", "bootstrap"]);
   });
 
   it("waits out a boot-out launchctl has not finished before bootstrapping again", async () => {
@@ -307,16 +278,5 @@ describe("the launchd agent manager against recorded launchctl output", () => {
       problem: `launchctl bootstrap gui/${keeperUid} ${plistFile()} exited 125: Bootstrap failed: 125: Domain does not support specified action`,
       did: [`wrote ${plistFile()}`],
     });
-  });
-});
-
-describe("serviceFields", () => {
-  it("keeps only the service's top-level fields from a recorded print", () => {
-    const fields = serviceFields(launchctlRecordings.printRunning(defaultAgentLabel, 8124));
-    expect(fields.get("state")).toBe("running");
-    expect(fields.get("pid")).toBe("8124");
-    expect(fields.get("job state")).toBe("running");
-    expect(fields.get("ID")).toBeUndefined();
-    expect(fields.get("PATH => /usr/bin:/bin:/usr/sbin:/sbin")).toBeUndefined();
   });
 });

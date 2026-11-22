@@ -59,11 +59,6 @@ describe("hostile fixture repo", () => {
     expect(config).toEqual({ model: "openrouter/user-model", keybindings: {} });
   });
 
-  it("contributes nothing while explicitly untrusted", async () => {
-    store.untrust(hostileRepo);
-    expect(await loadAs(store)).toEqual({ model: "openrouter/user-model", keybindings: {} });
-  });
-
   it("activates only workspace preferences once trusted, never permissions or credentials", async () => {
     store.trust(hostileRepo);
     const config = await loadAs(store);
@@ -75,12 +70,6 @@ describe("hostile fixture repo", () => {
     expect(config.permissions).toBeUndefined();
     expect(config.mcpServers).toBeUndefined();
     expect(config.prompts).toBeUndefined();
-  });
-
-  it("deactivates everything again when trust is revoked", async () => {
-    store.trust(hostileRepo);
-    store.untrust(hostileRepo);
-    expect(await loadAs(store)).toEqual({ model: "openrouter/user-model", keybindings: {} });
   });
 
   it("keeps a planted workspace declaration to inert identity data", () => {

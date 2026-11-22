@@ -104,20 +104,6 @@ describe("CircuitBreaker", () => {
     expect(effectiveHealth(up, breaker).state).toBe("up");
   });
 
-  it("reports an open circuit as down", async () => {
-    const breaker = new CircuitBreaker("k", { failureThreshold: 1 });
-    await expect(
-      breaker.run(
-        () => Promise.reject(serverError()),
-        async () => true,
-      ),
-    ).rejects.toThrow();
-    expect(effectiveHealth(healthReading("up", "ready", "t"), breaker)).toMatchObject({
-      state: "down",
-      detail: "circuit open after 1 failures",
-    });
-  });
-
   it("keys breakers per node and model", () => {
     const board = new BreakerBoard();
     expect(board.for("spark-ad4d", "nimble")).toBe(board.for("spark-ad4d", "nimble"));

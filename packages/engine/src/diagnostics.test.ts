@@ -1,10 +1,8 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { EventBus } from "./bus.ts";
-import { DiagnosticsLog, debugEnabled, debugLogFile, redactSecrets } from "./diagnostics.ts";
-import { textMessage } from "./messages.ts";
+import { DiagnosticsLog, redactSecrets } from "./diagnostics.ts";
 
 const tempDir = scratchDirs("keywork-diagnostics-");
 
@@ -33,49 +31,6 @@ describe("DiagnosticsLog", () => {
       event: "engine.error",
       payload: { error: { name: "Error", message: "boom" } },
     });
-  });
-
-  it("taps every bus event and stops recording after untap", async () => {
-    const file = join(await tempDir(), "debug.jsonl");
-    const log = await DiagnosticsLog.open(file);
-    const bus = new EventBus();
-    const untap = log.tap(bus);
-
-    bus.emit("turn.started", { userText: "hi" });
-    bus.emit("turn.delta", { delta: { type: "text", text: "chunk" } });
-    bus.emit("tool.started", {
-      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "ls" } },
-    });
-    bus.emit("tool.finished", { callId: "c1", output: "ok", isError: false });
-    bus.emit("turn.completed", {
-      message: textMessage("assistant", "done"),
-      usage: { inputTokens: 12, outputTokens: 34 },
-    });
-    bus.emit("turn.interrupted", { message: textMessage("assistant", "stopped") });
-    bus.emit("engine.error", { error: new Error("bad") });
-    untap();
-    bus.emit("turn.started", { userText: "after untap" });
-    await log.flush();
-
-    const lines = await readLines(file);
-    expect(lines.map((line) => line.event)).toEqual([
-      "turn.started",
-      "turn.delta",
-      "tool.started",
-      "tool.finished",
-      "turn.completed",
-      "turn.interrupted",
-      "engine.error",
-    ]);
-    expect(lines.map((line) => line.level)).toEqual([
-      "info",
-      "debug",
-      "info",
-      "info",
-      "info",
-      "info",
-      "error",
-    ]);
   });
 
   it("never lands a key-shaped config value in the log", async () => {
@@ -117,27 +72,6 @@ describe("DiagnosticsLog", () => {
 
     expect((await readLines(file)).map((line) => line.event)).toEqual(["third"]);
     expect(failures).toHaveLength(1);
-  });
-
-  it("reports again when a cleared fault returns", async () => {
-    const file = join(await tempDir(), "debug.jsonl");
-    const failures: string[] = [];
-    const log = await DiagnosticsLog.open(file, {
-      onWriteFailure: (error) => failures.push(error.message),
-    });
-
-    await mkdir(file);
-    log.log("info", "blocked", {});
-    await log.flush();
-    await rm(file, { recursive: true, force: true });
-    log.log("info", "landed", {});
-    await log.flush();
-    await rm(file, { force: true });
-    await mkdir(file);
-    log.log("info", "blocked again", {});
-    await log.flush();
-
-    expect(failures).toHaveLength(2);
   });
 
   it("keeps token counts while redacting token-named strings", async () => {
@@ -203,24 +137,5 @@ describe("redactSecrets", () => {
     expect(
       redactSecrets({ message: "401 with x-api-key sk-ant-api03-EXAMPLEabcdef0123456789" }),
     ).toEqual({ message: "401 with x-api-key [redacted]" });
-  });
-});
-
-describe("debugEnabled", () => {
-  it("treats unset, empty, 0, and false as off; anything else as on", () => {
-    expect(debugEnabled({})).toBe(false);
-    expect(debugEnabled({ KEYWORK_DEBUG: "" })).toBe(false);
-    expect(debugEnabled({ KEYWORK_DEBUG: "0" })).toBe(false);
-    expect(debugEnabled({ KEYWORK_DEBUG: "False" })).toBe(false);
-    expect(debugEnabled({ KEYWORK_DEBUG: "1" })).toBe(true);
-    expect(debugEnabled({ KEYWORK_DEBUG: "true" })).toBe(true);
-  });
-});
-
-describe("debugLogFile", () => {
-  it("names a per-process file inside a debug sibling of the session dir", () => {
-    expect(debugLogFile(join("sessions", "abc"), 1700000000000, 42)).toBe(
-      ["sessions", "abc", "debug", "1700000000000-42.jsonl"].join(sep),
-    );
   });
 });

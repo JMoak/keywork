@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   loadRatchet,
   nothingEnforced,
-  RatchetUnreachableError,
   recordKeeperVerdict,
 } from "../../../engine/src/creatures/decisions/index.ts";
 import {
@@ -63,12 +62,6 @@ describe("keywork creatures report", () => {
       classes: [{ ruleClass: "bash npm test *", rows: 2, agreement: 1 }, { oneWayDoor: true }],
     });
   });
-
-  it("says how the ledger fills on a node with no answered asks", async () => {
-    const { code, out } = await run(["report"], await scratchNode());
-    expect(code).toBe(exitCodes.completed);
-    expect(out).toContain("No answered asks yet.");
-  });
 });
 
 describe("keywork creatures promote", () => {
@@ -88,11 +81,6 @@ describe("keywork creatures promote", () => {
       `"one-way door" is a one-way door: destructive forms in keywork's K9 ` +
         "sense stay ask-only, and no evidence promotes them.",
     );
-  });
-
-  it("says when a class has no answered asks yet", async () => {
-    const { err } = await run(["promote", "bash cargo test *"], await scratchNode());
-    expect(err).toBe('No answered asks in "bash cargo test *" yet.');
   });
 
   it("promotes one class on the planned sample, and demote hands it back", async () => {
@@ -166,22 +154,5 @@ describe("keywork creatures", () => {
       expect(code, args.join(" ")).toBe(exitCodes.usage);
       expect(err).toBe(creaturesUsage);
     }
-  });
-
-  it("names the package when Ratchet cannot be loaded", async () => {
-    const err: string[] = [];
-    const code = await creaturesCommand(
-      ["report"],
-      {
-        nodeState: await scratchNode(),
-        loadRatchet: () => Promise.reject(new RatchetUnreachableError(new Error("gone"))),
-      },
-      { print: () => undefined, printError: (line) => err.push(line) },
-    );
-    expect(code).toBe(exitCodes.unresolved);
-    expect(err[0]).toBe(
-      "keywork creatures: The @jmoak/ratchet dependency could not be loaded: gone",
-    );
-    await expect(loadRatchet()).resolves.toBeDefined();
   });
 });

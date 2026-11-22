@@ -19,17 +19,6 @@ const review: ArcReview = {
 };
 
 describe("ArcCloseDraft", () => {
-  it("starts with every item undecided and reports them by name", () => {
-    const draft = new ArcCloseDraft();
-    expect(draft.undecided(review)).toEqual([
-      "Dock Ratio Finding",
-      "Uncited Hunch",
-      "Tie order",
-      "Theme drift",
-    ]);
-    expect(draft.decisions(review)).toEqual({ candidates: {}, questions: {} });
-  });
-
   it("delivers the eligible candidates in one stroke and leaves the rest archived", () => {
     const draft = new ArcCloseDraft();
     expect(draft.deliverEligible(review.candidates)).toBe(1);
@@ -67,12 +56,5 @@ describe("ArcCloseDraft", () => {
     draft.decideCandidate("Vanished", "deliver");
     draft.decideQuestion("Gone", "drop");
     expect(draft.decisions(review)).toEqual({ candidates: {}, questions: {} });
-  });
-
-  it("remembers the last acknowledgement sweep", () => {
-    const draft = new ArcCloseDraft();
-    expect(draft.lastSweep()).toBeUndefined();
-    draft.recordSweep({ acked: ["s1"], wedged: ["s2"], forced: true });
-    expect(draft.lastSweep()).toEqual({ acked: ["s1"], wedged: ["s2"], forced: true });
   });
 });

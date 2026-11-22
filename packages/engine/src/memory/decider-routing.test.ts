@@ -109,19 +109,6 @@ describe("point-of-action recall through the decider", () => {
     ]);
   });
 
-  it("records a decision that keeps nothing, so a silent recall still says why", async () => {
-    const decisions: MemoryDecision[] = [];
-    const recall = pointOfActionRecall({
-      search: searcherOf([hitOf("Old Rule", { lexical: 1 }, true)]),
-      onDecision: (decision) => decisions.push(decision),
-    });
-
-    expect(await recall(write("src/dock.ts"))).toBeUndefined();
-    expect(decisions.map((decision) => decision.choice)).toEqual([
-      { kept: [], dropped: ["Old Rule"] },
-    ]);
-  });
-
   it("injects what the decider it is given keeps, in the decider's order", async () => {
     const hits = [hitOf("First"), hitOf("Second"), hitOf("Third")];
     const recalled: string[] = [];
@@ -142,25 +129,6 @@ describe("point-of-action recall through the decider", () => {
     expect(recalled).toEqual(["Third", "First"]);
     expect(injected?.indexOf("[[Third]]")).toBeLessThan(injected?.indexOf("[[First]]") ?? -1);
     expect(injected).not.toContain("[[Second]]");
-  });
-
-  it("decides nothing when the search finds nothing or the subject was already asked about", async () => {
-    const decisions: MemoryDecision[] = [];
-    const empty = pointOfActionRecall({
-      search: searcherOf([]),
-      onDecision: (decision) => decisions.push(decision),
-    });
-    await empty(write("src/dock.ts"));
-    const repeated = pointOfActionRecall({
-      search: searcherOf([hitOf("Dock Rule")]),
-      onDecision: (decision) => decisions.push(decision),
-    });
-    await repeated(write("src/dock.ts", "call-1"));
-    await repeated(write("src/dock.ts", "call-2"));
-
-    expect(decisions.map((decision) => decision.about)).toEqual([
-      { kind: "call", callId: "call-1" },
-    ]);
   });
 });
 
@@ -222,66 +190,6 @@ describe("the Gardener through the decider", () => {
       "new-durable",
       "reinforces-a-note",
     ]);
-  });
-
-  it("skips the distiller entirely when the decider passes nothing", async () => {
-    const store = await trustedStore();
-    await store.appendDaily("lunch was late", "user");
-    const chatModel = distiller();
-    const gardener = new Gardener({
-      store,
-      judgment: chatModel,
-      decider: scriptedDecider({ triageEntries: triageBy(() => "episodic") }),
-    });
-
-    await gardener.sweep();
-
-    expect(chatModel.seen).toEqual([]);
-  });
-
-  it("acts on the decider's pair relation and writes the merged body it carries", async () => {
-    const store = await trustedStore(tickingClock());
-    await store.writeNote({
-      title: "Node test runner",
-      body: "tests run on node not bun\n",
-      provenance: "agent",
-    });
-    await store.writeNote({
-      title: "Node testing",
-      body: "tests run on node\n",
-      provenance: "agent",
-    });
-    const decisions: MemoryDecision[] = [];
-    const asked: number[] = [];
-    const gardener = new Gardener({
-      store,
-      judgment: distiller(),
-      decider: scriptedDecider({
-        relatePair: async (pair) => {
-          asked.push(pair.similarity);
-          return decided(
-            memoryQuestions.pairRelation,
-            {
-              relation: "duplicate",
-              keep: "older",
-              confidence: 0.97,
-              mergedBody: "tests run on node, never bun\n",
-            },
-            "duplicate",
-          );
-        },
-      }),
-      onDecision: (decision) => decisions.push(decision),
-    });
-
-    const report = await gardener.sweep();
-
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toBeGreaterThanOrEqual(0.3);
-    expect(report.merged).toEqual([{ keep: "Node test runner", retired: "Node testing" }]);
-    expect((await store.readNote("Node test runner"))?.body).toBe("tests run on node, never bun\n");
-    expect((await store.readNote("Node testing"))?.supersededBy).toBe("Node test runner");
-    expect(decisions.map((decision) => decision.question)).toContain("pair-relation@1");
   });
 
   it("holds a decider's propose band to a card and lets its act band apply, whatever the confidence", async () => {

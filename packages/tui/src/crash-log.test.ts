@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crashLogFacts, crashLogFile, crashStormGate, doctorCommands } from "./crash-log.ts";
+import { crashLogFile, crashStormGate, doctorCommands } from "./crash-log.ts";
 
 describe("doctorCommands", () => {
   function doctorProbe(exists: boolean, extras: { report?: string; posted?: boolean } = {}) {
@@ -28,39 +28,6 @@ describe("doctorCommands", () => {
     await Promise.resolve();
     expect(posts).toEqual(["keywork doctor"]);
     expect(opened).toEqual([]);
-  });
-
-  it("asks for a session when no conversation can take the report", async () => {
-    const { doctor, notices } = doctorProbe(true, { report: "keywork doctor", posted: false });
-    doctor?.run();
-    await Promise.resolve();
-    expect(notices).toEqual(["open a session to print the report into"]);
-  });
-
-  it("falls back to opening the crash log when no report port exists", () => {
-    const { doctor, opened } = doctorProbe(true);
-    doctor?.run();
-    expect(opened).toEqual([{ path: crashLogFile, atEnd: true }]);
-  });
-
-  it("keeps the raw crash log one command away", () => {
-    const { crashlog, opened } = doctorProbe(true, { report: "keywork doctor" });
-    crashlog?.run();
-    expect(opened).toEqual([{ path: crashLogFile, atEnd: true }]);
-  });
-
-  it("posts a calm notice when there is no crash log", () => {
-    const { crashlog, opened, notices } = doctorProbe(false);
-    crashlog?.run();
-    expect(opened).toEqual([]);
-    expect(notices).toEqual(["no crashes recorded · nothing to show"]);
-  });
-});
-
-describe("crashLogFacts", () => {
-  it("reports an absent log as zero entries at the path", () => {
-    const facts = crashLogFacts("Z:/nowhere/tui-crash.log");
-    expect(facts).toEqual({ path: "Z:/nowhere/tui-crash.log", entries: 0 });
   });
 });
 

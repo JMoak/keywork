@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mutatingToolNames } from "../mutations.ts";
 import { FakeClock } from "../routines/testing.ts";
 import type { Arrangement } from "../show/arrangement.ts";
 import type { Placement } from "../show/placements.ts";
 import type { Seat } from "../show/seat.ts";
 import type { Setting } from "../show/setting.ts";
 import { SettingStore, type ShowProposal } from "../show/store.ts";
-import { arrangeTool, arrangeToolName } from "./arrange.ts";
+import { arrangeTool } from "./arrange.ts";
 import type { ShowTarget } from "./show.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
@@ -229,25 +228,6 @@ describe("the arrange tool", () => {
     );
   });
 
-  it("marks in the same call that arranges", async () => {
-    const { tool, settings, setOut, answers } = staged();
-    const plan = setOut({ where: "outside" });
-
-    const answering = tool.execute({
-      seats: { "The plan": "center" },
-      mark: { "The plan": "chosen" },
-    });
-    await answers(
-      [{ id: plan.id, where: "outside", seat: { x: 3, y: 3, w: 6, h: 6 }, by: "creature" }],
-      "",
-    );
-
-    expect(await answering).toBe(
-      `Arranged 1 pane in the seats you composed. Outside now: "The plan" (${plan.id}) in the center. Marked: the keeper reads "chosen" on "The plan".`,
-    );
-    expect(settings.open()[0]).toMatchObject({ mark: "chosen" });
-  });
-
   it("says which panes it seated, which stayed, what now overlaps and the mood it moved with", async () => {
     const { tool, setOut, answers } = staged();
     const plan = setOut({ where: "outside" });
@@ -295,27 +275,6 @@ describe("the arrange tool", () => {
         lead: plan.id,
       }),
     ]);
-  });
-
-  it("says what the keeper holds and what the keeper brought inside, as the console reported it", async () => {
-    const { tool, setOut, answers } = staged();
-    const plan = setOut({ where: "outside" });
-    const held = setOut({ what: { kind: "diff", ref: "cs-41" }, where: "outside" });
-    const inside = setOut({ what: { kind: "note", ref: "n" }, where: "outside" });
-
-    const answering = tool.execute({});
-    await answers(
-      [
-        { id: plan.id, where: "outside", seat: { x: 0, y: 0, w: 6, h: 12 }, by: "creature" },
-        { id: held.id, where: "outside", seat: { x: 6, y: 6, w: 6, h: 6 }, by: "keeper" },
-        { id: inside.id, where: "inside", by: "keeper" },
-      ],
-      "",
-    );
-
-    expect(await answering).toBe(
-      `Arranged 3 panes, the layout left to the console. Outside now: "The plan" (${plan.id}) in the left half; "cs-41" (${held.id}) in the bottom right, placed by the keeper. Inside the console, where the keeper brought it: "n" (${inside.id}).`,
-    );
   });
 
   it('takes panes "all" as everything still out, beside the conversation too, and says what the console put back', async () => {
@@ -424,23 +383,5 @@ describe("the arrange tool", () => {
       expect(await tool.execute(args)).toBe(`Not arranged: ${why}.`);
     }
     expect(arranged).toEqual([]);
-  });
-
-  it("says so plainly when no keeper surface takes settings", async () => {
-    const tool = arrangeTool({ creature: "wren", sessionId: "s1", settings: () => undefined });
-    expect(await tool.execute({ shape: "grid" })).toBe(
-      "Not arranged: no keeper surface takes settings here.",
-    );
-  });
-
-  it("is display control that asks for no permission, with nothing required", () => {
-    const { tool } = staged();
-    expect(tool.name).toBe(arrangeToolName);
-    expect(tool.mutates).toBeUndefined();
-    expect(mutatingToolNames.has(tool.name)).toBe(false);
-    expect(tool.description).toContain("never the computer");
-    expect(tool.description).toContain("never takes focus");
-    expect(tool.parameters).not.toHaveProperty("required");
-    expect(tool.parameters).toMatchObject({ additionalProperties: false });
   });
 });

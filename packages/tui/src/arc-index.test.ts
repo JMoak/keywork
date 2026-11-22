@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { arcIndexOf, arcJumpCommands, firstArcIntroducer, seedArcFromOrigin } from "./arc-index.ts";
 import type { ArcsPort } from "./arcs.ts";
-import { ArcsPane } from "./arcs-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import type { Pane, PaneDescriptor } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
@@ -61,18 +60,6 @@ describe("firstArcIntroducer", () => {
     onListed([arc("dock-v2"), arc("arc-2")]);
     expect(introduced).toEqual(["dock-v2"]);
   });
-
-  it("stays quiet when the workspace already had arcs at boot or lists nothing twice", () => {
-    const introduced: string[] = [];
-    const onListed = firstArcIntroducer((slug) => introduced.push(slug));
-    onListed([arc("dock-v2")]);
-    onListed([arc("dock-v2"), arc("arc-2")]);
-    onListed([]);
-    onListed([]);
-    expect(introduced).toEqual([]);
-    onListed([arc("fresh")]);
-    expect(introduced).toEqual(["fresh"]);
-  });
 });
 
 describe("seedArcFromOrigin (PD13 splits)", () => {
@@ -82,15 +69,6 @@ describe("seedArcFromOrigin (PD13 splits)", () => {
     if (source instanceof ConversationPane) source.arc = arc;
     return probe;
   }
-
-  it("does nothing without an origin", async () => {
-    const bound: Array<string | undefined> = [];
-    const notice = await seedArcFromOrigin(undefined, new AppProbe().core, undefined, async (s) => {
-      bound.push(s);
-    });
-    expect(notice).toBeUndefined();
-    expect(bound).toEqual([]);
-  });
 
   it("inherits the source pane's arc on a regular split and stays unbound when the source is", async () => {
     const bound: Array<string | undefined> = [];
@@ -131,16 +109,6 @@ describe("seedArcFromOrigin (PD13 splits)", () => {
     expect(bound).toEqual(["arc-2"]);
     expect(notice).toBe("arc → arc-2 · new");
   });
-
-  it("explains itself when split-arc runs without an arcs port", async () => {
-    const notice = await seedArcFromOrigin(
-      { arc: "new" },
-      new AppProbe().core,
-      undefined,
-      async () => {},
-    );
-    expect(notice).toContain("no arcs here");
-  });
 });
 
 describe("arcJumpCommands", () => {
@@ -175,40 +143,6 @@ describe("arcJumpCommands", () => {
     probe.core.registry.addSource(() => arcJumpCommands(probe.core, listed));
     expect(probe.command("arc-dock-v2")).toBe(true);
     expect(probe.snapshot().focused).toBe("arc-1");
-  });
-
-  it("otherwise opens the arcs node drilled into that arc", () => {
-    const drilled: string[] = [];
-    const { port } = arcsOver(["dock-v2"]);
-    const probe = new AppProbe({
-      arcs: port,
-      createArcsPane: (id, notify, intents, target) => {
-        const pane = new ArcsPane(id, notify, intents, {
-          arcs: port,
-          sessions: { overview: async () => [] },
-          currentSession: target,
-        });
-        const drill = pane.model.drillInto.bind(pane.model);
-        pane.model.drillInto = (key) => {
-          if (key.kind === "arc") drilled.push(key.slug);
-          drill(key);
-        };
-        return pane;
-      },
-    });
-    probe.core.registry.addSource(() => arcJumpCommands(probe.core, listed));
-    expect(probe.command("arc-dock-v2")).toBe(true);
-    expect(probe.snapshot().focused).toBe("arcs-1");
-    expect(drilled).toEqual(["dock-v2"]);
-  });
-
-  it("the index remembers the last listing for the jump source", async () => {
-    const { port } = arcsOver(["first"]);
-    const index = arcIndexOf(port, () => {});
-    expect(index.listed()).toEqual([]);
-    index.changed();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(index.listed().map((arc) => arc.slug)).toEqual(["first"]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventBus } from "./bus.ts";
-import { followMutations, mutatingToolNames } from "./mutations.ts";
+import { followMutations } from "./mutations.ts";
 
 describe("followMutations", () => {
   const call = (callId: string, name: string) => ({
@@ -28,18 +28,5 @@ describe("followMutations", () => {
     bus.emit("tool.started", { call: call("c4", "bash") });
     bus.emit("tool.finished", { callId: "c4", output: "", isError: false });
     expect(announced).toBe(3);
-  });
-
-  it("stops announcing once unfollowed and names the tools it watches", () => {
-    const bus = new EventBus();
-    let announced = 0;
-    const stop = followMutations(bus, () => {
-      announced += 1;
-    });
-    bus.emit("tool.started", { call: call("c1", "write") });
-    stop();
-    bus.emit("tool.finished", { callId: "c1", output: "", isError: false });
-    expect(announced).toBe(0);
-    expect([...mutatingToolNames]).toEqual(["write", "edit", "bash"]);
   });
 });

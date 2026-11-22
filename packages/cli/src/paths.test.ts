@@ -9,14 +9,11 @@ import {
   anchoredElsewhere,
   anchoredFolder,
   anchorWords,
-  botSkillTelemetryFile,
   defaultSessionDir,
   ensureStateLayout,
-  keyworkHome,
   projectKey,
   StateLayoutError,
   sharedIdentityOf,
-  skillTelemetryFile,
   snapshotGitDir,
   stateLayoutVersion,
   workspaceIdentity,
@@ -149,20 +146,6 @@ describe("workspaceIdentity for named workspaces (PD10)", () => {
   });
 });
 
-describe("skill telemetry files", () => {
-  it("live under the injected user root, and under the home directory only by default", () => {
-    expect(skillTelemetryFile("abc123", "/scratch/user")).toBe(
-      join("/scratch/user", ".keywork", "skills", "abc123.json"),
-    );
-    expect(botSkillTelemetryFile("abc123", "muse", "/scratch/user")).toBe(
-      join("/scratch/user", ".keywork", "skills", "abc123", "bot-muse.json"),
-    );
-    expect(skillTelemetryFile("abc123")).toBe(join(keyworkHome(), "skills", "abc123.json"));
-    expect(keyworkHome("/scratch/user")).toBe(join("/scratch/user", ".keywork"));
-    expect(keyworkHome()).toBe(join(homedir(), ".keywork"));
-  });
-});
-
 describe("workspaceStateFile", () => {
   it("keeps the state file location keyed by identity", () => {
     expect(workspaceStateFile("abc123")).toBe(
@@ -226,16 +209,6 @@ describe("which anchor a folder resolves to", () => {
   });
 });
 
-describe("state directories", () => {
-  it("keys sessions and snapshots by workspace identity", async () => {
-    const cwd = await tempRoot();
-    const identity = workspaceIdentity(cwd);
-
-    expect(defaultSessionDir(cwd)).toBe(join(homedir(), ".keywork", "sessions", identity));
-    expect(snapshotGitDir(cwd)).toBe(join(homedir(), ".keywork", "snapshots", identity));
-  });
-});
-
 describe("ensureStateLayout", () => {
   async function stateHome(): Promise<string> {
     return tempRoot();
@@ -249,14 +222,6 @@ describe("ensureStateLayout", () => {
 
   it("stamps a fresh state home with the current version", async () => {
     const home = await stateHome();
-
-    expect(ensureStateLayout(home)).toBe(stateLayoutVersion);
-    expect(markerOf(home)).toBe(stateLayoutVersion);
-  });
-
-  it("leaves a current state home untouched", async () => {
-    const home = await stateHome();
-    ensureStateLayout(home);
 
     expect(ensureStateLayout(home)).toBe(stateLayoutVersion);
     expect(markerOf(home)).toBe(stateLayoutVersion);

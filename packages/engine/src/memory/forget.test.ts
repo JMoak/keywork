@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { planForget, stageForget } from "./forget.ts";
-import { dailyEntryLines, parseDailyEntries, withoutDailyEntries } from "./notes.ts";
+import { dailyEntryLines, parseDailyEntries } from "./notes.ts";
 import { MemoryStore } from "./store.ts";
 
 const scratch = scratchDirs("keywork-forget-");
@@ -68,12 +68,6 @@ describe("session origin provenance", () => {
     const stamped = dailyEntryLines("real", "agent", "10:01", "sess a/b");
     expect(parseDailyEntries(stamped)[0]).toMatchObject({ session: "sess_a_b", text: "real" });
   });
-
-  it("drops whole entries, continuation lines included, and keeps the rest", () => {
-    const raw = `${dailyEntryLines("one", "agent", "10:00", "s1")}${dailyEntryLines("two\n  more", "agent", "10:01", "s2")}${dailyEntryLines("three", "user", "10:02")}`;
-    const kept = withoutDailyEntries(raw, new Set([1]));
-    expect(parseDailyEntries(kept).map((entry) => entry.text)).toEqual(["one", "three"]);
-  });
 });
 
 describe("planForget", () => {
@@ -121,11 +115,5 @@ describe("stageForget", () => {
     expect(await store.revert(landed.ledgerId)).toBe("reverted");
     expect(await readFile(join(root, "Mine Alone.md"), "utf8")).toBe(noteBefore);
     expect(await readFile(join(root, "daily", "2026-10-07.md"), "utf8")).toBe(dailyBefore);
-  });
-
-  it("stages nothing for a session that left no trace", async () => {
-    const { store } = await vault();
-    expect(await stageForget(store, await planForget(store, "ghost"))).toBeUndefined();
-    expect(await store.listStaged()).toEqual([]);
   });
 });

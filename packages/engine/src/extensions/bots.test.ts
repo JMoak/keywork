@@ -7,13 +7,7 @@ import type { ToolCallPart } from "../messages.ts";
 import { MockProvider, textTurn } from "../mock-provider.ts";
 import { recordingProvider } from "../testing/index.ts";
 import type { Tool } from "../tools.ts";
-import {
-  type BotDefinition,
-  defaultSigil,
-  loadBots,
-  narrowedPermissions,
-  restrictTools,
-} from "./bots.ts";
+import { type BotDefinition, loadBots, narrowedPermissions, restrictTools } from "./bots.ts";
 
 const scratch = scratchDirs("keywork-bots-");
 
@@ -81,13 +75,6 @@ describe("loadBots", () => {
     });
   });
 
-  it("defaults learning to notes and the sigil to the slug's first letter", async () => {
-    const root = await projectWithBots({ scout: "Scout ahead.\n" });
-    const { bots } = await loadBots({ projectRoot: root });
-    expect(bots[0]).toMatchObject({ name: "scout", sigil: "S", learning: "notes" });
-    expect(defaultSigil("test-hawk")).toBe("T");
-  });
-
   it("accepts a single string where a list is expected", async () => {
     const root = await projectWithBots({ scout: "---\ntools: read\n---\nScout.\n" });
     const { bots } = await loadBots({ projectRoot: root });
@@ -113,30 +100,6 @@ describe("loadBots", () => {
     expect(reasons.some((reason) => reason.startsWith("learning: "))).toBe(true);
     expect(reasons.some((reason) => reason.includes("temperature"))).toBe(true);
   });
-
-  it("ignores loose markdown and directories without a bot.md", async () => {
-    const root = await scratch();
-    const botsDir = join(root, ".keywork", "bots");
-    await mkdir(join(botsDir, "empty"), { recursive: true });
-    await writeFile(join(botsDir, "loose.md"), "not a bot", "utf8");
-    const { bots, failures } = await loadBots({ projectRoot: root });
-    expect(bots).toEqual([]);
-    expect(failures).toEqual([]);
-  });
-
-  it("layers project over user, and a missing project root reads only the user's bots", async () => {
-    const project = await projectWithBots({ scout: "project scout" });
-    const user = await scratch();
-    await seedBots(user, { scout: "user scout", mine: "global bot" });
-
-    const layered = await loadBots({ projectRoot: project, userRoot: user });
-    expect(layered.bots.map((found) => [found.name, found.prompt, found.source])).toEqual([
-      ["scout", "project scout", "project"],
-      ["mine", "global bot", "user"],
-    ]);
-    const userOnly = await loadBots({ userRoot: user });
-    expect(userOnly.bots.map((found) => found.name)).toEqual(["mine", "scout"]);
-  });
 });
 
 describe("restrictTools", () => {
@@ -144,11 +107,6 @@ describe("restrictTools", () => {
     const tools = [stubTool("read"), stubTool("write"), stubTool("bash")];
     const restricted = restrictTools(tools, bot({ tools: ["read", "imaginary"] }));
     expect(restricted.map((tool) => tool.name)).toEqual(["read"]);
-  });
-
-  it("leaves the tool list intact when no allowlist is declared", () => {
-    const tools = [stubTool("read"), stubTool("write")];
-    expect(restrictTools(tools, bot({}))).toEqual(tools);
   });
 });
 

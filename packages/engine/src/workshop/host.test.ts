@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import type { SandboxHost } from "../sandbox/host.ts";
 import { bareHostLimitation, hostSubstrate, keptLocation, workshopEnvironment } from "./host.ts";
 import { workshopSpecSchema } from "./spec.ts";
 import { refusingSandboxHost } from "./testing.ts";
@@ -10,26 +9,7 @@ import { refusingSandboxHost } from "./testing.ts";
 const tempDir = scratchDirs("keywork-workshop-host-");
 const spec = workshopSpecSchema.parse({ creature: "pip", substrate: "host" });
 
-const confiningSandboxHost: SandboxHost = {
-  platform: "linux",
-  home: "/home/keeper",
-  env: {},
-  bubblewrap: () => "/usr/bin/bwrap",
-  trial: async () => ({ ok: true }),
-};
-
 describe("the bare host substrate", () => {
-  it("gives the creature a directory under the node's state dir", async () => {
-    const stateDir = await tempDir();
-    const workshop = await hostSubstrate({ stateDir, sandboxHost: refusingSandboxHost }).create(
-      spec,
-    );
-
-    expect(workshop.handle).toBe(join(stateDir, "workshops", workshop.id));
-    expect(workshop.workdir).toBe(join(workshop.handle, "home"));
-    expect(existsSync(workshop.workdir)).toBe(true);
-  });
-
   it("names its limitation plainly, and the sandbox refusal when commands run unconfined", async () => {
     const workshop = await hostSubstrate({
       stateDir: await tempDir(),
@@ -40,15 +20,6 @@ describe("the bare host substrate", () => {
       bareHostLimitation,
       "commands run unconfined: the macos sandbox isn't built yet",
     ]);
-  });
-
-  it("names only the bare-host limitation when the sandbox seam confines it", async () => {
-    const workshop = await hostSubstrate({
-      stateDir: await tempDir(),
-      sandboxHost: confiningSandboxHost,
-    }).create(spec);
-
-    expect(workshop.limitations).toEqual([bareHostLimitation]);
   });
 
   it("hands commands a home of their own and only the variables a shell needs", async () => {

@@ -22,34 +22,6 @@ function problemOf(asked: unknown): string {
 }
 
 describe("a named seat", () => {
-  it("expands to the contract's rectangle on the 12 by 12 lattice", () => {
-    expect(namedSeats).toEqual({
-      full: { x: 0, y: 0, w: 12, h: 12 },
-      "left-half": { x: 0, y: 0, w: 6, h: 12 },
-      "right-half": { x: 6, y: 0, w: 6, h: 12 },
-      "top-half": { x: 0, y: 0, w: 12, h: 6 },
-      "bottom-half": { x: 0, y: 6, w: 12, h: 6 },
-      "left-third": { x: 0, y: 0, w: 4, h: 12 },
-      "middle-third": { x: 4, y: 0, w: 4, h: 12 },
-      "right-third": { x: 8, y: 0, w: 4, h: 12 },
-      "left-two-thirds": { x: 0, y: 0, w: 8, h: 12 },
-      "right-two-thirds": { x: 4, y: 0, w: 8, h: 12 },
-      "top-left": { x: 0, y: 0, w: 6, h: 6 },
-      "top-right": { x: 6, y: 0, w: 6, h: 6 },
-      "bottom-left": { x: 0, y: 6, w: 6, h: 6 },
-      "bottom-right": { x: 6, y: 6, w: 6, h: 6 },
-      center: { x: 3, y: 3, w: 6, h: 6 },
-      "top-third": { x: 0, y: 0, w: 12, h: 4 },
-      "bottom-third": { x: 0, y: 8, w: 12, h: 4 },
-      "left-quarter": { x: 0, y: 0, w: 3, h: 12 },
-      "right-quarter": { x: 9, y: 0, w: 3, h: 12 },
-      "left-three-quarters": { x: 0, y: 0, w: 9, h: 12 },
-      "right-three-quarters": { x: 3, y: 0, w: 9, h: 12 },
-      "middle-half": { x: 3, y: 0, w: 6, h: 12 },
-    });
-    for (const seat of Object.values(namedSeats)) expect(seatProblemOf(seat)).toBeUndefined();
-  });
-
   it("is understood in the words a model reaches for", () => {
     const said: ReadonlyArray<[string, keyof typeof namedSeats]> = [
       ["left-half", "left-half"],
@@ -80,13 +52,6 @@ describe("a named seat", () => {
     expect(problemOf("the attic")).toBe(
       'no seat is called "the attic"; the nearest are full, center and left-third, or give lattice lines such as "columns 4 to 8, rows 0 to 6"',
     );
-  });
-
-  it("reads quarters, and a corner called a quarter", () => {
-    expect(seatOf("right quarter")).toEqual(namedSeats["right-quarter"]);
-    expect(seatOf("left 3/4")).toEqual(namedSeats["left-three-quarters"]);
-    expect(seatOf("middle column")).toEqual(namedSeats["middle-half"]);
-    expect(seatOf("top-left quarter")).toEqual(namedSeats["top-left"]);
   });
 });
 

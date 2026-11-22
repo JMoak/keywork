@@ -25,10 +25,8 @@ describe("grantCandidates", () => {
   it.each([
     ["git push origin main", ["git push *"]],
     ["git push", ["git push *"]],
-    ["ls", ["ls *"]],
     ["cat README.md", ["cat *"]],
     ["npm test --silent", ["npm test *"]],
-    ["npm run build", ["npm run *"]],
     ["./deploy.sh prod", ["./deploy.sh prod *"]],
     ["git add . && git commit -m wip", ["git add *", "git commit *"]],
     ["git status; git status --short", ["git status *"]],

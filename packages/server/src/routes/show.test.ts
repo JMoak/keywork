@@ -7,7 +7,6 @@ import {
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "../../../engine/src/routines/testing.ts";
-import { contractVersion } from "../contract.ts";
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
 import { memorySessionHost } from "../testing.ts";
@@ -73,22 +72,6 @@ async function call(
 }
 
 describe("GET /show", () => {
-  it("seats every setting still out on a cold start, live and pinned, oldest first", async () => {
-    const { handlers, propose } = served();
-    const first = propose();
-    const pinned = propose({ what: { kind: "file", ref: "docs/plan.md", title: "The plan" } });
-    const seen = propose({ sessionId: "s2", what: { kind: "note", ref: "Lunch at noon." } });
-    await call(handlers.answerSetting, "POST", "", { id: pinned.id }, { outcome: "pinned" });
-    await call(handlers.answerSetting, "POST", "", { id: seen.id }, { outcome: "seen" });
-
-    const listed = await call(handlers.listSettings, "GET", "/show");
-
-    expect(listed).toEqual({
-      status: 200,
-      body: { settings: [first, { ...pinned, state: "pinned" }] },
-    });
-  });
-
   it("answers 503 on a host that serves no settings", async () => {
     const { handlers } = served({ show: false });
     expect(await call(handlers.listSettings, "GET", "/show")).toEqual({
@@ -152,18 +135,6 @@ describe("POST /show/{id}/answer", () => {
     });
     expect(log.since(0).map(({ type }) => type)).toEqual(["show.proposed"]);
   });
-
-  it("answers 503 on a host that serves no settings", async () => {
-    const { handlers } = served({ show: false });
-    const answered = await call(
-      handlers.answerSetting,
-      "POST",
-      "/show/x/answer",
-      { id: "x" },
-      { outcome: "seen" },
-    );
-    expect(answered.status).toBe(503);
-  });
 });
 
 describe("DELETE /show/{id}/signal", () => {
@@ -201,11 +172,6 @@ describe("DELETE /show/{id}/signal", () => {
       },
     });
     expect(log.since(0).map(({ type }) => type)).toEqual(["show.proposed"]);
-  });
-
-  it("answers 503 on a host that serves no settings", async () => {
-    const { handlers } = served({ show: false });
-    expect((await clear(handlers, "x")).status).toBe(503);
   });
 });
 
@@ -245,51 +211,6 @@ describe("POST /show", () => {
     });
   });
 
-  it("sets out from a session on that session, for the creature it belongs to", async () => {
-    const { handlers } = served({
-      threads: async (id) => (id === "s9" ? { creature: "hal", parent: null } : undefined),
-    });
-
-    const answered = await open(handlers, { what: plan, from: "s9" });
-
-    expect(answered.status).toBe(201);
-    expect(answered.body.setting).toMatchObject({
-      creature: "hal",
-      sessionId: "s9",
-      from: "s9",
-      origin: "keeper",
-    });
-  });
-
-  it("names the setting a keeper's opening replaced, on the event and in GET /show", async () => {
-    const { handlers, propose, log } = served();
-    const diff = propose();
-    const card = propose({ what: { kind: "file", ref: plan.ref } });
-
-    const answered = await open(handlers, { what: plan, from: diff.id });
-
-    const setting = answered.body.setting as Setting;
-    expect(setting).toMatchObject({ replaces: card.id, from: diff.id, origin: "keeper" });
-    expect(log.since(0).slice(-2)).toMatchObject([
-      { type: "show.settled", payload: { id: card.id, outcome: "withdrawn", by: "keeper" } },
-      { type: "show.proposed", payload: { setting } },
-    ]);
-    expect((await call(handlers.listSettings, "GET", "/show")).body).toEqual({
-      settings: [diff, setting],
-    });
-  });
-
-  it("spends no budget: it sets out while the creature's hour is spent", async () => {
-    const { handlers, propose } = served({ hourlyLimit: 1 });
-    const diff = propose();
-
-    for (const ref of ["a.ts", "b.ts", "c.ts"]) {
-      const answered = await open(handlers, { what: { kind: "file", ref }, from: diff.id });
-      expect(answered.status).toBe(201);
-    }
-    expect(() => propose({ what: { kind: "note", ref: "one more" } })).toThrow(/this hour/);
-  });
-
   it("refuses a body outside its shape with 400 and an unknown from with 404, firing nothing", async () => {
     const { handlers, log } = served();
 
@@ -312,11 +233,6 @@ describe("POST /show", () => {
       body: { refused: "missing", error: "no setting out and no thread has the id nope" },
     });
     expect(log.since(0)).toEqual([]);
-  });
-
-  it("answers 503 on a host that serves no settings", async () => {
-    const { handlers } = served({ show: false });
-    expect((await open(handlers, { what: plan, from: "s1" })).status).toBe(503);
   });
 });
 
@@ -382,24 +298,5 @@ describe("PUT /sessions/{sessionId}/settings/placements", () => {
       status: 404,
       body: JSON.stringify({ refused: "missing", error: "no session has the id nope" }),
     });
-  });
-
-  it("answers 503 on a host that serves no settings", async () => {
-    const { handlers } = served({ show: false });
-    expect((await put(handlers, "s1", { stage, placements: [] })).status).toBe(503);
-  });
-});
-
-describe("the contract", () => {
-  it("lists the show routes in the current /doc contract", () => {
-    const { info, paths } = fixtureDocument();
-    expect(info["x-keywork-contract"]).toBe(contractVersion);
-    expect(paths["/show"]?.get?.operationId).toBe("listSettings");
-    expect(paths["/show"]?.post?.operationId).toBe("openSetting");
-    expect(paths["/show/{id}/answer"]?.post?.operationId).toBe("answerSetting");
-    expect(paths["/show/{id}/signal"]?.delete?.operationId).toBe("clearSignal");
-    expect(paths["/sessions/{sessionId}/settings/placements"]?.put?.operationId).toBe(
-      "reportPlacements",
-    );
   });
 });

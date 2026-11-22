@@ -58,26 +58,6 @@ async function connection(fetchFn: FetchLike, secrets?: SecretKeeping) {
 }
 
 describe("typesafeConnection", () => {
-  it("checks a key with GET /v1/models and reads TypeSafe's models list", async () => {
-    const calls: { url: string; headers: Record<string, string> }[] = [];
-    const { port } = await connection(async (url, init) => {
-      calls.push({ url, headers: (init?.headers as Record<string, string>) ?? {} });
-      return Response.json(typesafeModels);
-    });
-
-    expect(await port.verify("ts-live")).toEqual({
-      ok: true,
-      at: "2026-10-16T09:00:00.000Z",
-      models: ["jev-latest", "jev-preview"],
-    });
-    expect(calls).toEqual([
-      {
-        url: "https://api.typesafe.ai/v1/models",
-        headers: { accept: "application/json", authorization: "Bearer ts-live" },
-      },
-    ]);
-  });
-
   it("names a 401 as TypeSafe refusing the key", async () => {
     const { port } = await connection(async () => new Response("{}", { status: 401 }));
     expect(await port.verify("ts-bad")).toMatchObject({

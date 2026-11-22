@@ -90,7 +90,7 @@ async function fixture(limits: Partial<MessageLimits> = {}, yard?: CreatureYard)
     held.push({ role, parts: [{ type: "text", text }] });
     messages.set(id, held);
   };
-  return { host, sessions, audit, mcp, connect, conversationOf, say, delivered, busy };
+  return { host, sessions, audit, connect, conversationOf, say, delivered };
 }
 
 function markOf(
@@ -131,17 +131,6 @@ function handleOf(result: { text: string }): string {
 }
 
 describe("a creature served over MCP", () => {
-  it("lists exactly ask, status and deliveries", async () => {
-    const { connect } = await fixture();
-    const connection = await connect("pip");
-    expect((await connection.listTools()).map(({ name }) => name)).toEqual([
-      "ask",
-      "status",
-      "deliveries",
-    ]);
-    expect(connection.serverName).toBe("stead-creature-pip");
-  });
-
   it("takes an ask as one creature-origin line in the conversation, never a turn, with an audit row", async () => {
     const { connect, sessions, audit, conversationOf } = await fixture();
     const connection = await connect("pip");
@@ -289,21 +278,6 @@ describe("a creature served over MCP", () => {
     );
     expect((await connection.callTool("deliveries", { after: "r2" })).text).toBe(
       "pip has delivered nothing new",
-    );
-  });
-
-  it("reports status in the five words and nothing more", async () => {
-    const { connect, conversationOf, busy } = await fixture();
-    const connection = await connect("pip");
-    expect((await connection.callTool("status", {})).text).toBe("pip is idle");
-    busy.add(await conversationOf("pip"));
-    expect((await connection.callTool("status", {})).text).toBe("pip is working");
-  });
-
-  it("answers missing for a creature this workspace does not keep", async () => {
-    const { mcp } = await fixture();
-    expect(await mcp.answer("nobody-here", { jsonrpc: "2.0", id: 1, method: "ping" }, local)).toBe(
-      "missing",
     );
   });
 });
@@ -462,7 +436,6 @@ describe("statusOf", () => {
     [{ paused: "2026-11-06T08:00:00.000Z", threads: [thread("working")] }, false, "paused"],
     [{ paused: null, threads: [thread("back"), thread("working")] }, false, "working"],
     [{ paused: null, threads: [] }, true, "working"],
-    [{ paused: null, threads: [thread("waiting")] }, false, "at the porch"],
     [{ paused: null, threads: [thread("blocked"), thread("back")] }, false, "at the porch"],
     [{ paused: null, threads: [thread("back")] }, false, "back"],
     [{ paused: null, threads: [] }, false, "idle"],

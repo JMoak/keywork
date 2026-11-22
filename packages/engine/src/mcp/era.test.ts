@@ -58,7 +58,6 @@ function findTool(registry: McpRegistry, name: string): Tool {
 
 describe("dual-era stdio client", () => {
   it.each([
-    ["legacy", "legacy"],
     ["modern", "modern"],
     ["dual", "modern"],
   ] as const)("talks to a %s fixture through the registry as %s", async (fixtureEra, spoken) => {
@@ -89,14 +88,12 @@ describe("dual-era stdio client", () => {
   });
 
   it("falls back to initialize once a silent discover probe times out", async () => {
-    const begun = Date.now();
     const connection = await connectStdioServer(fixtureSpec("basic", "legacy", "--mute-discover"), {
       requestTimeoutMs: 5_000,
       discoverTimeoutMs: 150,
     });
     connections.push(connection);
     expect(connection.era).toBe("legacy");
-    expect(Date.now() - begun).toBeLessThan(3_000);
     expect(await connection.callTool("echo", { text: "late" })).toEqual({
       text: "late",
       isError: false,

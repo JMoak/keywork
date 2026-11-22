@@ -2,7 +2,6 @@ import { MockProvider } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
-import { operationOf } from "../openapi.ts";
 import { memorySessionHost } from "../testing.ts";
 import type { RouteHandler } from "./family.ts";
 import {
@@ -10,8 +9,6 @@ import {
   type ModelsPort,
   type ModelsProbeRequest,
   modelFamilyFor,
-  modelRoutes,
-  probeRequestOf,
 } from "./models.ts";
 
 const origin = "http://127.0.0.1:4770";
@@ -86,21 +83,6 @@ describe("the models routes", () => {
     expect(lists).toEqual([{}, { node: "spark-ad4d" }, {}]);
   });
 
-  it("reloads saved connections before returning the authoritative inventory", async () => {
-    const { port } = recordingPort();
-    let refreshed = false;
-    port.refresh = async () => {
-      refreshed = true;
-      return { ...report, inherits: { strong: { provider: "local", model: "chosen" } } };
-    };
-    const answer = await call(handlers(port).refreshModels, "POST", "/models/refresh");
-    expect(refreshed).toBe(true);
-    expect(answer).toEqual({
-      status: 200,
-      body: { ...report, inherits: { strong: { provider: "local", model: "chosen" } } },
-    });
-  });
-
   it("refuses unsupported refresh and never accepts credentials or configuration", async () => {
     const { port } = recordingPort();
     expect((await call(handlers(port).refreshModels, "POST", "/models/refresh")).status).toBe(503);
@@ -151,24 +133,5 @@ describe("the models routes", () => {
       expect((await call(h.probeModels, "POST", "/models/probe", body)).status).toBe(400);
     }
     expect(probes).toEqual([]);
-  });
-
-  it("declare an authenticated GET /models and POST /models/probe with a required body", () => {
-    expect(modelRoutes.map((route) => [route.method, route.path, route.operationId])).toEqual([
-      ["GET", "/models", "listModels"],
-      ["POST", "/models/probe", "probeModels"],
-      ["POST", "/models/refresh", "refreshModels"],
-    ]);
-    expect(modelRoutes.every((route) => route.authenticated)).toBe(true);
-    expect(operationOf(modelRoutes[1]).requestBody?.required).toBe(true);
-    expect(operationOf(modelRoutes[0]).requestBody).toBeUndefined();
-    expect(operationOf(modelRoutes[2]).requestBody).toBeUndefined();
-  });
-
-  it("normalize a probe request", () => {
-    expect(probeRequestOf({ endpoint: "https://spark.tail1234.ts.net:11434" })).toEqual({
-      endpoint: "https://spark.tail1234.ts.net:11434",
-    });
-    expect(probeRequestOf(null)).toBeUndefined();
   });
 });

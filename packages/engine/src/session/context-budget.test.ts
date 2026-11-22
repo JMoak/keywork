@@ -5,7 +5,6 @@ import {
   contextBudgetFor,
   contextFullness,
   flushDue,
-  formatTokenCount,
   readContext,
   reserveCaps,
 } from "./context-budget.ts";
@@ -75,16 +74,5 @@ describe("readContext", () => {
   it("never reads negative or fractional usage", () => {
     expect(readContext(-3, budget).used).toBe(0);
     expect(readContext(12.6, budget).used).toBe(13);
-  });
-});
-
-describe("formatTokenCount", () => {
-  it("keeps counts short at every magnitude", () => {
-    expect(formatTokenCount(412)).toBe("412");
-    expect(formatTokenCount(4_096)).toBe("4.1k");
-    expect(formatTokenCount(8_000)).toBe("8k");
-    expect(formatTokenCount(41_300)).toBe("41k");
-    expect(formatTokenCount(200_000)).toBe("200k");
-    expect(formatTokenCount(1_250_000)).toBe("1.3M");
   });
 });

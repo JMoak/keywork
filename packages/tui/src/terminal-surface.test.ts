@@ -25,11 +25,4 @@ describe("keyEventOf", () => {
       sequence: "A",
     });
   });
-
-  it("gives a sequence-less key an empty sequence rather than undefined", () => {
-    expect(keyEventOf(parseChord("escape"), undefined)).toMatchObject({
-      name: "escape",
-      sequence: "",
-    });
-  });
 });

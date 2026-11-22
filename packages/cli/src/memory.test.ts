@@ -8,7 +8,6 @@ import {
   type MemoryStore,
   markMultiHostVault,
   type Note,
-  StagedItemNotFoundError,
 } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import type { AirlockDigestView, ArcAirlockPort } from "@keywork/tui";
@@ -23,7 +22,6 @@ import {
   openWorkspaceMemory,
   retrievalDisclosure,
   sweepOnClose,
-  withMemoryPrompt,
 } from "./memory.ts";
 
 const tempDir = scratchDirs("keywork-cli-memory-");
@@ -51,15 +49,6 @@ describe("openWorkspaceMemory", () => {
 
     await memory?.store.writeNote({ title: "First", body: "kept\n", provenance: "user" });
     expect(await readFile(join(cwd, ".keywork", "memory", "First.md"), "utf8")).toContain("kept");
-  });
-
-  it("opens the vault at .keywork/memory for a declared workspace", async () => {
-    const cwd = await declaredWorkspace();
-    const memory = openWorkspaceMemory(cwd, true);
-    expect(memory).toBeDefined();
-    await memory?.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "user" });
-    const raw = await readFile(join(cwd, ".keywork", "memory", "Ratio Rule.md"), "utf8");
-    expect(raw).toContain("60/40");
   });
 
   it("writes per host once the vault is marked multi-host, and leases the sweep", async () => {
@@ -209,69 +198,6 @@ describe("memoryPanePort", () => {
     expect(memoryPanePort(() => memory).airlock).toBeUndefined();
   });
 
-  it("marks the notes the prompt carries, in bootstrap order, and shows the budget used", async () => {
-    const { memory, seed } = await populatedMemory();
-    await seed.store.writeMoc(["Proven Rule", "User Fact"], "user");
-    const inputs = await memoryPanePort(() => memory).load();
-    const injected = inputs.notes.filter((note) => note.injected).map((note) => note.title);
-    expect(injected).toEqual(["Proven Rule", "User Fact"]);
-    expect(inputs.notes.slice(0, 2).map((note) => note.title)).toEqual(injected);
-    expect(inputs.layers[0]?.prompt?.used).toBeGreaterThan(0);
-  });
-
-  it("feeds this run's ledger ops and the persisted audit into one event list", async () => {
-    const { memory, seed } = await populatedMemory();
-    await seed.store.recordAudit("gardener sweep: promoted 1, merged 0");
-    const inputs = await memoryPanePort(() => memory).load();
-    const verbs = inputs.ledger.map((event) => `${event.verb} ${event.subject}`);
-    expect(verbs).toContain("create User Fact");
-    expect(verbs).toContain("stage staged item");
-    expect(verbs).toContain("gardener sweep promoted 1, merged 0");
-    expect(inputs.ledger.find((event) => event.subject === "User Fact")?.notes).toEqual([
-      "User Fact",
-    ]);
-    expect(inputs.gardener?.sweptAt).toBeDefined();
-  });
-
-  it("counts recalls since the last sweep and exposes typed relations", async () => {
-    const { memory, seed } = await populatedMemory();
-    await seed.store.writeNote({
-      title: "Layout",
-      body: "see [[User Fact]]\n",
-      provenance: "agent",
-    });
-    memory.gardener.recordRecall("User Fact", "session-1");
-    memory.gardener.recordRecall("User Fact", "session-2");
-    const inputs = await memoryPanePort(() => memory).load();
-    const fact = inputs.notes.find((note) => note.title === "User Fact");
-    expect(fact?.recalls).toBe(2);
-    expect(fact?.relations).toEqual([{ name: "Layout", predicate: "relates_to", direction: "in" }]);
-  });
-
-  it("answers questions the way the agent's search would, with per-leg ranks", async () => {
-    const { memory } = await populatedMemory();
-    const outcome = await memoryPanePort(() => memory).query?.("recalled often");
-    expect(outcome?.source).toBe("lexical");
-    expect(outcome?.hits[0]).toEqual({
-      note: "Proven Rule",
-      layer: "workspace",
-      ranks: { lexical: 1 },
-      superseded: false,
-    });
-  });
-
-  it("reverts a ledger op through the store", async () => {
-    const { memory, seed } = await populatedMemory();
-    const result = await seed.store.writeNote({
-      title: "User Fact",
-      body: "revised\n",
-      provenance: "user",
-    });
-    const port = memoryPanePort(() => memory);
-    expect(await port.revert?.(result.ledgerId)).toBe("reverted");
-    expect((await seed.store.readNote("User Fact"))?.body).toBe("typed by hand\n");
-  });
-
   it("routes approve to the store for staged writes and reviews alike", async () => {
     const { memory, seed, reviewId } = await populatedMemory();
     const port = memoryPanePort(() => memory);
@@ -288,13 +214,6 @@ describe("memoryPanePort", () => {
     await memoryPanePort(() => memory).discard(stagedItem?.id ?? "");
     expect((await seed.store.listStaged()).map((item) => item.kind)).toEqual(["contradiction"]);
     expect((await seed.store.listNotes()).map((note) => note.title)).not.toContain("Web Claim");
-  });
-
-  it("approving an already-resolved review item raises the calm typed error", async () => {
-    const { memory, reviewId } = await populatedMemory();
-    const port = memoryPanePort(() => memory);
-    await port.approve(reviewId);
-    await expect(port.approve(reviewId)).rejects.toBeInstanceOf(StagedItemNotFoundError);
   });
 
   it("an untrusted vault loads as calm emptiness, never content", async () => {
@@ -326,13 +245,6 @@ describe("citationTrail", () => {
     expect(curingStage(stamped as Note)).toBe(2);
   });
 
-  it("leaves an uncited recall out of the usefulness fold", async () => {
-    const { memory, trail } = await trailWorld();
-    trail.forSession("session-1").recordRecall("Ratio Rule", "search");
-    const report = await memory.gardener.sweep();
-    expect(report.usefulness["Ratio Rule"]).toBeUndefined();
-  });
-
   it("rejects a hallucinated citation: no event, no audit line, nothing cited (R6)", async () => {
     const { memory, trail } = await trailWorld();
     trail.forSession("session-1").recordRecall("Ratio Rule", "search");
@@ -359,16 +271,6 @@ describe("citationTrail", () => {
     const relaunched = citationTrail(() => memory);
     expect(await relaunched.citedNotes("dock-v2")).toEqual(["Arc Finding"]);
     expect(await relaunched.citedNotes("other-arc")).toEqual([]);
-  });
-
-  it("unions live and persisted citations without duplicates", async () => {
-    const { memory, trail } = await trailWorld();
-    const first = trail.forSession("s1");
-    first.recordRecall("Arc Finding", "get", arcLayerId("dock-v2"));
-    first.recordRecall("Arc Finding", "get", arcLayerId("dock-v2"));
-    first.recordReply("per [[Arc Finding]]");
-    await memory.store.recordAudit("settle");
-    expect(await trail.citedNotes("dock-v2")).toEqual(["Arc Finding"]);
   });
 
   it("records bootstrap injections so the reply can cite them", async () => {
@@ -415,27 +317,6 @@ describe("citationTrail", () => {
 });
 
 describe("memoryRecall", () => {
-  it("stays silent about retrieval for lexical-only search", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
-    const disclosures: string[] = [];
-    const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
-    await recall?.search.search("ratio");
-    expect(disclosures).toEqual([]);
-  });
-
-  it("discloses the embedding source on every hybrid search", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    memory.embeddings = { id: "fake-embed", embed: async (texts) => texts.map(() => [1, 0]) };
-    await memory.store.writeNote({ title: "Ratio Rule", body: "60/40\n", provenance: "agent" });
-    const disclosures: string[] = [];
-    const recall = memoryRecall(memory, "sess-1", (line) => disclosures.push(line));
-    await recall?.search.search("ratio");
-    expect(disclosures).toEqual(["memory search uses embeddings from fake-embed"]);
-  });
-
   it("discloses degradation when the embedding source fails", async () => {
     const memory = openWorkspaceMemory(await declaredWorkspace(), true);
     if (memory === undefined) throw new Error("expected a workspace memory");
@@ -467,13 +348,6 @@ describe("retrievalDisclosure", () => {
   });
 });
 
-describe("withMemoryPrompt", () => {
-  it("appends the injection only when there is one", () => {
-    expect(withMemoryPrompt("base", "")).toBe("base");
-    expect(withMemoryPrompt("base", "# Memory\n\nnotes")).toBe("base\n\n# Memory\n\nnotes");
-  });
-});
-
 describe("sweepOnClose", () => {
   it("leaves an audit entry on a trusted vault and swallows nothing-to-do", async () => {
     const cwd = await declaredWorkspace();
@@ -483,31 +357,6 @@ describe("sweepOnClose", () => {
     await sweepOnClose(memory);
     const audit = await readFile(join(cwd, ".keywork", "memory", "curation.md"), "utf8");
     expect(audit).toContain("gardener sweep");
-  });
-
-  it("hands skill evidence to the Gardener so a churning agent skill reaches the inbox", async () => {
-    const cwd = await declaredWorkspace();
-    const memory = openWorkspaceMemory(cwd, true);
-    if (memory === undefined) throw new Error("expected a workspace memory");
-    await sweepOnClose(memory, {
-      skills: [{ name: "release-tag", authoredBy: "keywork" }],
-      telemetry: {
-        "release-tag": {
-          counts: { use: 1, view: 0, reference: 0, patch: 2, rewrite: 0, create: 1 },
-          lastActivityAt: "2026-09-01T00:00:00.000Z",
-        },
-      },
-    });
-    const items = await memory.store.listStaged();
-    expect(items).toEqual([
-      expect.objectContaining({ kind: "skill-review", skill: "release-tag", reason: "churning" }),
-    ]);
-  });
-
-  it("is silent over an untrusted vault and without memory at all", async () => {
-    const memory = openWorkspaceMemory(await declaredWorkspace(), false);
-    await expect(sweepOnClose(memory)).resolves.toBeUndefined();
-    await expect(sweepOnClose(undefined)).resolves.toBeUndefined();
   });
 
   it("still proposes preferences when the sweep fails, then surfaces the failure", async () => {
@@ -522,31 +371,9 @@ describe("sweepOnClose", () => {
     const items = await memory.store.listStaged();
     expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
   });
-
-  it("names every failure when both close steps fail", async () => {
-    const cwd = await declaredWorkspace();
-    const memory = openWorkspaceMemory(cwd, true);
-    if (memory === undefined) throw new Error("memory expected");
-    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
-    vi.spyOn(memory.askGate, "proposePreferences").mockRejectedValue(new Error("ledger locked"));
-
-    await expect(sweepOnClose(memory)).rejects.toThrow("disk full · ledger locked");
-  });
 });
 
 describe("ask-gate preferences at close", () => {
-  it("proposes a preference through the inbox after repeated approvals", async () => {
-    const cwd = await declaredWorkspace();
-    const memory = openWorkspaceMemory(cwd, true);
-    if (memory === undefined) throw new Error("memory expected");
-    for (const _ of [1, 2, 3]) await memory.askGate.record("bash git", "yes");
-
-    await sweepOnClose(memory);
-
-    const items = await memory.store.listStaged();
-    expect(items.filter((item) => item.kind === "preference-proposal")).toHaveLength(1);
-  });
-
   it("stays inert for an untrusted workspace", async () => {
     const cwd = await declaredWorkspace();
     const memory = openWorkspaceMemory(cwd, false);

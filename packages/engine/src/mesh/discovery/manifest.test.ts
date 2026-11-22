@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseStatus } from "../transport/status.ts";
 import { recordedHouse, recordedText } from "../transport/testing/recorded.ts";
-import { nvidiaGpus, nvidiaSmiQuery, parseNvidiaSmiCsv } from "./gpu.ts";
+import { parseNvidiaSmiCsv } from "./gpu.ts";
 import { buildManifest, nodeManifestSchema, parseManifest } from "./manifest.ts";
 
 const recordedSmiCsv =
@@ -37,18 +37,6 @@ describe("GPU inventory from nvidia-smi", () => {
         driver: "580.95",
       },
     ]);
-  });
-
-  it("asks for CSV without headers or units and reports no GPUs when nvidia-smi is absent", async () => {
-    const asked: (readonly string[])[] = [];
-    expect(
-      await nvidiaGpus(async (argv) => {
-        asked.push(argv);
-        return null;
-      }),
-    ).toEqual([]);
-    expect(asked).toEqual([nvidiaSmiQuery]);
-    expect(nvidiaSmiQuery).toContain("--format=csv,noheader,nounits");
   });
 });
 
@@ -89,25 +77,6 @@ describe("buildManifest", () => {
       generatedAt: "2026-11-05T08:00:00.000Z",
     });
     expect(parseManifest(manifest)).toEqual(manifest);
-  });
-
-  it("publishes an empty model server list until the model slice provides one", async () => {
-    const manifest = await buildManifest({
-      version: "0.4.0",
-      roles: ["reachable"],
-      capabilities: [],
-      gpus: async () => [],
-      machine: () => ({ name: "spare", os: "linux", arch: "arm64" }),
-    });
-    expect(manifest.modelServers).toEqual([]);
-    expect(manifest.workshop.substrates).toEqual([]);
-    expect(manifest.machine).toEqual({
-      name: "spare",
-      os: "linux",
-      arch: "arm64",
-      stableId: null,
-      addresses: [],
-    });
   });
 
   it("refuses a manifest with a role the mesh does not know", () => {

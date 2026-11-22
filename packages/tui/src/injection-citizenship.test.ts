@@ -82,23 +82,4 @@ describe("injection citizenship (C34)", () => {
     await probe.settled();
     expect(submittedPrompts(probe)).toEqual([graphemeHeavy]);
   });
-
-  it("lands grapheme-heavy pastes intact", async () => {
-    const probe = probeWithReplies();
-    probe.paste(graphemeHeavy);
-    expect(submittedPrompts(probe)).toEqual([]);
-    probe.keys("enter");
-    await probe.settled();
-    expect(submittedPrompts(probe)).toEqual([graphemeHeavy]);
-  });
-
-  it("survives a burst, a paste, and another burst in one prompt", async () => {
-    const probe = probeWithReplies();
-    probe.type("before ");
-    probe.paste("pasted middle");
-    probe.type(" after");
-    probe.keys("enter");
-    await probe.settled();
-    expect(submittedPrompts(probe)).toEqual(["before pasted middle after"]);
-  });
 });

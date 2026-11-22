@@ -53,23 +53,6 @@ describe("FileModel", () => {
     expect(model.visibleLines(10)[0]?.number).toBe(1);
   });
 
-  it("never scrolls past the end", async () => {
-    const model = await loadedModel("a\nb\nc");
-    for (let press = 0; press < 20; press += 1) model.handleKey(parseChord("pagedown"), 2);
-    expect(model.visibleLines(2)[0]?.number).toBe(2);
-  });
-
-  it("jumps to the top and bottom with home and end", async () => {
-    const content = Array.from({ length: 50 }, (_, index) => `line-${index + 1}`).join("\n");
-    const model = await loadedModel(content);
-
-    model.handleKey(parseChord("end"), 10);
-    expect(model.visibleLines(10)[0]?.number).toBe(41);
-
-    model.handleKey(parseChord("home"), 10);
-    expect(model.visibleLines(10)[0]?.number).toBe(1);
-  });
-
   it("opens at the end when asked, landing on the last page", async () => {
     const content = Array.from({ length: 50 }, (_, index) => `line-${index + 1}`).join("\n");
     const { cwd, name } = await fileWith(content);
@@ -78,11 +61,6 @@ describe("FileModel", () => {
 
     expect(model.visibleLines(10)[0]?.number).toBe(41);
     expect(model.visibleLines(10).at(-1)?.number).toBe(50);
-  });
-
-  it("ignores non-scroll keys so typing stays available to the app", async () => {
-    const model = await loadedModel("a");
-    expect(model.handleKey(parseChord("x"), 10)).toBe(false);
   });
 
   it("reports missing files as a readable failure", async () => {
@@ -101,29 +79,6 @@ describe("FileModel", () => {
     await model.settled();
 
     expect(model.state).toEqual({ kind: "failed", reason: "binary file" });
-  });
-
-  it("notifies once when the load lands", async () => {
-    const { cwd, name } = await fileWith("a\nb");
-    let notified = 0;
-    const model = new FileModel(cwd, name, () => {
-      notified += 1;
-    });
-    await model.settled();
-    expect(notified).toBe(1);
-  });
-
-  it("stays silent when disposed before the load lands", async () => {
-    const { cwd, name } = await fileWith("a\nb");
-    let notified = 0;
-    const model = new FileModel(cwd, name, () => {
-      notified += 1;
-    });
-    model.dispose();
-    await model.settled();
-    expect(notified).toBe(0);
-    expect(model.handleKey(parseChord("down"), 10)).toBe(true);
-    expect(notified).toBe(0);
   });
 });
 

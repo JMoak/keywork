@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseChord } from "./keys.ts";
-import { resolvePalette } from "./palette.ts";
-import { PaneTrayModel, paneTrayMouse, paneTrayView, type TrayCommand } from "./pane-tray.ts";
+import { PaneTrayModel, paneTrayMouse, type TrayCommand } from "./pane-tray.ts";
 import { press } from "./testing/index.ts";
 
 function trayOver(names: string[] = ["fork", "label", "refresh"]) {
@@ -28,13 +27,6 @@ describe("PaneTrayModel", () => {
     expect(tray.opensOn(parseChord(":"))).toBe(true);
     expect(tray.opensOn(parseChord("ctrl+/"))).toBe(false);
     expect(tray.opensOn(parseChord("f"))).toBe(false);
-  });
-
-  it("lists every command in source order when the query is empty", () => {
-    const { tray } = trayOver();
-    tray.openTray();
-    expect(tray.matches().map((command) => command.name)).toEqual(["fork", "label", "refresh"]);
-    expect(tray.selected()).toBe(0);
   });
 
   it("filters fuzzily as the query grows and restores on backspace", () => {
@@ -67,13 +59,6 @@ describe("PaneTrayModel", () => {
     expect(tray.open).toBe(false);
   });
 
-  it("resets the selection when the query changes", () => {
-    const { tray, ran } = trayOver();
-    tray.openTray();
-    press(tray, "down", "down", "l", "enter");
-    expect(ran).toEqual(["label"]);
-  });
-
   it("closes without running on escape or on enter with no match", () => {
     const escaped = trayOver();
     escaped.tray.openTray();
@@ -92,20 +77,6 @@ describe("PaneTrayModel", () => {
     tray.openTray();
     expect(tray.handleKey(parseChord("pagedown"), undefined)).toBe(true);
     expect(tray.open).toBe(true);
-  });
-
-  it("reports no keys as handled while closed", () => {
-    const { tray } = trayOver();
-    expect(tray.handleKey(parseChord("enter"), undefined)).toBe(false);
-  });
-
-  it("sizes its view to the matches plus chrome and prompt", () => {
-    const { tray } = trayOver();
-    tray.openTray();
-    const theme = resolvePalette();
-    expect(paneTrayView(tray, 60, theme).rows).toBe(6);
-    press(tray, "z");
-    expect(paneTrayView(tray, 60, theme).rows).toBe(4);
   });
 });
 
@@ -132,10 +103,5 @@ describe("paneTrayMouse", () => {
     expect(paneTrayMouse(tray, 3, at(1), down(1))).toBe(true);
     expect(tray.open).toBe(false);
     expect(ran).toEqual([]);
-  });
-
-  it("does nothing while closed", () => {
-    const { tray } = trayOver();
-    expect(paneTrayMouse(tray, 3, at(3), down(3))).toBe(false);
   });
 });

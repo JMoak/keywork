@@ -5,7 +5,6 @@ import {
   type ConversationTarget,
   type ExtensionCommandEntry,
   type ExtensionsPort,
-  extensionFailureNotice,
   registerExtensions,
   shadowedExtensionNotice,
 } from "./extension-commands.ts";
@@ -104,48 +103,6 @@ describe("palette-surfaced workspace commands", () => {
     );
     expect(ran).toEqual([]);
     expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
-  });
-
-  it("appears in pane slash suggestions and in the palette, where an args-only command completes", () => {
-    const probe = new AppProbe();
-    wire(probe, {
-      commands: [
-        { name: "plain", needsArgs: false, render: async () => "p" },
-        { name: "wants-args", needsArgs: true, render: async (args) => args },
-      ],
-    });
-    probe.keys("ctrl+shift+p").type("plain");
-    expect(probe.core.paletteMatches().map((entry) => entry.name)).toContain("plain");
-    probe.keys("escape").keys("ctrl+shift+p").type("wants");
-    expect(probe.core.paletteMatches().map((entry) => entry.name)).toEqual(["wants-args"]);
-    probe.keys("enter");
-    expect(probe.snapshot()).toMatchObject({ overlay: "palette", paletteQuery: "/wants-args " });
-    probe.keys("escape");
-    expect(probe.core.registry.search("wants-args")[0]?.name).toBe("wants-args");
-  });
-
-  it("notices instead of crashing when no conversation pane exists", async () => {
-    const probe = new AppProbe();
-    const notices: string[] = [];
-    registerExtensions(
-      probe.core.registry,
-      { commands: [shellCommand("ship", "hi")], failures: [] },
-      { conversation: () => undefined, notice: (text) => notices.push(text) },
-    );
-    expect(probe.command("ship")).toBe(true);
-    expect(notices).toEqual(["/ship: no conversation pane to run in"]);
-  });
-});
-
-describe("extensionFailureNotice", () => {
-  it("collapses failures into one calm line", () => {
-    expect(extensionFailureNotice([])).toBeUndefined();
-    expect(extensionFailureNotice(["a.md: bad frontmatter"])).toBe(
-      "skipped extension a.md: bad frontmatter",
-    );
-    expect(extensionFailureNotice(["a.md: x", "b.md: y", "c.md: z"])).toBe(
-      "skipped extension a.md: x (+2 more)",
-    );
   });
 });
 

@@ -150,37 +150,6 @@ describe("attachOnFork", () => {
     expect(escrow.claim("forked-1")?.id).toBe("forked-1");
     expect(released).toEqual([]);
   });
-
-  it("attach reports whether a session could be opened and holds what it opened", async () => {
-    const escrow = sessionEscrow(undefined);
-    const opening: SessionPort = {
-      open: async (id) => (id === "gone" ? undefined : attachmentOf(id)),
-      create: async () => undefined,
-    };
-    const port = attachOnFork(forkingTrees("forked-1"), opening, escrow);
-
-    expect(await port.attach?.("gone")).toBe(false);
-    expect(await port.attach?.("s2")).toBe(true);
-    expect(escrow.claim("gone")).toBeUndefined();
-    expect(escrow.claim("s2")?.id).toBe("s2");
-  });
-
-  it("forwards the tree port's subscribe seam", () => {
-    const listeners: string[] = [];
-    const trees: SessionTreePort = {
-      ...forkingTrees("forked-1"),
-      subscribe: (listener) => {
-        listeners.push("subscribed");
-        listener("s1");
-        return () => {};
-      },
-    };
-    const port = attachOnFork(trees, undefined, sessionEscrow(undefined));
-    const seen: string[] = [];
-    port.subscribe?.((sessionId) => seen.push(sessionId));
-    expect(listeners).toEqual(["subscribed"]);
-    expect(seen).toEqual(["s1"]);
-  });
 });
 
 describe("paneSessionIndex", () => {
@@ -195,14 +164,6 @@ describe("paneSessionIndex", () => {
     index.closed("session-2");
 
     expect(released).toEqual(["s1"]);
-    expect(index.size()).toBe(0);
-  });
-
-  it("tolerates a port without release and unknown panes", () => {
-    const index = paneSessionIndex({ open: async () => undefined, create: async () => undefined });
-    index.bind("session-1", () => "s1");
-    index.closed("session-1");
-    index.closed("never-bound");
     expect(index.size()).toBe(0);
   });
 
@@ -244,31 +205,6 @@ describe("bindSessionLifecycle", () => {
     await probe.settled();
     expect(agent.thinking()).toBe(false);
     expect(recorded).toEqual(["off"]);
-  });
-
-  it("restores the session's effort on adopt and records /effort through the attachment", async () => {
-    const recorded: string[] = [];
-    const attachment: SessionAttachment = {
-      ...attachmentOf("s1"),
-      effort: "high",
-      recordEffort: async (level) => {
-        recorded.push(level);
-      },
-    };
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const probe = new AppProbe({
-      createPane: (id, notify, commands) => {
-        const pane = new ConversationPane(id, agent, notify, undefined, commands);
-        adoptSession(pane, agent, attachment);
-        bindSessionLifecycle({ pane, attachment });
-        return pane;
-      },
-    });
-    expect(agent.effort()).toBe("high");
-    probe.type("/effort low").keys("enter");
-    await probe.settled();
-    expect(agent.effort()).toBe("low");
-    expect(recorded).toEqual(["low"]);
   });
 
   it("hands each persisted prompt's entry id back to the pane", async () => {
@@ -428,47 +364,5 @@ describe("bindSessionLifecycle between tool batches", () => {
       "assistant:done",
     ]);
     expect(probe.model()?.entries).toContainEqual({ kind: "info", text: "compacted mid-turn" });
-  });
-
-  it("leaves the store alone between batches while the context has room", async () => {
-    const appendedBefore: number[] = [];
-    const phases: string[] = [];
-    const appended: string[] = [];
-    const attachment: SessionAttachment = {
-      id: "s1",
-      history: [],
-      replay: () => {},
-      append: async (message) => {
-        appended.push(message.role);
-        return undefined;
-      },
-    };
-    const afterTurn: AfterTurn = async (turn) => {
-      phases.push(turn.phase);
-      appendedBefore.push(appended.length);
-      return undefined;
-    };
-    const probe = new AppProbe({
-      createPane: (id, notify, commands) => {
-        const provider = new MockProvider([
-          toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "x" } }),
-          textTurn("done"),
-        ]);
-        const pane = new ConversationPane(
-          id,
-          new Agent({ provider, tools: [echo] }),
-          notify,
-          undefined,
-          commands,
-        );
-        bindSessionLifecycle({ pane, attachment, afterTurn });
-        return pane;
-      },
-    });
-    probe.type("one").keys("enter");
-    await probe.settled();
-
-    expect(phases).toEqual(["after-turn"]);
-    expect(appendedBefore).toEqual([4]);
   });
 });

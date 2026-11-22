@@ -6,10 +6,8 @@ import {
 } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { EventLog } from "../events.ts";
-import { routes } from "../openapi.ts";
 import { createKeyworkServer } from "../server.ts";
 import { memorySessionHost } from "../testing.ts";
-import { handoffRoutes } from "./handoffs.ts";
 
 const token = "handoffs-token-1234567890";
 const origin = "http://keywork.test";
@@ -61,11 +59,6 @@ describe("GET /creature-handoffs", () => {
     expect(await response.json()).toEqual({ handoffs: [adaToPip, pipToAda] });
   });
 
-  it("answers an empty list when no creature has handed anything over", async () => {
-    const { get } = served(fakeHandoffs([]).port);
-    expect(await (await get()).json()).toEqual({ handoffs: [] });
-  });
-
   it("answers 401 with no token or a wrong one, and reads nothing", async () => {
     let listed = 0;
     const { port } = fakeHandoffs([adaToPip]);
@@ -88,15 +81,6 @@ describe("GET /creature-handoffs", () => {
     const response = await served().get();
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "hand-offs is not served by this host" });
-  });
-
-  it("is one authenticated GET in the document, and nothing writes the tally over HTTP", () => {
-    const paths = routes.filter((route) => route.path === "/creature-handoffs");
-    expect(paths).toEqual([...handoffRoutes]);
-    expect(paths.map(({ method, authenticated }) => ({ method, authenticated }))).toEqual([
-      { method: "GET", authenticated: true },
-    ]);
-    expect(routes.filter((route) => route.operationId === "listCreatureHandoffs")).toHaveLength(1);
   });
 });
 

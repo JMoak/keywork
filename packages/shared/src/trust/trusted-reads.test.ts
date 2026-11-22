@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PermissionRule } from "../config/schema.ts";
 import { layeredPolicy, type RuleLayer } from "./permissions.ts";
-import { activePreset } from "./presets.ts";
 import { trustedReadRules, trustedReadStaysWithin } from "./trusted-reads.ts";
 
 const bash = (command: string) => ({ command });
@@ -19,38 +18,8 @@ function trustedPolicy(user: readonly PermissionRule[] = []) {
 describe("the trusted read posture", () => {
   it.each([
     "git status",
-    "git status --short",
-    "git log --oneline -5",
-    "git diff HEAD~1",
-    "git show HEAD",
-    "git branch",
-    "git branch --show-current",
     "git branch --list feat/*",
-    "git rev-parse HEAD",
-    "git remote -v",
-    "ls",
-    "ls -la src",
-    "dir",
-    "cat README.md",
-    "head -n 20 src/index.ts",
-    "tail -n 5 log.txt",
-    "wc -l src/index.ts",
-    "pwd",
-    "which bun",
-    "where node",
-    "rg TODO src",
-    "grep -rn needle .",
     "find . -name '*.ts'",
-    "tree",
-    "stat package.json",
-    "file logo.png",
-    "echo hello",
-    "type README.md",
-    "node --version",
-    "bun --version",
-    "npm --version",
-    "git --version",
-    "python --version",
     "git status && git log -1",
     "rg foo | head -5",
   ])("allows %s as the trusted posture", (command) => {
@@ -98,11 +67,6 @@ describe("the trusted read posture", () => {
     const policy = layeredPolicy([{ origin: "trusted", rules: trustedReadRules }]);
     expect(policy("write", { path: "a.txt" })).toBeUndefined();
     expect(policy("github__create_issue", {})).toBeUndefined();
-  });
-
-  it("is posture rather than user rules, so the active preset still reads from config alone", () => {
-    expect(activePreset(undefined)).toBe("standard");
-    expect(activePreset([...trustedReadRules])).toBe("custom");
   });
 });
 

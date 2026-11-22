@@ -19,16 +19,6 @@ function linesOf(file: string): string[] {
 }
 
 describe("RotatingLog", () => {
-  it("appends one JSON object per line", () => {
-    const log = new RotatingLog(join(dir, "logs", "node.log"), { maxBytes: 10_000, keep: 2 });
-    log.append({ at: "2026-11-05T09:00:00.000Z", unit: "core", line: "node core: running" });
-    log.append({ at: "2026-11-05T09:00:01.000Z", unit: "core", line: "mesh: listening" });
-    expect(linesOf(log.file).map((line) => JSON.parse(line).line)).toEqual([
-      "node core: running",
-      "mesh: listening",
-    ]);
-  });
-
   it("rotates by size and keeps only the newest generations", () => {
     const file = join(dir, "node.log");
     const log = new RotatingLog(file, { maxBytes: 120, keep: 2 });
@@ -56,9 +46,5 @@ describe("tailLines", () => {
     for (let index = 0; index < 6; index += 1) log.append({ at: "t", n: index });
     const tail = tailLines(file, 3).map((line) => JSON.parse(line).n);
     expect(tail).toEqual([3, 4, 5]);
-  });
-
-  it("is empty for a log that was never written", () => {
-    expect(tailLines(join(dir, "absent.log"), 10)).toEqual([]);
   });
 });

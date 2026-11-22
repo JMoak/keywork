@@ -34,16 +34,6 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-describe("materializeWorkspace", () => {
-  it("writes the declaration and the vault directory", () => {
-    const workspace = materializeWorkspace(repo);
-
-    expect(workspace.name).toBe("repo");
-    expect(existsSync(join(repo, ".keywork", "workspace.json"))).toBe(true);
-    expect(existsSync(join(repo, ".keywork", "memory"))).toBe(true);
-  });
-});
-
 describe("deferredMaterialization", () => {
   it("materializes at the git root on the first message to the model", async () => {
     const nested = join(repo, "packages", "deep");

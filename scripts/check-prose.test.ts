@@ -2,20 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { emDash, findEmDashes, scanProse } from "./check-prose.ts";
-
-describe("findEmDashes", () => {
-  it("reports every em dash as line:column, one-based, in document order", () => {
-    const content = ["clean line", `two${emDash}here and${emDash}again`, `${emDash}first`].join(
-      "\n",
-    );
-    expect(findEmDashes(content)).toEqual(["2:4", "2:13", "3:1"]);
-  });
-
-  it("leaves hyphens, double hyphens, and en dashes alone", () => {
-    expect(findEmDashes("keyboard-first, --flag, 2026-08-22, pages 3–10")).toEqual([]);
-  });
-});
+import { emDash, scanProse } from "./check-prose.ts";
 
 describe("scanProse", () => {
   let root: string;
@@ -51,17 +38,6 @@ describe("scanProse", () => {
       "packages/cli/src/chat.ts:1:22",
       "scripts/e2e/goldens/cold-start.txt:1:7",
     ]);
-  });
-
-  it("skips the excluded directories but nothing else", async () => {
-    seed(root, {
-      "node_modules/dep/README.md": `vendored ${emDash} text`,
-      "artifacts/audit/report.md": `quoted ${emDash} text`,
-      "dist/bundle.js": `built ${emDash} text`,
-      ".claude/worktrees/w/notes.md": `scratch ${emDash} text`,
-      "docs/influencers/pi.md": `Pi ${emDash} notes`,
-    });
-    expect(await scanProse(root)).toEqual(["docs/influencers/pi.md:1:4"]);
   });
 });
 

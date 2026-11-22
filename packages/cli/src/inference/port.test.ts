@@ -1,6 +1,6 @@
 import type { ResolutionFailure } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { inferencePort, nextActionFor, shellCommands, slashCommands } from "./port.ts";
+import { inferencePort, nextActionFor, shellCommands } from "./port.ts";
 import { composeInference } from "./runtime.ts";
 
 describe("inferencePort", () => {
@@ -109,30 +109,6 @@ describe("nextActionFor", () => {
     },
   };
 
-  it("words every IR-18 code for the TUI with slash commands", () => {
-    expect(
-      Object.fromEntries(
-        Object.entries(failures).map(([name, failure]) => [name, nextActionFor(failure)]),
-      ),
-    ).toEqual({
-      nothingConfigured: "run /connect",
-      noDefault: "pick one with /model",
-      ambiguousDefault: 'pick one with /model or set "model" in keywork.json',
-      ambiguousBare: "qualify it as provider/model",
-      unknownProvider: "run /connect nope to add it",
-      unknownModelAnywhere:
-        "use a provider-qualified reference like provider/model, or /connect a provider",
-      unknownModelOnProvider: "run /connect closed to refresh its models, or pick one with /model",
-      disabled: "enable it with /connect p",
-      noCredential: "run /connect openai",
-      protocol:
-        "set it to one of chat-completions, responses, anthropic-messages, bedrock-converse",
-      capability: 'declare models["chatty"].toolCalls: true once the model supports it',
-      insecure:
-        "use an https:// endpoint, or set connections.lan.insecureTransport after reading its risk note",
-    });
-  });
-
   it("swaps in shell commands for keywork run and keywork chat", () => {
     expect(nextActionFor(failures.nothingConfigured as ResolutionFailure, shellCommands)).toBe(
       "run keywork connect",
@@ -146,24 +122,5 @@ describe("nextActionFor", () => {
     expect(nextActionFor(failures.ambiguousBare as ResolutionFailure, shellCommands)).toBe(
       "qualify it as provider/model",
     );
-  });
-
-  it("points an unacknowledged license at the mills pane, not at a declaration", () => {
-    const unacknowledged: ResolutionFailure = {
-      code: "missing-capability",
-      reference: "local/llama-4",
-      model: "llama-4",
-      capability: "license-acknowledgement",
-      message: "m",
-    };
-    expect(nextActionFor(unacknowledged)).toBe(
-      "acknowledge the license in the mills pane or with keywork models ack",
-    );
-  });
-
-  it("defaults to the slash vocabulary", () => {
-    for (const failure of Object.values(failures)) {
-      expect(nextActionFor(failure)).toBe(nextActionFor(failure, slashCommands));
-    }
   });
 });

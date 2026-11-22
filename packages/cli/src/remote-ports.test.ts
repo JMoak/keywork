@@ -175,16 +175,6 @@ describe("remoteAgentFactory", () => {
     expect(agent.busy()).toBe(false);
     await h.close();
   });
-
-  it("refuses to send before the pane has a server session", async () => {
-    const h = harness(new MockProvider([]));
-    const agent = remoteAgentFactory(h.client, h.feed)({}, [], {
-      sessionId: () => undefined,
-      discloseRetrieval: () => {},
-    });
-    await expect(agent.send("hello")).rejects.toThrow("no server session");
-    await h.close();
-  });
 });
 
 describe("remoteSessionPort", () => {

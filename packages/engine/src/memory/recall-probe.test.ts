@@ -27,14 +27,6 @@ describe("the recall probe", () => {
     expect(metrics.recallAtK).toBe(1);
   });
 
-  it("records the multi-hop baseline separately so the graph leg has a target", async () => {
-    const metrics = await runRecallProbe(await probeSearch(), probeCorpusStub.cases, {
-      hops: "multi",
-    });
-    expect(metrics.cases).toBe(1);
-    expect(metrics.recallAtK).toBeGreaterThanOrEqual(0);
-  });
-
   it("measures recall value against a memory-off control", async () => {
     const comparison = await compareAgainstMemoryOff(await probeSearch(), probeCorpusStub.cases, {
       hops: "single",

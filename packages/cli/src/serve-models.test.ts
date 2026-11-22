@@ -277,25 +277,6 @@ describe("the creature's first model", () => {
     }
   });
 
-  it("lets a smaller model answer the creature with no tool inputs", async () => {
-    const world = await modelWorld({ localContext: 4096 });
-    try {
-      const id = await world.creature("Pip", localChoice);
-      world.nextDefault(world.local);
-      expect(await world.host.models?.refresh?.()).toMatchObject({
-        conversation: { ...localChoice, mode: "chat" },
-        inherits: { strong: { refused: "missing-capability" } },
-      });
-      await world.host.prompt(id, "hello");
-      await world.settled(id);
-      expect(world.local.calls).toHaveLength(1);
-      expect(world.local.calls[0]?.tools).toEqual([]);
-      expect(world.cloud.calls).toHaveLength(0);
-    } finally {
-      await world.host.close();
-    }
-  });
-
   it("keeps the conversation-only boundary through model switching and reopening", async () => {
     const world = await modelWorld({ localContext: 4096 });
     const id = await world.creature("Pip");

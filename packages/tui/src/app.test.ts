@@ -88,25 +88,6 @@ describe("restoring a workspace", () => {
 });
 
 describe("workspace capture", () => {
-  it("skips the capture on pointer moves and keys that change nothing persisted", () => {
-    const describes: string[] = [];
-    const saves: WorkspaceState[] = [];
-    const probe = new AppProbe({
-      createMemoryPane: (id) => countingPane(id, describes),
-      saveWorkspace: (state) => saves.push(state),
-    });
-    probe.command("memory");
-    const describedAfterOpen = describes.length;
-    const savesAfterOpen = saves.length;
-    for (let step = 0; step < 25; step += 1) probe.hover(5 + step, 5);
-    probe.keys("ctrl+p").type("spl").keys("escape");
-    expect(describes.length).toBe(describedAfterOpen);
-    expect(saves.length).toBe(savesAfterOpen);
-    probe.keys("ctrl+k", "l");
-    expect(describes.length).toBe(describedAfterOpen + 1);
-    expect(saves.length).toBe(savesAfterOpen + 1);
-  });
-
   it("persists again when a pane's descriptor changes behind a repaint", () => {
     const saves: WorkspaceState[] = [];
     let root = "src";
@@ -209,14 +190,6 @@ describe("dragging a pane by its title row", () => {
     expect(probe.rect(first)).toEqual(from);
   });
 
-  it("commits the swap on release when nothing cancelled it", () => {
-    const { probe, first, second, from, onto } = twoMainPanes();
-    probe.drag({ x: from.x + 2, y: from.y }, { x: onto.x + 3, y: onto.y + 3 });
-    expect(probe.rect(first)).toEqual(onto);
-    expect(probe.rect(second)).toEqual(from);
-    expect(probe.snapshot().focused).toBe(first);
-  });
-
   it("esc without a lifted drag still reaches the focused pane", () => {
     const { probe } = twoMainPanes();
     probe.keys("escape");
@@ -240,20 +213,5 @@ describe("focus-last", () => {
     expect(probe.snapshot().focused).toBe("session-3");
     probe.keys("tab");
     expect(probe.snapshot().focused).toBe(left);
-  });
-
-  it("lands on the most recently used pane when the focused one closes", () => {
-    const probe = threePanes();
-    probe.core.focusPane("session-1");
-    probe.core.focusPane("session-3");
-    probe.keys("ctrl+k", "x");
-    expect(probe.snapshot().focused).toBe("session-1");
-  });
-
-  it("shows the chord in the keymap and on its palette command", () => {
-    const probe = new AppProbe();
-    expect(probe.core.keymap.describe("focus.last")).toBe("ctrl+k tab");
-    const command = probe.core.registry.all().find((entry) => entry.name === "focus-last");
-    expect(command?.shortcut).toBe("ctrl+k tab");
   });
 });

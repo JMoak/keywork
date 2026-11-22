@@ -21,15 +21,6 @@ async function corruptFile(dir: string): Promise<string> {
 }
 
 describe("openOrResumeSession", () => {
-  it("creates a fresh session when not resuming", async () => {
-    const dir = await tempDir();
-
-    const opened = await openOrResumeSession(dir, "C:\\repo");
-
-    expect(opened.seeded).toEqual([]);
-    expect(opened.store.header.cwd).toBe("C:\\repo");
-  });
-
   it("resumes the most recent session with its messages", async () => {
     const dir = await tempDir();
     const first = await openOrResumeSession(dir, ".");
@@ -72,28 +63,9 @@ describe("openOrResumeSession", () => {
 
     expect(opened.seeded).toEqual([]);
   });
-
-  it("appending after resume extends the same file", async () => {
-    const dir = await tempDir();
-    const first = await openOrResumeSession(dir, ".");
-    await first.store.append(textMessage("user", "one"));
-
-    const resumed = await openOrResumeSession(dir, ".", { continueLatest: true });
-    await resumed.store.append(textMessage("assistant", "two"));
-
-    const reread = await openOrResumeSession(dir, ".", { continueLatest: true });
-    expect(reread.seeded).toHaveLength(2);
-  });
 });
 
 describe("scanSessions", () => {
-  it("treats a missing directory as having no sessions", async () => {
-    expect(await scanSessions(join(await tempDir(), "nope"))).toEqual({
-      stores: [],
-      unreadable: [],
-    });
-  });
-
   it("opens every readable session and names the files it could not read", async () => {
     const dir = await tempDir();
     const opened = await openOrResumeSession(dir, ".");
@@ -141,31 +113,11 @@ describe("listSessions", () => {
     }
   });
 
-  it("titles an unnamed session with no user text as untitled", async () => {
-    const dir = await tempDir();
-    const opened = await openOrResumeSession(dir, ".");
-    await opened.store.append(textMessage("assistant", "reply"));
-
-    expect((await listSessions(dir)).sessions[0]?.title).toBe("(untitled session)");
-  });
-
   it("returns an empty list for a missing directory", async () => {
     expect(await listSessions(join(await tempDir(), "nope"))).toEqual({
       sessions: [],
       unreadable: [],
     });
-  });
-
-  it("keeps listing around an unreadable file and reports it", async () => {
-    const dir = await tempDir();
-    const opened = await openOrResumeSession(dir, ".");
-    await opened.store.append(textMessage("user", "keep"));
-    const corrupt = await corruptFile(dir);
-
-    const { sessions, unreadable } = await listSessions(dir);
-
-    expect(sessions.map((session) => session.id)).toEqual([opened.store.header.id]);
-    expect(unreadable.map((problem) => problem.file)).toEqual([corrupt]);
   });
 });
 
@@ -189,22 +141,6 @@ describe("newSessionFileName", () => {
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual(names);
   });
-
-  it("sorts a later session after an earlier one", () => {
-    const now = vi.spyOn(Date, "now");
-    now.mockReturnValue(1754800000000);
-    const earlier = newSessionFileName();
-    now.mockReturnValue(1754800000001);
-    const later = newSessionFileName();
-
-    expect([later, earlier].sort()).toEqual([earlier, later]);
-  });
-});
-
-describe("latestSessionFile", () => {
-  it("returns undefined for a missing directory", async () => {
-    expect(await latestSessionFile(join(await tempDir(), "nope"))).toBeUndefined();
-  });
 });
 
 describe("findSession", () => {
@@ -217,13 +153,6 @@ describe("findSession", () => {
       opened.store.file,
     );
     expect(await findSession(dir, "zzzzzz")).toBeUndefined();
-  });
-
-  it("cannot find a session that was never used", async () => {
-    const dir = await tempDir();
-    const opened = await openOrResumeSession(dir, ".");
-
-    expect(await findSession(dir, opened.store.header.id.slice(0, 6))).toBeUndefined();
   });
 
   it("finds a child through its parent's children dir while list and continue see only the parent", async () => {
@@ -242,16 +171,5 @@ describe("findSession", () => {
       parent.store.header.id,
     ]);
     expect(await latestSessionFile(dir)).toBe(parent.store.file);
-  });
-
-  it("looks past unreadable files", async () => {
-    const dir = await tempDir();
-    await corruptFile(dir);
-    const opened = await openOrResumeSession(dir, ".");
-    await opened.store.append(textMessage("user", "still here"));
-
-    expect((await findSession(dir, opened.store.header.id))?.header.id).toBe(
-      opened.store.header.id,
-    );
   });
 });

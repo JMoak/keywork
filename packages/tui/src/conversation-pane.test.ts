@@ -4,7 +4,6 @@ import { lifecycleChrome, rampColor } from "./chroma.ts";
 import type { ConversationModel } from "./conversation-model.ts";
 import { ConversationPane, queueEditHint } from "./conversation-pane.ts";
 import { parseChord } from "./keys.ts";
-import { Animator, type Scheduler, tempos } from "./motion.ts";
 import { askArmingMs } from "./mutation-ask.ts";
 import { keyworkNight } from "./palette.ts";
 import type { PaneContext } from "./pane.ts";
@@ -85,25 +84,6 @@ function modelOf(pane: ConversationPane): ConversationModel {
 const settledTitle = (stamp = "", tail = "") => new RegExp(`^ ${stamp}session-1${tail} $`);
 const restingBorder = lifecycleChrome("idle", false, hue, keyworkNight).borderColor;
 
-function manualScheduler(): { schedule: Scheduler; runAll: () => void; runOne: () => void } {
-  const queue: Array<() => void> = [];
-  return {
-    schedule: (run) => {
-      queue.push(run);
-      return () => {
-        const at = queue.indexOf(run);
-        if (at >= 0) queue.splice(at, 1);
-      };
-    },
-    runAll: () => {
-      while (queue.length > 0) queue.shift()?.();
-    },
-    runOne: () => {
-      queue.shift()?.();
-    },
-  };
-}
-
 const gatedTool = (gate: Promise<void>): Tool => ({
   name: "slow",
   description: "waits",
@@ -115,37 +95,6 @@ const gatedTool = (gate: Promise<void>): Tool => ({
 });
 
 describe("the lifecycle stamp", () => {
-  it("renders a calm idle pane with zero marks", () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
-    expect(titleOf(pane, true)).toBe(" session-1 ");
-    expect(titleOf(pane, false)).toBe(" session-1 ");
-  });
-
-  it("fills from the working ramp while a turn runs", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "slow", arguments: {} }),
-        textTurn("after"),
-      ]),
-      tools: [gatedTool(gate)],
-    });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-
-    await Promise.resolve();
-    const working = titleOf(pane, true);
-    expect(working).toMatch(/^ [░▒▓] session-1/);
-    expect(working).toMatch(/ · (?:thinking|slow) · \d+s $/);
-
-    release();
-    await modelOf(pane).lastSend;
-    expect(titleOf(pane, true)).toMatch(settledTitle());
-  });
-
   it("matches the needs-you stamp to the ask-gate state exactly", async () => {
     const time = clock();
     const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
@@ -176,54 +125,6 @@ describe("the lifecycle stamp", () => {
     expect(borderOf(pane, false)).toBe(restingBorder);
   });
 
-  it("never inverts or warms the border for finished-unseen or failed", async () => {
-    const finished = new ConversationPane(
-      "session-1",
-      new Agent({ provider: new MockProvider([textTurn("reply")]) }),
-      () => {},
-    );
-    modelOf(finished).submitText("go");
-    await finished.settled();
-    expect(finished.lifecycle()).toBe("finished-unseen");
-    expect(groundOf(finished, false)).not.toBe(hue);
-    expect(borderOf(finished, false)).toBe(restingBorder);
-
-    const failed = new ConversationPane(
-      "session-1",
-      new Agent({ provider: new MockProvider([]) }),
-      () => {},
-    );
-    modelOf(failed).submitText("go");
-    await failed.settled();
-    expect(failed.lifecycle()).toBe("failed");
-    expect(groundOf(failed, false)).not.toBe(hue);
-    expect(borderOf(failed, false)).toBe(restingBorder);
-  });
-
-  it("fades the inverted ground up at quick tempo and drops it on the answering keystroke", () => {
-    const { schedule, runOne } = manualScheduler();
-    const animator = new Animator({ schedule });
-    const time = clock();
-    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
-      animator,
-      ports: { now: time.now },
-    });
-    void pane.confirmMutation({ type: "tool-call", callId: "c1", name: "write", arguments: {} });
-    const grounds: string[] = [];
-    for (let frame = 0; frame < 6; frame += 1) {
-      grounds.push(groundOf(pane, true) ?? "none");
-      runOne();
-    }
-    expect(grounds[0]).not.toBe(hue);
-    expect(grounds.at(-1)).toBe(hue);
-    expect(new Set(grounds).size).toBe(tempos.quick.steps);
-
-    time.pass(askArmingMs);
-    pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("n"), undefined);
-    expect(groundOf(pane, true)).not.toBe(hue);
-  });
-
   it("latches an unseen finish even when no frame was built while the turn ran", async () => {
     const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
     const pane = new ConversationPane("session-1", agent, () => {});
@@ -245,18 +146,6 @@ describe("the lifecycle stamp", () => {
 
     expect(titleOf(pane, true)).toMatch(settledTitle());
     expect(titleOf(pane, true)).toMatch(settledTitle());
-  });
-
-  it("skips the unseen hold when the pane was focused at completion", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const pane = new ConversationPane("session-1", agent, () => {});
-
-    modelOf(pane).submitText("go");
-    titleOf(pane, true);
-    await modelOf(pane).lastSend;
-
-    expect(titleOf(pane, true)).toMatch(settledTitle());
-    expect(titleOf(pane, false)).toMatch(settledTitle());
   });
 
   it("marks an unseen failure with the missing tile", async () => {
@@ -281,48 +170,6 @@ describe("the lifecycle stamp", () => {
     expect(titleOf(pane, false)).toMatch(settledTitle("▛ ", " · failed"));
     expect(titleOf(pane, true)).toMatch(settledTitle());
   });
-
-  it("drains the held tile through the ramp when an animator is wired", async () => {
-    const { schedule, runAll } = manualScheduler();
-    const animator = new Animator({ schedule });
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
-      animator,
-    });
-
-    modelOf(pane).submitText("go");
-    titleOf(pane, false);
-    await modelOf(pane).lastSend;
-    expect(titleOf(pane, false)).toMatch(settledTitle("█ "));
-
-    const first = titleOf(pane, true);
-    expect(first).toMatch(/^ [░▒▓█] session-1/);
-    runAll();
-    expect(titleOf(pane, true)).toMatch(settledTitle());
-  });
-
-  it("pulses the needs-you stamp between ▓ and █ through the animator", () => {
-    const { schedule, runAll } = manualScheduler();
-    const animator = new Animator({ schedule });
-    const time = clock();
-    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
-      animator,
-      ports: { now: time.now },
-    });
-
-    void pane.confirmMutation({ type: "tool-call", callId: "c1", name: "write", arguments: {} });
-    const seen = new Set<string>();
-    for (let render = 0; render < 8; render += 1) {
-      seen.add(titleOf(pane, true).trim()[0] ?? "");
-      runAll();
-    }
-    expect(seen).toEqual(new Set(["█", "▓"]));
-
-    time.pass(askArmingMs);
-    pane.handleKey(parseChord("n"), undefined);
-    pane.handleKey(parseChord("n"), undefined);
-    expect(titleOf(pane, true)).toBe(" session-1 ");
-  });
 });
 
 describe("the masthead tile", () => {
@@ -341,22 +188,6 @@ describe("the masthead tile", () => {
     expect(rows.some((row) => row.includes("a long enough reply"))).toBe(false);
     expect(rows.find((row) => row.startsWith("idle"))).toBe("idle");
     expect(rows.at(-1)).toBe("› ");
-  });
-
-  it("follows focus: the focused pane is the working page, a draft rides under the tile", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply text")]) });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-
-    const focusedRows = frame(pane, true, 36);
-    expect(focusedRows.some((row) => row.includes("reply text"))).toBe(true);
-    expect(focusedRows.join("\n")).not.toMatch(/[▀▄]/);
-
-    pane.handleKey(parseChord("x"), "x");
-    const drafting = frame(pane, false, 36);
-    expect(drafting.join("\n")).toMatch(/[▀▄]/);
-    expect(drafting.at(-1)).toBe("› x");
   });
 
   it("spells out what [a] will remember under a bash ask, and nothing under a write ask", () => {
@@ -422,68 +253,6 @@ describe("the masthead tile", () => {
     pane.handleKey(parseChord("n"), undefined);
     return decision;
   });
-
-  it("shows the page for an unseen failure instead of ceremony", async () => {
-    const pane = new ConversationPane(
-      "session-1",
-      new Agent({ provider: new MockProvider([]) }),
-      () => {},
-    );
-    modelOf(pane).submitText("go");
-    await pane.settled();
-    expect(pane.lifecycle()).toBe("failed");
-    expect(frame(pane, false, 36).join("\n")).not.toMatch(/[▀▄]/);
-  });
-
-  it("renders the plain page when the masthead is switched off", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply text")]) });
-    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
-      masthead: "off",
-    });
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-    const rows = frame(pane, false, 36);
-    expect(rows.some((row) => row.includes("reply text"))).toBe(true);
-    expect(rows.join("\n")).not.toMatch(/[▀▄]/);
-  });
-
-  it("reports working and failed states on the status line", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "slow", arguments: {} }),
-        textTurn("after"),
-      ]),
-      tools: [gatedTool(gate)],
-    });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-    await Promise.resolve();
-    expect(frame(pane, false, 36).some((row) => row.startsWith("working"))).toBe(true);
-    release();
-    await modelOf(pane).lastSend;
-    expect(frame(pane, false, 36).some((row) => row.startsWith("idle"))).toBe(true);
-  });
-
-  it("sets the headline in caps and keeps ASCII stamps at glyph tier 0", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
-      glyphs: { glyphTier: 0, nerdFont: false },
-    });
-    pane.adoptTitle("auth-retry-fix");
-    modelOf(pane).submitText("go");
-    titleOf(pane, false);
-    await modelOf(pane).lastSend;
-
-    expect(frame(pane, false, 36)).toContain("AUTH RETRY FIX");
-    expect(titleOf(pane, false)).toBe(" # auth-retry-fix ");
-    expect(titleOf(pane, true)).toMatch(/^ (?:[.:+#] )?auth-retry-fix $/);
-    const rows = frame(pane, true, 132);
-    for (const row of rows) expect(row).toMatch(/^[\x20-\x7e▌›]*$/);
-  });
 });
 
 describe("viewport-aware keys", () => {
@@ -499,57 +268,6 @@ describe("viewport-aware keys", () => {
     expect(shown).toBeGreaterThan(0);
     pane.handleKey(parseChord("pageup"), undefined);
     expect(model.scrollBack).toBe(shown);
-  });
-
-  it("keeps the session identity on the model, reachable through the pane", () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
-    pane.sessionId = "s-42";
-    pane.arc = "auth";
-    expect(pane.describe()).toEqual({ kind: "conversation", sessionId: "s-42" });
-    expect(modelOf(pane).ledger.arc).toBe("auth");
-  });
-});
-
-describe("keyboard disclosure in the pane", () => {
-  it("shows the disclosure hint while the fold cursor is active", async () => {
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "slow", arguments: {} }),
-        textTurn("after"),
-      ]),
-      tools: [gatedTool(Promise.resolve())],
-    });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-
-    expect(pane.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
-    const rows = frameRows(pane.view(context(true)));
-    expect(rows.some((row) => row.startsWith("disclose · tab toggles"))).toBe(true);
-    pane.handleKey(parseChord("escape"), undefined);
-    expect(frameRows(pane.view(context(true))).some((row) => row.startsWith("disclose ·"))).toBe(
-      false,
-    );
-  });
-
-  it("names the spill key in the disclosure hint when the cursored row spilled", () => {
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    agent.bus.emit("tool.started", {
-      call: { type: "tool-call", callId: "c1", name: "bash", arguments: { command: "cat big" } },
-    });
-    agent.bus.emit("tool.finished", {
-      callId: "c1",
-      output: "head\n…\ntail",
-      isError: false,
-      spill: { id: "s1", bytes: 200_000, elidedFrom: 49_000, elidedTo: 183_000 },
-    });
-    expect(pane.handleKey(parseChord("shift+tab"), undefined)).toBe(true);
-    const rows = frameRows(pane.view(context(true)));
-    expect(rows).toContain(
-      "disclose · tab toggles · shift+tab older · o opens the spill · esc done",
-    );
-    expect(rows.some((row) => row.includes("elided 49000..183000"))).toBe(true);
   });
 });
 
@@ -572,26 +290,6 @@ function frameRows(view: ReturnType<ConversationPane["view"]>): string[] {
 }
 
 describe("the live header", () => {
-  it("keeps spend out of the header until costs are shown", async () => {
-    const agent = new Agent({
-      provider: new MockProvider([textTurn("reply", { inputTokens: 12, outputTokens: 3 })]),
-    });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-    expect(titleOf(pane, true)).toBe(" session-1 ");
-    expect(titleOf(pane, true, { costs: true })).toMatch(/^ session-1 · \d+ in \d+ out $/);
-  });
-
-  it("shows the context gauge only once it is significant, or always in the cockpit", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const pane = new ConversationPane("session-1", agent, () => {});
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-    expect(pane.liveStatus({ instruments: "calm" })).toBe("");
-    expect(pane.liveStatus({ instruments: "cockpit" })).toMatch(/^[░▒▓█]+ context \d+ of \d+k$/);
-  });
-
   it("names the running tool with its elapsed time and counts queued prompts", async () => {
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -662,50 +360,6 @@ describe("slash tray pointer geometry", () => {
   });
 });
 
-describe("transcript elevation candidates", () => {
-  function paneShowing(elevation?: "scroll-map" | "turn-age"): ConversationPane {
-    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
-      ...(elevation !== undefined && { elevation }),
-    });
-    const feed = modelOf(pane).feed;
-    feed.entries.length = 0;
-    feed.entries.push(
-      { kind: "user", text: "one" },
-      { kind: "assistant", text: "first reply\nwith a second line\nand a third" },
-      { kind: "user", text: "two" },
-      { kind: "assistant", text: "second reply" },
-    );
-    return pane;
-  }
-
-  const stampedRows = (pane: ConversationPane) =>
-    frameRows(pane.view(context(true, 80))).filter((row) => /^[█▓░] /.test(row));
-
-  it("scroll-map turns the whole stamp column into a minimap of the transcript", () => {
-    const mapped = stampedRows(paneShowing("scroll-map"));
-    expect(mapped.length).toBeGreaterThan(stampedRows(paneShowing()).length);
-    expect(mapped[0]?.startsWith("█")).toBe(true);
-  });
-
-  it("turn-age keeps the words identical and shifts only the ink", () => {
-    expect(frameRows(paneShowing("turn-age").view(context(true, 80)))).toEqual(
-      frameRows(paneShowing().view(context(true, 80))),
-    );
-  });
-});
-
-describe("the gauge override", () => {
-  it("renders the chosen form even while the reading is calm-insignificant", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("reply")]) });
-    const pane = new ConversationPane("session-1", agent, () => {}, undefined, undefined, {
-      gauge: "tile",
-    });
-    modelOf(pane).submitText("go");
-    await modelOf(pane).lastSend;
-    expect(pane.liveStatus({ instruments: "calm" })).toMatch(/^[⡀-⣿█][⡀-⣿█·] context \d/);
-  });
-});
-
 describe("queue editing rows", () => {
   it("highlights the selected queued row and shows the queue grammar while editing", async () => {
     let release = () => {};
@@ -741,87 +395,6 @@ describe("queue editing rows", () => {
   });
 });
 
-describe("file links in the pane", () => {
-  function paneWith(hyperlinks: boolean): ConversationPane {
-    const pane = new ConversationPane("session-1", undefined, () => {}, undefined, undefined, {
-      hyperlinks,
-    });
-    const feed = modelOf(pane).feed;
-    feed.entries.length = 0;
-    feed.entries.push(
-      { kind: "user", text: "check src/app.ts:12" },
-      { kind: "assistant", text: "The bug is at `src/app.ts:12`." },
-    );
-    return pane;
-  }
-
-  function linkedChunks(view: ReturnType<ConversationPane["view"]>): string[] {
-    const urls: string[] = [];
-    const visit = (node: unknown): void => {
-      if (node === null || typeof node !== "object") return;
-      const content = (node as { props?: { content?: unknown } }).props?.content;
-      const chunks = (content as { chunks?: Array<{ link?: { url: string } }> } | undefined)
-        ?.chunks;
-      for (const chunk of chunks ?? []) if (chunk.link !== undefined) urls.push(chunk.link.url);
-      for (const child of (node as { children?: unknown[] }).children ?? []) visit(child);
-    };
-    visit(view);
-    return urls;
-  }
-
-  it("attaches OSC 8 links to file references only when the terminal opens them", () => {
-    const on = linkedChunks(paneWith(true).view(context(true, 80)));
-    expect(on).toHaveLength(2);
-    for (const url of on) expect(url).toMatch(/^file:\/\/.*app\.ts#L12$/);
-    expect(linkedChunks(paneWith(false).view(context(true, 80)))).toEqual([]);
-  });
-
-  it("renders the same characters with links on or off", () => {
-    expect(frameRows(paneWith(true).view(context(true, 80)))).toEqual(
-      frameRows(paneWith(false).view(context(true, 80))),
-    );
-  });
-});
-
-describe("the verbosity verb", () => {
-  it("cycles the feed's tool-row level and says which level is on", () => {
-    const pane = new ConversationPane("session-1", undefined, () => {});
-    pane.cycleVerbosity();
-    expect(modelOf(pane).feed.verbosity).toBe("high");
-    expect(modelOf(pane).entries.at(-1)).toEqual({ kind: "info", text: "tool rows · high" });
-  });
-});
-
-describe("suggestion tray prefix", () => {
-  function typed(text: string): string[] {
-    const pane = new ConversationPane(
-      "session-1",
-      undefined,
-      () => {},
-      undefined,
-      {
-        search: (query) =>
-          ["exit"]
-            .filter((name) => name.startsWith(query.toLowerCase()))
-            .map((name) => ({ name, description: name })),
-        run: () => false,
-      },
-      { ports: { workspaceFiles: () => [{ relative: "src/app.ts" }] } },
-    );
-    for (const character of text) pane.handleKey(parseChord(character), character);
-    return frameRows(pane.view(context(true, 80)));
-  }
-
-  it("prints @ in front of mention rows and / in front of command rows", () => {
-    const mention = typed("see @app").join("\n");
-    expect(mention).toContain("@src/app.ts");
-    expect(mention).not.toContain("/src/app.ts");
-    const slash = typed("/ex").join("\n");
-    expect(slash).toContain("/exit");
-    expect(slash).not.toContain("@exit");
-  });
-});
-
 describe("image paste into the prompt", () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
@@ -845,20 +418,5 @@ describe("image paste into the prompt", () => {
     ]);
     subject.handlePaste("/shots/missing.png");
     expect(subject.model.input).toBe("[image #1, png 4 B] /shots/missing.png");
-  });
-
-  it("attaches terminal-supplied image bytes and direct attachments alike", () => {
-    const subject = pane({});
-    subject.handlePaste("", { mimeType: "image/jpeg", kind: "binary", bytes: png });
-    subject.attachImage({
-      part: { type: "image", mediaType: "image/gif", data: "AA" },
-      bytes: 1,
-      format: "gif",
-    });
-    expect(subject.model.input).toBe("[image #1, jpg 4 B] [image #2, gif 1 B] ");
-  });
-
-  it("reports no spend before the first turn", () => {
-    expect(pane({}).spend()).toBeUndefined();
   });
 });

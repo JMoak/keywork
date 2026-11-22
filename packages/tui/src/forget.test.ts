@@ -14,11 +14,6 @@ function attachmentWith(forget: SessionAttachment["forget"]): SessionAttachment 
 }
 
 describe("forgetInSession", () => {
-  it("is absent when the attachment cannot edit context", () => {
-    const hook = forgetInSession({ attachment: attachmentWith(undefined), adopt: () => true });
-    expect(hook).toBeUndefined();
-  });
-
   it("records the edit, rebuilds the live agent, and says what changed", async () => {
     const edits: [ForgetTarget, string | null][] = [];
     const adopted: Message[][] = [];

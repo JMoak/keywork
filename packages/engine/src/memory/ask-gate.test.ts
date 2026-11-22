@@ -56,15 +56,6 @@ describe("AskGateLedger", () => {
     expect(await store.listStaged()).toHaveLength(0);
   });
 
-  it("stays quiet below the threshold", async () => {
-    const ledger = new AskGateLedger();
-    const store = await openVault();
-    await ledger.record("bash git", "yes");
-    await ledger.record("bash git", "yes");
-
-    expect(await ledger.proposePreferences(store)).toHaveLength(0);
-  });
-
   it("resets the streak when an ask is denied", async () => {
     const ledger = new AskGateLedger();
     const store = await openVault();

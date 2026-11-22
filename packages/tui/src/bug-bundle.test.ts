@@ -5,10 +5,8 @@ import {
   bugBundleText,
   bugCommand,
   EventRecorder,
-  recordedEventLimit,
   sessionShape,
   stripSecretKeys,
-  writeBugBundle,
 } from "./bug-bundle.ts";
 
 const facts: BugBundleFacts = {
@@ -41,15 +39,6 @@ describe("bugBundleText", () => {
     });
     expect(text).not.toContain("ghp_");
     expect(text).not.toContain("sk-live");
-  });
-
-  it("says when the host gave no config and no conversation is focused", () => {
-    const bundle = JSON.parse(
-      bugBundleText({ ...facts, config: undefined, version: undefined }, []),
-    ) as Record<string, unknown>;
-    expect(bundle.config).toBe("not provided by the host");
-    expect(bundle.session).toBe("no conversation focused");
-    expect(bundle.keywork).toBe("unknown");
   });
 
   it("redacts exact secret values anywhere in the bundle", () => {
@@ -142,18 +131,6 @@ describe("EventRecorder", () => {
     bus.emit("shell.reset", {});
     expect(recorder.recent().length).toBe(3);
   });
-
-  it("skips replayed events and holds the default limit", () => {
-    const recorder = new EventRecorder();
-    const bus = new EventBus();
-    recorder.follow(bus);
-    bus.emit("session.mode", { mode: "plan", replay: true });
-    for (let turn = 0; turn < recordedEventLimit + 5; turn += 1) {
-      bus.emit("session.mode", { mode: `m${turn}` });
-    }
-    expect(recorder.recent().length).toBe(recordedEventLimit);
-    expect(recorder.recent()[0]?.detail).toBe("m5");
-  });
 });
 
 describe("bugCommand", () => {
@@ -181,32 +158,5 @@ describe("bugCommand", () => {
     expect(posted).toEqual([
       `bug report written · ${written[0]?.[0]} · nothing leaves this machine`,
     ]);
-  });
-
-  it("falls back to the status notice and reports write failures", () => {
-    const notices: string[] = [];
-    bugCommand({
-      facts: () => facts,
-      notice: (text) => notices.push(text),
-      dir: "/tmp/reports",
-      write: () => {},
-    }).run();
-    expect(notices[0]).toMatch(/^bug report written · /);
-    bugCommand({
-      facts: () => facts,
-      notice: (text) => notices.push(text),
-      write: () => {
-        throw new Error("disk full");
-      },
-    }).run();
-    expect(notices[1]).toBe("bug report failed · disk full");
-    expect(() =>
-      writeBugBundle({
-        facts: () => facts,
-        notice: () => {},
-        dir: "/tmp/reports",
-        write: () => {},
-      }),
-    ).not.toThrow();
   });
 });

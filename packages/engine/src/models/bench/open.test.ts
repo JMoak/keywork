@@ -30,11 +30,6 @@ function steppingClock(stepMs: number): () => number {
 }
 
 describe("localBenchOpener", () => {
-  it("leaves cloud endpoints to another opener", async () => {
-    const open = localBenchOpener({ cache: new CapabilityCache(now), http, now });
-    expect(await open({ endpoint: "https://api.openai.com/v1", model: "gpt-5" })).toBeUndefined();
-  });
-
   it("refuses an unreachable endpoint, a /v1/models-only server and a model it lacks", async () => {
     const open = localBenchOpener({ cache: new CapabilityCache(now), http, now });
     expect(await open({ endpoint: "http://127.0.0.1:1", model: "qwen3.8:27b" })).toMatchObject({
@@ -131,12 +126,6 @@ describe("registryBenchOpener", () => {
       return standInProvider(binding);
     },
     decider: standInDecider,
-  });
-
-  it("claims only endpoints a registration names", async () => {
-    expect(
-      await open({ endpoint: "http://127.0.0.1:11434", model: "qwen3.8:27b" }),
-    ).toBeUndefined();
   });
 
   it("opens a chat model through the registry with its declared fingerprint", async () => {

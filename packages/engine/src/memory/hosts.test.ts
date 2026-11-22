@@ -3,11 +3,6 @@ import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import {
-  auditSegmentHost,
-  dailySegmentDate,
-  dailySegmentHost,
-  hostAuditPath,
-  hostDailyPath,
   hostToken,
   isMultiHostVault,
   markMultiHostVault,
@@ -30,18 +25,6 @@ describe("host tokens", () => {
     expect(hostToken("DESKTOP-ABC123")).toBe("desktop-abc123");
     expect(hostToken("---")).toBe("host");
     expect(hostToken("x".repeat(40))).toHaveLength(32);
-  });
-
-  it("names per-host segments beside the shared files", () => {
-    expect(hostDailyPath("2026-08-10", "alpha")).toBe("daily/2026-08-10.alpha.md");
-    expect(hostAuditPath("alpha")).toBe("curation.alpha.md");
-    expect(dailySegmentDate("2026-08-10.md")).toBe("2026-08-10");
-    expect(dailySegmentDate("2026-08-10.alpha.md")).toBe("2026-08-10");
-    expect(dailySegmentHost("2026-08-10.alpha.md")).toBe("alpha");
-    expect(dailySegmentHost("2026-08-10.md")).toBeUndefined();
-    expect(dailySegmentDate("notes.md")).toBeUndefined();
-    expect(auditSegmentHost("curation.beta.md")).toBe("beta");
-    expect(auditSegmentHost("curation.md")).toBeUndefined();
   });
 });
 

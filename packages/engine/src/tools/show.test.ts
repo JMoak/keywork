@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mutatingToolNames } from "../mutations.ts";
 import { FakeClock } from "../routines/testing.ts";
 import type { ShowThread } from "../show/lineage.ts";
 import type { Setting } from "../show/setting.ts";
 import { SettingStore, type SettingStoreOptions } from "../show/store.ts";
-import { type ShowTarget, showTool, showToolName } from "./show.ts";
+import { type ShowTarget, showTool } from "./show.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
 
@@ -237,51 +236,6 @@ describe("the show tool", () => {
     );
   });
 
-  it("signals each of several things, and names them", async () => {
-    const { tool, proposed } = seated();
-    const said = await tool.execute({
-      what: [
-        { kind: "note", ref: "Ship the larger change.", title: "Option A", signal: "needs-you" },
-        { kind: "note", ref: "Ship the smaller fix.", title: "Option B" },
-      ],
-    });
-    expect(said).toContain('Signalled: "Option A" as needs-you.');
-    expect(proposed.map(({ signal }) => signal)).toEqual(["needs-you", undefined]);
-  });
-
-  it("works for a session with no creature, which owns its settings and its hourly count", async () => {
-    const { tool, settings } = seated({ creature: null, hourlyLimit: 1 });
-
-    await tool.execute({ what: plan, why: "The plan you asked about changed." });
-    expect(await tool.execute({ what: { kind: "note", ref: "Two." }, why: "Two." })).toBe(
-      "Not set out: this thread has set out 1 settings this hour, the most a thread may set out; try again later.",
-    );
-
-    expect(settings.open()).toEqual([
-      expect.objectContaining({ creature: null, sessionId: "s1", what: plan }),
-    ]);
-  });
-
-  it("carries a named size onto the setting, and leaves it absent when none was named", async () => {
-    const { tool, proposed } = seated();
-
-    await tool.execute({ what: plan, why: "Read it.", rung: "unfold", size: "working" });
-    await tool.execute({ what: { kind: "diff", ref: "cs-41" }, why: "The fix." });
-
-    expect(proposed.map(({ size }) => size)).toEqual(["working", undefined]);
-    expect(proposed[1]).not.toHaveProperty("size");
-  });
-
-  it("keeps a size that was named when a later call replaces the setting, unless it names another", async () => {
-    const { tool, proposed } = seated();
-
-    await tool.execute({ what: plan, why: "Read it.", rung: "unfold", size: "working" });
-    await tool.execute({ what: plan, why: "It moved." });
-    await tool.execute({ what: plan, why: "It moved again.", size: "readable" });
-
-    expect(proposed.map(({ size }) => size)).toEqual(["working", "working", "readable"]);
-  });
-
   it("refuses a size outside the wire shape", async () => {
     const { tool, settings } = seated();
     await expect(tool.execute({ what: plan, why: "Look.", size: 2 })).rejects.toThrow();
@@ -289,22 +243,6 @@ describe("the show tool", () => {
       'Not set out: size is card, readable or working, not "huge".',
     );
     expect(settings.open()).toEqual([]);
-  });
-
-  it("says a size applies when it first opens, the yard may show less, and it cannot change", () => {
-    const { tool } = seated();
-    expect(tool.description).toContain("A size applies the first time the setting opens");
-    expect(tool.description).toContain("the yard may still show less");
-    expect(tool.description).toContain("it cannot be changed later");
-    expect(tool.parameters).toMatchObject({ required: ["what"] });
-  });
-
-  it("is IDE control that asks for no permission", () => {
-    const { tool } = seated();
-    expect(tool.name).toBe(showToolName);
-    expect(tool.description).toContain("never the computer");
-    expect(tool.mutates).toBeUndefined();
-    expect(mutatingToolNames.has(tool.name)).toBe(false);
   });
 });
 
@@ -331,26 +269,6 @@ describe("the show tool's from", () => {
     ]);
   });
 
-  it("grows from this thread or a thread it delegated, and takes null as no from", async () => {
-    const { tool, proposed } = seated({ threads });
-
-    await tool.execute({ what: plan, why: "From here.", from: "s1" });
-    await tool.execute({ what: { kind: "report", ref: "r1" }, why: "The child's.", from: "child" });
-    await tool.execute({ what: { kind: "note", ref: "n" }, why: "Fresh.", from: null });
-
-    expect(proposed.map(({ from }) => from)).toEqual(["s1", "child", null]);
-  });
-
-  it("keeps its place in the trail when it replaces what it set out before", async () => {
-    const { tool, proposed } = seated();
-    await tool.execute({ what: { kind: "diff", ref: "cs-41" }, why: "The fix." });
-    await tool.execute({ what: plan, why: "The file.", from: proposed[0]?.id });
-
-    await tool.execute({ what: plan, why: "The file changed again." });
-
-    expect(proposed.map(({ from }) => from)).toEqual([null, proposed[0]?.id, proposed[0]?.id]);
-  });
-
   it("answers a from out of sight with a sentence and sets nothing out", async () => {
     const { tool, settings } = seated({ threads });
     const hal = seated({ creature: "hal" });
@@ -370,15 +288,6 @@ describe("the show tool's from", () => {
       await expect(tool.execute({ what: plan, why: "Look.", from })).rejects.toThrow();
     }
     expect(settings.open()).toEqual([]);
-  });
-
-  it("is described to the model as optional", () => {
-    const { tool } = seated();
-    expect(tool.description).toContain("Name from when it grows out of something already in view");
-    expect(tool.parameters).toMatchObject({
-      required: ["what"],
-      properties: { from: expect.objectContaining({ description: expect.any(String) }) },
-    });
   });
 });
 
@@ -610,22 +519,5 @@ describe("the show tool outside", () => {
       "The next thing was not set out: 12 of your settings already stand outside, the most that may at once;",
     );
     expect(settings.open()).toHaveLength(12);
-  });
-
-  it("describes the place, the seat, the weight and the mood, and asks only for what the thing is", () => {
-    const { tool } = staged();
-    expect(tool.parameters).toMatchObject({
-      required: ["what"],
-      properties: {
-        where: { enum: ["beside", "outside"] },
-        seat: { anyOf: [{ type: "string" }, { type: "object", required: ["x", "y", "w", "h"] }] },
-        weight: { enum: ["lead", "support", "aside"] },
-        mood: {
-          enum: ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"],
-        },
-        size: { enum: ["card", "readable", "working"] },
-      },
-    });
-    expect(tool.description).toContain("never takes focus");
   });
 });

@@ -13,7 +13,6 @@ import {
   extensionState,
   journalEvents,
   journaledAsk,
-  recordJournalEvent,
   tapJournal,
 } from "./journal.ts";
 import { replaySession } from "./replay.ts";
@@ -101,20 +100,6 @@ describe("session journal", () => {
     expect(rebuilt).toEqual(extensionState(store.activePath()));
   });
 
-  it("writes greppable entries with stable type names and named sources", async () => {
-    const { file } = await sessionWithApprovalCompactionAndRecall();
-
-    const raw = await readFile(file, "utf8");
-
-    expect(raw).toContain('"customType":"permission_decision"');
-    expect(raw).toContain('"customType":"preset_change"');
-    expect(raw).toContain('"customType":"context_injection"');
-    expect(raw).toContain('"customType":"mode_change"');
-    expect(raw).toContain('"customType":"shell_reset"');
-    expect(raw).toContain('"source":"memory-recall"');
-    expect(raw).toContain('"id":"Runtime Convention"');
-  });
-
   it("stays Pi-compatible: journal entries ride the custom vocabulary and survive reopen", async () => {
     const { file } = await sessionWithApprovalCompactionAndRecall();
 
@@ -143,28 +128,6 @@ describe("session journal", () => {
     tap.stop();
 
     expect(store.entries()).toHaveLength(0);
-  });
-
-  it("records events through recordJournalEvent for callers without a bus", async () => {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), "/work");
-
-    await recordJournalEvent(store, { type: "mode_change", mode: "plan" });
-
-    expect(extensionState(store.activePath()).mode).toBe("plan");
-  });
-
-  it("journals a creature's standing introduction by its slug", async () => {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), "/work");
-    const bus = new EventBus<EngineEvents>();
-    const tap = tapJournal(bus, store);
-
-    bus.emit("context.injected", { injection: { source: "creature", id: "pip" } });
-    await tap.flush();
-    tap.stop();
-
-    expect(extensionState(store.activePath()).injections).toEqual([
-      { source: "creature", id: "pip" },
-    ]);
   });
 });
 

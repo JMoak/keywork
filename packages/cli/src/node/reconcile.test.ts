@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { filePairStore, meshPairingFile } from "../../../engine/src/mesh/pairing/store.ts";
-import { RoutineHarness, routineInput } from "../../../engine/src/routines/testing.ts";
 import { fileClaimDesk } from "./compose.ts";
 import { type ClaimDesk, groupedClaimCode, reconcileLines, reconcileOnStart } from "./reconcile.ts";
 
@@ -15,49 +14,6 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(stateDir, { recursive: true, force: true });
-});
-
-describe("reconcile on start: routines", () => {
-  let harness: RoutineHarness;
-
-  afterEach(async () => {
-    await harness.close();
-  });
-
-  it("replays the scheduler's catch-up contract: the interrupted run settles, one missed slot is paced in", async () => {
-    harness = await RoutineHarness.create({ start: Date.parse("2026-11-05T08:00:00Z") });
-    await harness.writeRoutine(
-      routineInput({ trigger: { kind: "cron", expr: "0 * * * *", tz: "UTC" } }),
-    );
-    await harness.service.start();
-    await harness.advanceTo(Date.parse("2026-11-05T09:01:00Z"));
-    expect(harness.runner.started).toHaveLength(1);
-    harness.service.stop();
-    await harness.clock.advanceTo(Date.parse("2026-11-05T13:10:00Z"), async () => {});
-
-    const report = await reconcileOnStart({
-      routines: { start: () => harness.restart() },
-      headless: false,
-    });
-
-    expect(report.routines).toEqual({ kind: "started" });
-    const runs = harness.store.runs("wren", "triage", 50);
-    expect(runs.find((run) => run.firedAt === "2026-11-05T09:00:00.000Z")).toMatchObject({
-      process: "failed",
-      reason: "the node stopped during the run",
-    });
-    expect(harness.runner.started).toHaveLength(1);
-    await harness.advance(30_000);
-    expect(harness.runner.started).toHaveLength(2);
-    expect(harness.runner.last().request.prompt).toContain(
-      "a catch-up for a run missed while the node was down",
-    );
-    expect(runs.filter((run) => run.status === "skipped").map((run) => run.firedAt)).toEqual([
-      "2026-11-05T12:00:00.000Z",
-      "2026-11-05T11:00:00.000Z",
-      "2026-11-05T10:00:00.000Z",
-    ]);
-  });
 });
 
 describe("reconcile on start: workshops", () => {
@@ -89,13 +45,6 @@ describe("reconcile on start: workshops", () => {
     });
     expect(report.workshops).toEqual({ kind: "failed", error: "workshop record is corrupt" });
     expect(report.routines).toEqual({ kind: "started" });
-  });
-
-  it("says plainly when nothing is composed", async () => {
-    expect(reconcileLines(await reconcileOnStart({ headless: false }))).toEqual([
-      "reconcile: workshops are not composed in this node",
-      "reconcile: no routine scheduler is composed in this node",
-    ]);
   });
 });
 

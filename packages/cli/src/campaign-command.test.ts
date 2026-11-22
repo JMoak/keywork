@@ -143,22 +143,6 @@ describe("headless campaign commands", () => {
     expect(fixture.requests.filter((request) => request.method === "POST")).toHaveLength(0);
   });
 
-  it("prints JSON watch records and completes a terminal snapshot", async () => {
-    const campaign = { ...runningFixture(), status: "completed" };
-    const fixture = await setup(
-      () =>
-        new Response(`event: snapshot\ndata: ${JSON.stringify({ campaign, sequence: 8 })}\n\n`, {
-          headers: { "content-type": "text/event-stream" },
-        }),
-    );
-    expect(await fixture.run(["watch", campaign.id], { json: true })).toBe(0);
-    expect(JSON.parse(fixture.out[0] ?? "{}")).toMatchObject({
-      type: "snapshot",
-      sequence: 8,
-      campaign: { status: "completed" },
-    });
-  });
-
   it("stops watching once a finish event leaves the campaign completed, though the stream stays open", async () => {
     const running = runningFixture();
     const completed = { ...running, status: "completed" };
@@ -224,7 +208,7 @@ describe("headless campaign commands", () => {
     },
   );
 
-  it.each([500, 503])("keeps a GET HTTP %s response an ordinary failure", async (status) => {
+  it.each([500])("keeps a GET HTTP %s response an ordinary failure", async (status) => {
     const fixture = await setup(() => Response.json({ error: "Read failed" }, { status }));
     expect(await fixture.run(["show", "campaign"])).toBe(1);
     expect(

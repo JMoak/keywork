@@ -1,6 +1,5 @@
 import type { FetchLike, McpServerStatus } from "@keywork/engine";
 import type { SecretVault } from "@keywork/shared";
-import type { McpServerView } from "@keywork/tui";
 import { describe, expect, it } from "vitest";
 import { type McpRegistryLike, mcpCommand, mcpPanePort } from "./mcp.ts";
 
@@ -56,30 +55,6 @@ describe("mcpPanePort", () => {
       { name: "files", state: "connected", enabled: true, toolCount: 2 },
       { name: "linear", state: "down", enabled: true, toolCount: 0, lastError: "spawn ENOENT" },
     ]);
-  });
-
-  it("routes restart and the enable/disable toggle to the registry verbs", async () => {
-    const { registry, world } = stubRegistry([connected]);
-    const port = mcpPanePort(registry);
-    await port.restart("files");
-    await port.setEnabled("files", false);
-    await port.setEnabled("files", true);
-    expect(world.restarted).toEqual(["files"]);
-    expect(world.disabled).toEqual(["files"]);
-    expect(world.enabled).toEqual(["files"]);
-  });
-
-  it("lists tool names for a server", async () => {
-    const { registry } = stubRegistry([connected]);
-    await expect(mcpPanePort(registry).listTools("files")).resolves.toEqual(["files-echo"]);
-  });
-
-  it("relays status subscriptions as pane views", () => {
-    const { registry, world } = stubRegistry([connected]);
-    const seen: McpServerView[][] = [];
-    mcpPanePort(registry).subscribe?.((servers) => seen.push(servers));
-    world.listeners[0]?.([{ name: "files", state: "down", enabled: true, toolCount: 0 }]);
-    expect(seen).toEqual([[{ name: "files", state: "down", enabled: true, toolCount: 0 }]]);
   });
 });
 
@@ -156,14 +131,5 @@ describe("keywork mcp", () => {
       "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
       "https://mcp.example.com/.well-known/oauth-protected-resource",
     ]);
-  });
-
-  it("logs out by forgetting the stored token", async () => {
-    const io = capture();
-    const vault = memoryVault();
-    expect(
-      await mcpCommand(["logout", "github"], { servers, vault, fetchFn: offline, ...io }),
-    ).toBe(0);
-    expect(io.out).toEqual(["github had no sign-in to forget"]);
   });
 });

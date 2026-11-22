@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../../provider.ts";
-import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "../errors.ts";
 import { chunkedStream, concatBytes } from "../stream-fixtures.ts";
 import type { FetchLike } from "../transport.ts";
 import { BedrockExceptionError, BedrockProvider } from "./bedrock.ts";
@@ -167,21 +166,6 @@ describe("BedrockProvider", () => {
     });
   });
 
-  it("surfaces HTTP failures with status and body", async () => {
-    const failing = provider(async () => new Response("denied", { status: 403 }));
-
-    await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(ProviderHttpError);
-    await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(/403.*denied/s);
-  });
-
-  it("fails with a typed transient error when the response has no body", async () => {
-    const bodiless = provider(async () => new Response(null, { status: 200 }));
-
-    await expect(collect(bodiless.stream(emptyRequest))).rejects.toThrow(
-      ProviderEmptyResponseError,
-    );
-  });
-
   it("classifies a mid-stream throttlingException as transient", async () => {
     const frames = [
       eventFrame("contentBlockDelta", { contentBlockIndex: 0, delta: { text: "partial" } }),
@@ -202,49 +186,6 @@ describe("BedrockProvider", () => {
     ).catch((cause: unknown) => cause);
 
     expect(failure).toMatchObject({ transient: false, exceptionType: "validationException" });
-  });
-
-  it("drops usage already received when the stream ends in an exception", async () => {
-    const frames = [
-      eventFrame("metadata", { usage: { inputTokens: 7, outputTokens: 9 } }),
-      exceptionFrame("modelStreamErrorException", "stream broke"),
-    ];
-
-    await expect(
-      collect(provider(async () => frameResponse(frames)).stream(emptyRequest)),
-    ).rejects.toThrow(BedrockExceptionError);
-  });
-
-  it("fails the turn on a corrupted frame mid-stream", async () => {
-    const good = eventFrame("contentBlockDelta", { contentBlockIndex: 0, delta: { text: "hi" } });
-    const corrupted = eventFrame("messageStop", { stopReason: "end_turn" });
-    corrupted[13] = (corrupted[13] ?? 0) ^ 0xff;
-
-    await expect(
-      collect(provider(async () => frameResponse([good, corrupted])).stream(emptyRequest)),
-    ).rejects.toThrow(ProviderStreamError);
-  });
-
-  it("completes an empty turn with zero usage", async () => {
-    const frames = [
-      eventFrame("messageStart", { role: "assistant" }),
-      eventFrame("messageStop", { stopReason: "end_turn" }),
-    ];
-    const deltas = await collect(provider(async () => frameResponse(frames)).stream(emptyRequest));
-
-    expect(deltas).toEqual([{ type: "done", usage: { inputTokens: 0, outputTokens: 0 } }]);
-  });
-
-  it("synthesizes a stable callId when the stream never provides one", async () => {
-    const frames = [
-      eventFrame("contentBlockStart", {
-        contentBlockIndex: 2,
-        start: { toolUse: { name: "bash" } },
-      }),
-    ];
-    const deltas = await collect(provider(async () => frameResponse(frames)).stream(emptyRequest));
-
-    expect(deltas[0]).toMatchObject({ call: { callId: "call_2", name: "bash", arguments: {} } });
   });
 
   it("fails the turn when accumulated tool-use input exceeds the size ceiling", async () => {

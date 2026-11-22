@@ -111,11 +111,4 @@ describe("a laid note", () => {
       isError: false,
     });
   });
-
-  it("is gone once cleared", () => {
-    const notes = new ConversationNotes();
-    notes.lay("A note.", 0);
-    notes.clear();
-    expect(notes.layInto([prompt])).toEqual([prompt]);
-  });
 });

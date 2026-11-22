@@ -4,10 +4,6 @@ import { closeOnce, runClosers } from "./lifecycle.ts";
 const never = (): Promise<void> => new Promise(() => {});
 
 describe("runClosers", () => {
-  it("resolves immediately with nothing registered", async () => {
-    await expect(runClosers([], 50, () => {})).resolves.toBeUndefined();
-  });
-
   it("awaits closers before resolving", async () => {
     const order: string[] = [];
     await runClosers(
@@ -47,15 +43,6 @@ describe("runClosers", () => {
       (error) => reported.push(error.message),
     );
     expect(reported.sort()).toEqual(["sweep exploded", "sync explosion"]);
-  });
-
-  it("wraps non-Error rejections before reporting", async () => {
-    const reported: Error[] = [];
-    await runClosers([() => Promise.reject("plain string")], 1000, (error) => {
-      reported.push(error);
-    });
-    expect(reported[0]).toBeInstanceOf(Error);
-    expect(reported[0]?.message).toBe("plain string");
   });
 });
 

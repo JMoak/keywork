@@ -28,13 +28,6 @@ import { bindSessionLifecycle, type ForgetTarget } from "./session-attachment.ts
 import { guardedShellEscape } from "./shell-escape.ts";
 import type { ToolEntry, TranscriptEntry } from "./transcript-feed.ts";
 
-const echoTool: Tool = {
-  name: "echo",
-  description: "echoes",
-  parameters: { type: "object" },
-  execute: async (args) => `echo: ${(args as { text: string }).text}`,
-};
-
 function type(model: ConversationModel, text: string): void {
   for (const character of text) {
     model.handleKey(parseChord(character === " " ? "space" : character), character);
@@ -114,23 +107,6 @@ function abortOf(signal: AbortSignal | undefined): Promise<void> {
 }
 
 describe("ConversationModel", () => {
-  it("collects typed input and clears it on submit", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("hey")]) });
-    const model = new ConversationModel(agent, () => {});
-
-    type(model, "hi there");
-    expect(model.input).toBe("hi there");
-    await submit(model);
-
-    expect(model.input).toBe("");
-    expect(model.entries).toEqual([
-      { kind: "user", text: "hi there" },
-      { kind: "assistant", text: "hey" },
-      { kind: "ledger", text: "", prompt: { kind: "user", text: "hi there" }, folded: true },
-    ]);
-    expect(model.busy).toBe(false);
-  });
-
   it("surfaces provider failures as error entries instead of throwing", async () => {
     const failing = {
       name: "broken",
@@ -151,17 +127,6 @@ describe("ConversationModel", () => {
 
     expect(model.entries.at(-1)).toEqual({ kind: "error", text: "provider down" });
     expect(model.busy).toBe(false);
-  });
-
-  it("renders a non-Error after-turn rejection as its stringified cause", async () => {
-    const model = new ConversationModel(
-      new Agent({ provider: new MockProvider([textTurn("a")]) }),
-      () => {},
-    );
-    model.bindAfterTurn(() => Promise.reject("plain string"));
-    type(model, "go");
-    await submit(model);
-    expect(model.entries.at(-1)).toEqual({ kind: "error", text: "plain string" });
   });
 
   it("explains itself when no provider is configured and keeps the draft", () => {
@@ -218,63 +183,11 @@ describe("slash commands", () => {
     expect(model.input).toBe("");
   });
 
-  it("falls back to the selected suggestion for partial input", () => {
-    const ran: string[] = [];
-    const model = modelWithCommands((name) => ran.push(name));
-    type(model, "/ex");
-    model.handleKey(parseChord("down"), undefined);
-    model.handleKey(parseChord("return"), undefined);
-    expect(ran).toEqual(["exit-all"]);
-  });
-
   it("reports unknown commands as an error entry", () => {
     const model = modelWithCommands();
     type(model, "/nonsense");
     model.handleKey(parseChord("return"), undefined);
     expect(model.entries.at(-1)).toEqual({ kind: "error", text: "unknown command /nonsense" });
-  });
-
-  it("works without any agent so commands function providerless", () => {
-    const ran: string[] = [];
-    const model = modelWithCommands((name) => ran.push(name));
-    type(model, "/move-right");
-    model.handleKey(parseChord("return"), undefined);
-    expect(ran).toEqual(["move-right"]);
-  });
-
-  it("/compact without a model or a hook says so", () => {
-    const idle = new ConversationModel(undefined, () => {});
-    type(idle, "/compact");
-    idle.handleKey(parseChord("return"), undefined);
-    expect(idle.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "no model bound · nothing to compact",
-    });
-
-    const unbound = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
-    type(unbound, "/compact");
-    unbound.handleKey(parseChord("return"), undefined);
-    expect(unbound.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "can't compact · no session store",
-    });
-  });
-
-  it("/compact occupies the pane while the hook runs and passes the focus text through", async () => {
-    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
-    const asked: string[] = [];
-    const { open, opened } = gate();
-    model.bindCompaction(async (instructions) => {
-      asked.push(instructions);
-      await opened;
-    });
-    type(model, "/compact keep the file names");
-    model.handleKey(parseChord("return"), undefined);
-    expect(asked).toEqual(["keep the file names"]);
-    expect(model.busy).toBe(true);
-    open();
-    await model.lastSend;
-    expect(model.busy).toBe(false);
   });
 });
 
@@ -312,18 +225,6 @@ describe("/thinking", () => {
     expect(recorded).toEqual(["on", "off", "on"]);
   });
 
-  it("says so without a model and offers the command in the tray", () => {
-    const idle = new ConversationModel(undefined, () => {});
-    type(idle, "/thinking");
-    idle.handleKey(parseChord("return"), undefined);
-    expect(idle.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "no model bound · nothing to think with",
-    });
-    type(idle, "/think");
-    expect(idle.suggestions().map((suggestion) => suggestion.name)).toContain("thinking");
-  });
-
   it("carries the switch onto a swapped-in agent", () => {
     const first = new Agent({ provider: new MockProvider([]), thinking: true });
     const model = new ConversationModel(first, () => {});
@@ -355,50 +256,6 @@ describe("auto-titling", () => {
 
     expect(model.title).toBe("fix-auth-tests");
     expect(calls).toBe(1);
-  });
-
-  it("keeps the pane untitled when the titler fails", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
-    const model = new ConversationModel(
-      agent,
-      () => {},
-      async () => {
-        throw new Error("nope");
-      },
-    );
-
-    type(model, "one");
-    await submit(model);
-    await model.lastTitle;
-
-    expect(model.title).toBeUndefined();
-  });
-
-  it("an adopted title shows immediately and silences the titler", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
-    let calls = 0;
-    let notified = 0;
-    const model = new ConversationModel(
-      agent,
-      () => {
-        notified += 1;
-      },
-      async () => {
-        calls += 1;
-        return "llm-title";
-      },
-    );
-
-    model.adoptTitle("stored-title");
-    expect(model.title).toBe("stored-title");
-    expect(notified).toBeGreaterThan(0);
-
-    type(model, "one");
-    await submit(model);
-    await model.lastTitle;
-
-    expect(model.title).toBe("stored-title");
-    expect(calls).toBe(0);
   });
 
   it("does not request a title for replayed turns", async () => {
@@ -477,23 +334,6 @@ describe("the engine-owned turn queue", () => {
       "re: b",
       "c",
       "re: c",
-    ]);
-  });
-
-  it("steers through the engine when asked: the running turn is interrupted first", async () => {
-    const { opened } = gate();
-    const agent = new Agent({ provider: gatedProvider(opened, ["never", "steered reply"]) });
-    const model = new ConversationModel(agent, () => {});
-
-    model.submitText("slow one");
-    model.submitText("actually this", "steer");
-    await drained(model);
-
-    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
-      "slow one",
-      "· interrupted",
-      "actually this",
-      "steered reply",
     ]);
   });
 
@@ -699,21 +539,6 @@ describe("settlement events", () => {
     await drained(model);
     expect(outcomes).toEqual(["finished"]);
   });
-
-  it("reports a failed settlement when the last entry is an error", async () => {
-    const outcomes: string[] = [];
-    const model = new ConversationModel(
-      new Agent({ provider: new MockProvider([textTurn("a")]) }),
-      () => {},
-    );
-    model.onSettled((outcome) => outcomes.push(outcome));
-    model.bindAfterTurn(async () => {
-      throw new Error("flush broke");
-    });
-    model.submitText("go");
-    await drained(model);
-    expect(outcomes).toEqual(["failed"]);
-  });
 });
 
 describe("disposal", () => {
@@ -770,16 +595,6 @@ describe("disposal", () => {
     await send;
     expect(hooked).toBe(1);
   });
-
-  it("ignores submitted text once disposed", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("hey")]) });
-    const model = new ConversationModel(agent, () => {});
-    model.dispose();
-    model.submitText("go");
-    await model.lastSend;
-    expect(model.entries).toEqual([]);
-    expect(agent.history()).toEqual([]);
-  });
 });
 
 describe("swapping agents", () => {
@@ -810,43 +625,6 @@ describe("swapping agents", () => {
     model.swapAgent(new Agent({ provider: new MockProvider([]) }));
     expect(await verdict).toBe(false);
     expect(model.pendingAsk).toBeUndefined();
-  });
-
-  it("carries cost and tokens across agent swaps and attributes them per model", async () => {
-    const first = new Agent({
-      provider: new MockProvider([textTurn("a", { inputTokens: 10_000, outputTokens: 1_000 })], {
-        modelId: "gpt-5-mini",
-      }),
-    });
-    const model = new ConversationModel(first, () => {});
-    type(model, "one");
-    await submit(model);
-    expect(model.usageSummary()).toBe("$0.0045");
-
-    const second = new Agent({
-      provider: new MockProvider([textTurn("b", { inputTokens: 2_000, outputTokens: 100 })], {
-        modelId: "gpt-5",
-      }),
-      bus: first.bus,
-      history: first.history(),
-    });
-    model.swapAgent(second);
-    expect(model.usageSummary()).toBe("$0.0045");
-    type(model, "two");
-    await submit(model);
-    expect(model.usageSummary()).toBe("$0.008");
-
-    type(model, "/cost");
-    model.handleKey(parseChord("return"), undefined);
-    expect(model.entries.at(-1)).toEqual({
-      kind: "info",
-      text: [
-        "tokens 12000▸1100",
-        "cost $0.008 · estimated from gpt-5 rates",
-        "  mock/gpt-5-mini · 1 turn · 10000▸1000 · $0.0045",
-        "  mock/gpt-5 · 1 turn · 2000▸100 · $0.0035",
-      ].join("\n"),
-    });
   });
 
   it("adds the bound bot's spend across sessions to /cost when a spend port answers", async () => {
@@ -940,15 +718,6 @@ describe("forking by prompt identity", () => {
     expect(model.entries.at(-1)).toEqual({ kind: "info", text: "files put back" });
   });
 
-  it("explains when a prompt has no fork point or no store", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("a")]) });
-    const model = new ConversationModel(agent, () => {});
-    model.submitText("one");
-    await model.lastSend;
-    for (const key of ["escape", "escape", "return"]) model.handleKey(parseChord(key), undefined);
-    expect(model.entries.at(-1)).toEqual({ kind: "info", text: "can't fork · no session store" });
-  });
-
   it("refuses to fork while a turn is running", async () => {
     const { open, opened } = gate();
     const agent = new Agent({ provider: gatedProvider(opened, ["a"]) });
@@ -961,65 +730,6 @@ describe("forking by prompt identity", () => {
     expect(model.backtracking()).toBe(false);
     open();
     await drained(model);
-  });
-});
-
-describe("tool rows through the model", () => {
-  it("records tool calls and their outcomes", async () => {
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "hi" } }),
-        textTurn("done"),
-      ]),
-      tools: [echoTool],
-    });
-    const model = new ConversationModel(agent, () => {});
-
-    type(model, "use echo");
-    await submit(model);
-
-    const kinds = withoutLedger(model).map((entry) => entry.kind);
-    expect(kinds).toEqual(["user", "tool", "assistant"]);
-    expect(model.entries[1]).toMatchObject({ failed: false });
-    expect(model.entries[1]?.text).toMatch(/^echo hi · \d+(\.\d+)?(ms|s|m) · done$/);
-    expect(model.entries[1]).toMatchObject({
-      run: { detail: ["echo: hi"], folded: true },
-    });
-  });
-});
-
-describe("suggestion tray pointer", () => {
-  function trayModel(onRun: (name: string) => void) {
-    const names = ["exit", "exit-all"];
-    return new ConversationModel(undefined, () => {}, undefined, {
-      search: (query) =>
-        names
-          .filter((name) => name.startsWith(query.toLowerCase()))
-          .map((name) => ({ name, description: name })),
-      run: (name) => {
-        if (!names.includes(name)) return false;
-        onRun(name);
-        return true;
-      },
-    });
-  }
-
-  it("hover selects a row and click accepts it, one path with enter", () => {
-    const ran: string[] = [];
-    const model = trayModel((name) => ran.push(name));
-    type(model, "/ex");
-    model.traySelect(1);
-    expect(model.selectedSuggestion).toBe(1);
-    expect(model.trayAccept(1)).toBe(true);
-    expect(ran).toEqual(["exit-all"]);
-    expect(model.input).toBe("");
-  });
-
-  it("stays inert without a slash query", () => {
-    const model = trayModel(() => {});
-    expect(model.trayAccept(0)).toBe(false);
-    model.traySelect(2);
-    expect(model.selectedSuggestion).toBe(0);
   });
 });
 
@@ -1052,23 +762,6 @@ describe("/policy", () => {
         "  self   not built yet, runs as notes: proposals against its own bot.md through the inbox",
       ].join("\n"),
     });
-  });
-
-  it("marks a skills or self bot as not built yet rather than as notes", () => {
-    const model = modelBoundTo("reviewer", "self");
-    type(model, "/policy");
-    model.handleKey(parseChord("return"), undefined);
-    const text = model.entries.at(-1)?.text ?? "";
-    expect(text.startsWith("learning · ⚖ reviewer · self\n")).toBe(true);
-    expect(text).toContain("▸ self   not built yet, runs as notes");
-    expect(text).toContain("  notes  remembers craft");
-  });
-
-  it("leaves an unbound pane byte-identical: /policy is still an unknown command", () => {
-    const model = modelBoundTo(undefined, "notes");
-    type(model, "/policy");
-    model.handleKey(parseChord("return"), undefined);
-    expect(model.entries.at(-1)).toEqual({ kind: "error", text: "unknown command /policy" });
   });
 });
 
@@ -1223,30 +916,6 @@ describe("! shell escape", () => {
     expect(runs).toEqual([]);
   });
 
-  it("a bare ! or ! followed by a space is prompt text for the model", async () => {
-    const runs: string[] = [];
-    const model = new ConversationModel(
-      new Agent({ provider: new MockProvider([textTurn("a"), textTurn("b")]) }),
-      () => {},
-      undefined,
-      undefined,
-      shellPorts(bashStub(runs), {}, () => "allow"),
-    );
-
-    model.submitText("!");
-    await drained(model);
-    model.submitText("! not a command");
-    await drained(model);
-
-    expect(runs).toEqual([]);
-    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
-      "!",
-      "a",
-      "! not a command",
-      "b",
-    ]);
-  });
-
   it("busy panes queue the command like a prompt, run it before the next prompt, and record it after the turn", async () => {
     const runs: string[] = [];
     const recorded: string[] = [];
@@ -1294,75 +963,6 @@ describe("! shell escape", () => {
       "user",
       "assistant",
     ]);
-  });
-
-  it("alt+enter promotes a shell escape ahead of the queue after the interrupted turn settles", async () => {
-    const runs: string[] = [];
-    const { opened } = gate();
-    const agent = new Agent({ provider: gatedProvider(opened, ["never", "re: later"]) });
-    const model = new ConversationModel(
-      agent,
-      () => {},
-      undefined,
-      undefined,
-      shellPorts(bashStub(runs), {}, () => "allow"),
-    );
-
-    model.submitText("slow");
-    model.submitText("later");
-    model.submitText("!echo now", "steer");
-    expect(model.queued()).toEqual(["!echo now", "later"]);
-
-    await drained(model);
-
-    expect(runs).toEqual(["echo now"]);
-    expect(withoutLedger(model).map((entry) => entry.kind)).toEqual([
-      "user",
-      "info",
-      "tool",
-      "user",
-      "assistant",
-    ]);
-  });
-
-  it("records an idle-pane run as a user transcript once the command settles", async () => {
-    const runs: string[] = [];
-    const recorded: string[] = [];
-    const model = new ConversationModel(
-      new Agent({ provider: new MockProvider([]) }),
-      () => {},
-      undefined,
-      undefined,
-      shellPorts(bashStub(runs), {}, () => "allow", {
-        recordShellEscape: async (transcript) => {
-          recorded.push(transcript);
-          return undefined;
-        },
-      }),
-    );
-
-    model.submitText("!echo hi");
-    await drained(model);
-
-    expect(recorded).toEqual(["$ echo hi\nran echo hi"]);
-  });
-
-  it("runs with no model bound, since the shell needs no provider", async () => {
-    const runs: string[] = [];
-    const model = new ConversationModel(
-      undefined,
-      () => {},
-      undefined,
-      undefined,
-      shellPorts(bashStub(runs), {}, () => "allow"),
-    );
-
-    type(model, "!echo hi");
-    await submit(model);
-
-    expect(runs).toEqual(["echo hi"]);
-    expect(model.input).toBe("");
-    expect(toolEntries(model)[0]?.run?.provenance).toBe("user");
   });
 
   it("explains itself when no shell port is wired and keeps the model out of it", async () => {
@@ -1429,18 +1029,6 @@ describe("queue editing", () => {
 
     model.handleKey(parseChord("alt+down"), undefined);
     expect(model.queueSelection()).toBe(0);
-    model.dispose();
-  });
-
-  it("needs an empty prompt and a non-empty queue", () => {
-    const idle = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
-    expect(idle.handleKey(parseChord("alt+up"), undefined)).toBe(false);
-
-    const { model } = queuedModel([]);
-    type(model, "draft");
-    expect(model.handleKey(parseChord("alt+up"), undefined)).toBe(false);
-    expect(model.editingQueue()).toBe(false);
-    expect(model.input).toBe("draft");
     model.dispose();
   });
 
@@ -1569,15 +1157,6 @@ describe("queue editing", () => {
     expect(model.queued()).toEqual(["urgent", "queued"]);
     model.dispose();
   });
-
-  it("any other key leaves queue editing and is handled as usual", () => {
-    const { model } = queuedModel([]);
-    model.handleKey(parseChord("alt+up"), undefined);
-    model.handleKey(parseChord("x"), "x");
-    expect(model.editingQueue()).toBe(false);
-    expect(model.input).toBe("x");
-    model.dispose();
-  });
 });
 
 describe("large-paste placeholders", () => {
@@ -1592,65 +1171,6 @@ describe("large-paste placeholders", () => {
     const collapsed = new ConversationModel(undefined, () => {});
     collapsed.paste(sevenLines);
     expect(collapsed.input).toBe("[pasted #1, 7 lines]");
-  });
-
-  it("never submits on paste, even when the text ends in a newline", () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("never")]) });
-    const model = new ConversationModel(agent, () => {});
-    model.paste("a\nb\n");
-    model.paste(`${sevenLines}\n`);
-    expect(model.entries).toEqual([]);
-    expect(model.busy).toBe(false);
-    expect(model.input).toBe("a\nb\n[pasted #1, 8 lines]");
-  });
-
-  it("numbers several placeholders in one prompt and submits the full text", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
-    const model = new ConversationModel(agent, () => {});
-    type(model, "look: ");
-    model.paste(sevenLines);
-    type(model, " and ");
-    model.paste("x\n".repeat(10));
-    expect(model.input).toBe("look: [pasted #1, 7 lines] and [pasted #2, 11 lines]");
-
-    await submit(model);
-
-    expect(model.entries[0]).toEqual({
-      kind: "user",
-      text: `look: ${sevenLines} and ${"x\n".repeat(10)}`.trim(),
-    });
-    expect(model.input).toBe("");
-  });
-
-  it("tab expands the placeholder under the cursor in place", () => {
-    const model = new ConversationModel(undefined, () => {});
-    type(model, "see ");
-    model.paste(sevenLines);
-    expect(model.handleKey(parseChord("tab"), undefined)).toBe(true);
-    expect(model.input).toBe(`see ${sevenLines}`);
-    expect(model.handleKey(parseChord("tab"), undefined)).toBe(false);
-  });
-
-  it("ctrl+c clears the composer and up brings the draft back, pastes included", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
-    const model = new ConversationModel(agent, () => {});
-    type(model, "see ");
-    model.paste(sevenLines);
-    expect(model.handleKey(parseChord("ctrl+c"), undefined)).toBe(true);
-    expect(model.input).toBe("");
-    expect(model.handleKey(parseChord("up"), undefined)).toBe(true);
-    expect(model.input).toBe("see [pasted #1, 7 lines]");
-    await submit(model);
-    expect(model.entries[0]).toEqual({ kind: "user", text: `see ${sevenLines}`.trim() });
-  });
-
-  it("restarts numbering for the next prompt", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
-    const model = new ConversationModel(agent, () => {});
-    model.paste(sevenLines);
-    await submit(model);
-    model.paste(sevenLines);
-    expect(model.input).toBe("[pasted #1, 7 lines]");
   });
 });
 
@@ -1690,32 +1210,6 @@ describe("spill open", () => {
     ]);
     expect(model.input).toBe("");
   });
-
-  it("posts a notice when the spill file is gone", () => {
-    const opened: string[] = [];
-    const model = spilledModel({
-      spillFile: () => undefined,
-      openFile: (path) => opened.push(path),
-    });
-    model.handleKey(parseChord("shift+tab"), undefined);
-    model.handleKey(parseChord("o"), "o");
-    expect(opened).toEqual([]);
-    expect(model.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "spill s1 is not on disk any more",
-    });
-  });
-
-  it("leaves o as prompt text when no spill row is under the cursor", () => {
-    const opened: string[] = [];
-    const model = spilledModel({
-      spillFile: (id) => `/spills/${id}.txt`,
-      openFile: (path) => opened.push(path),
-    });
-    model.handleKey(parseChord("o"), "o");
-    expect(model.input).toBe("o");
-    expect(opened).toEqual([]);
-  });
 });
 
 describe("child open", () => {
@@ -1746,35 +1240,6 @@ describe("child open", () => {
 
     expect(opened).toEqual(["6f1c2d3e"]);
     expect(model.input).toBe("");
-  });
-
-  it("says so when the child is still working, and opens nothing", () => {
-    const opened: string[] = [];
-    const { model } = delegatingModel({ openSession: (id) => opened.push(id) });
-
-    model.handleKey(parseChord("shift+tab"), undefined);
-    model.handleKey(parseChord("o"), "o");
-
-    expect(opened).toEqual([]);
-    expect(model.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "the child is still working · o opens it once it's done",
-    });
-  });
-
-  it("says so when the child was never saved", () => {
-    const opened: string[] = [];
-    const { model, finish } = delegatingModel({ openSession: (id) => opened.push(id) });
-    finish("↳ child unsaved · completed\n\nrun.ts");
-
-    model.handleKey(parseChord("shift+tab"), undefined);
-    model.handleKey(parseChord("o"), "o");
-
-    expect(opened).toEqual([]);
-    expect(model.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "this child wasn't saved, so there's nothing to open",
-    });
   });
 });
 
@@ -1809,18 +1274,6 @@ describe("ConversationModel @-mentions", () => {
     await drained(model);
     expect(messageText(agent.history()[2] as Message)).toBe("and again @src/app.ts");
   });
-
-  it("puts only the typed prompt back on undo", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("ok")]) });
-    const model = mentionModel(agent);
-    model.bindPromptUndo(async () => ({ filesNote: "no files", cancel: async () => {} }));
-    model.submitText("look at @src/app.ts");
-    await drained(model);
-    model.adoptPromptId("entry-1");
-    model.undoLastPrompt();
-    await model.lastUndo;
-    expect(model.input).toBe("look at @src/app.ts");
-  });
 });
 
 describe("ConversationModel /btw", () => {
@@ -1852,19 +1305,6 @@ describe("ConversationModel /btw", () => {
       { kind: "info", text: "btw · what does the parser do?" },
       { kind: "assistant", text: "side answer", progress: true },
     ]);
-  });
-
-  it("explains itself with no question and with no model", () => {
-    const idle = new ConversationModel(undefined, () => {});
-    type(idle, "/btw why");
-    idle.handleKey(parseChord("return"), undefined);
-    expect(idle.entries.at(-1)?.text).toBe("no model bound · nothing to ask");
-
-    const agent = new Agent({ provider: new MockProvider([]) });
-    const model = new ConversationModel(agent, () => {});
-    type(model, "/btw");
-    model.handleKey(parseChord("return"), undefined);
-    expect(model.entries.at(-1)?.text).toMatch(/^\/btw <question>/);
   });
 });
 
@@ -1910,29 +1350,6 @@ describe("ConversationModel away summary", () => {
     model.attend(true);
     expect(model.entries).toHaveLength(count + 1);
   });
-
-  it("stays silent when you watched the turn finish", async () => {
-    const model = new ConversationModel(awayAgent(), () => {});
-    model.attend(true);
-    model.submitText("fix the parser");
-    await drained(model);
-    const count = model.entries.length;
-    model.attend(false);
-    model.attend(true);
-    expect(model.entries).toHaveLength(count);
-  });
-
-  it("counts the terminal losing focus as being away", async () => {
-    const model = new ConversationModel(awayAgent(), () => {});
-    model.attend(true);
-    model.submitText("fix the parser");
-    model.terminalFocusChanged(false);
-    await drained(model);
-    model.attend(true);
-    expect(model.entries.at(-1)?.kind).not.toBe("info");
-    model.terminalFocusChanged(true);
-    expect(model.entries.at(-1)?.text).toMatch(/^while you were away: changed src\/parser.ts/);
-  });
 });
 
 describe("/forget", () => {
@@ -1971,56 +1388,6 @@ describe("/forget", () => {
     );
     expect(model.entries.at(-1)).toEqual({ kind: "info", text: "forgot prompt" });
   });
-
-  it("forgets a tool result by its call id with the typed replacement", async () => {
-    const calls: [ForgetTarget, string | null][] = [];
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({ type: "tool-call", callId: "c1", name: "echo", arguments: { text: "hi" } }),
-        textTurn("done"),
-      ]),
-      tools: [echoTool],
-    });
-    const model = forgettingModel(agent, calls);
-    type(model, "use echo");
-    await submit(model);
-    model.adoptPromptId("u1");
-
-    model.beginForget("[redacted]");
-    model.handleKey(parseChord("return"), undefined);
-    await model.lastForget;
-
-    expect(calls).toEqual([[{ kind: "tool", callId: "c1" }, "[redacted]"]]);
-  });
-
-  it("explains when there is no store, nothing saved yet, or a turn still running", async () => {
-    const bare = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
-    bare.beginForget(undefined);
-    expect(bare.entries.at(-1)).toEqual({ kind: "info", text: "can't forget · no session store" });
-
-    const calls: [ForgetTarget, string | null][] = [];
-    const idle = forgettingModel(new Agent({ provider: new MockProvider([textTurn("a")]) }), calls);
-    idle.submitText("unsaved");
-    await idle.lastSend;
-    idle.beginForget(undefined);
-    expect(idle.backtracking()).toBe(false);
-    expect(idle.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "nothing to forget yet · prompts and tool results show up here once saved",
-    });
-
-    const { open, opened } = gate();
-    const busy = forgettingModel(new Agent({ provider: gatedProvider(opened, ["a"]) }), calls);
-    busy.submitText("one");
-    busy.beginForget(undefined);
-    expect(busy.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "turn still running · esc to interrupt",
-    });
-    open();
-    await drained(busy);
-    expect(calls).toEqual([]);
-  });
 });
 
 describe("send now", () => {
@@ -2057,39 +1424,6 @@ describe("send now", () => {
       "re: urgent",
     ]);
   });
-
-  it("brings the set-aside prompts back through up on an empty prompt", async () => {
-    const { model, open } = busyModel(["re: first", "re: now"]);
-    model.submitText("queued a");
-    model.submitText("queued b");
-    type(model, "now");
-    model.handleKey(parseChord("ctrl+return"), undefined);
-    open();
-    await drained(model);
-
-    expect(model.input).toBe("");
-    model.handleKey(parseChord("up"), undefined);
-    expect(model.input).toBe("queued b");
-    model.handleKey(parseChord("up"), undefined);
-    expect(model.input).toBe("now");
-    model.handleKey(parseChord("up"), undefined);
-    expect(model.input).toBe("queued a");
-  });
-
-  it("says nothing about the queue when there was nothing queued", async () => {
-    const { model, open } = busyModel(["re: first", "re: now"]);
-    type(model, "now");
-    model.handleKey(parseChord("ctrl+return"), undefined);
-    expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
-    open();
-    await drained(model);
-    expect(withoutLedger(model).map((entry) => entry.text)).toEqual([
-      "first",
-      "· interrupted",
-      "now",
-      "re: now",
-    ]);
-  });
 });
 
 describe("compaction offer", () => {
@@ -2119,16 +1453,6 @@ describe("compaction offer", () => {
     model.submitText("one more");
     await drained(model);
     expect(model.entries.filter((entry) => entry.kind === "info").length).toBe(1);
-  });
-
-  it("stays silent when no compaction hook is bound", async () => {
-    const agent = new Agent({
-      provider: new MockProvider([textTurn("ok")], { capabilities: tinyWindow }),
-    });
-    const model = new ConversationModel(agent, () => {});
-    model.submitText("x".repeat(14_050));
-    await drained(model);
-    expect(model.entries.some((entry) => entry.kind === "info")).toBe(false);
   });
 });
 

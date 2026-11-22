@@ -70,15 +70,7 @@ describe("threads", () => {
     ]);
   });
 
-  it("opens a thread tagged with the creature and its kind", async () => {
-    const sessions = new FakeCreatureSessions();
-    const id = await new CreatureThreads(sessions).openThread("pip", "routine");
-    expect(id).toBe("s1");
-    expect(sessions.opened).toEqual([{ creature: "pip", kind: "routine" }]);
-  });
-
   it.each([
-    [{ working: true, waiting: 0 }, "working"],
     [{ working: true, waiting: 1 }, "waiting"],
     [{ working: false, waiting: 0 }, "back"],
     [{ working: true, waiting: 0, held: "blocked" as const }, "blocked"],

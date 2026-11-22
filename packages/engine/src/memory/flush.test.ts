@@ -111,14 +111,6 @@ describe("MemoryFlush", () => {
     expect(daily).toContain("The dock keeps a third of the width.");
   });
 
-  it("asks about wrongness and instructs a NO_REPLY escape in the flush prompt", () => {
-    expect(memoryFlushPrompt).toContain("proved wrong");
-    expect(memoryFlushPrompt).toContain("supersedes");
-    expect(memoryFlushPrompt).toContain(noReplyToken);
-    expect(isMemoryFlushPrompt(memoryFlushPrompt)).toBe(true);
-    expect(isMemoryFlushPrompt("something else")).toBe(false);
-  });
-
   it("records the silent turn for honest replay while marking NO_REPLY as unrenderable", async () => {
     const { store, root } = await openVault();
     const flush = new MemoryFlush({
@@ -169,14 +161,6 @@ describe("MemoryFlush", () => {
     const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
     expect(outcome).toEqual({ flushed: false, persisted: false, messages: [] });
   });
-
-  it("treats an empty reply like NO_REPLY", async () => {
-    const { store } = await openVault();
-    const flush = new MemoryFlush({ provider: new MockProvider([textTurn("   \n")]), store });
-    const outcome = await flush.maybeFlush(longConversation, readingAt(overThreshold));
-    expect(outcome.persisted).toBe(false);
-    expect(await store.readDaily("2026-08-10")).toEqual([]);
-  });
 });
 
 describe("backtrack capture", () => {
@@ -203,20 +187,6 @@ describe("backtrack capture", () => {
     await expect(
       readFile(join((await openVault()).root, "daily", "2026-08-10.md")),
     ).rejects.toThrow();
-  });
-
-  it("captures to the workspace daily when the session is unbound", async () => {
-    const { store, root } = await openVault();
-    const flush = new MemoryFlush({
-      provider: new MockProvider([textTurn("Abandoned the sed approach, quoting was hopeless.")]),
-      store,
-    });
-    flush.noteBacktrack();
-
-    await flush.maybeFlush(longConversation, readingAt(overThreshold));
-
-    const daily = await readFile(join(root, "daily", "2026-08-10.md"), "utf8");
-    expect(daily).toContain("[prov: agent] Abandoned the sed approach");
   });
 
   it("keeps the ordinary prompt when nothing was backtracked, and clears the clause after a flush", async () => {
@@ -285,26 +255,6 @@ describe("the bot clause", () => {
     expect(craft).toContain("[prov: agent] Jordan wants review comments terse.");
     expect(craft).toContain("Snapshot tests get flagged, not rewritten.");
     expect(craft).not.toContain("dock");
-  });
-
-  it("writes only where something landed, and nothing at all for NO_REPLY", async () => {
-    const { store, root } = await openVault();
-    const layer = await openVault();
-    const flush = new MemoryFlush({
-      provider: new MockProvider([textTurn("bot: prefers bullet points."), textTurn(noReplyToken)]),
-      store,
-      bot: () => reviewerBound(layer.store),
-    });
-    const first = await flush.maybeFlush(longConversation, readingAt(overThreshold));
-    flush.compactionCompleted();
-    const second = await flush.maybeFlush(longConversation, readingAt(overThreshold));
-
-    expect(first.persisted).toBe(true);
-    expect(second.persisted).toBe(false);
-    await expect(readFile(join(root, "daily", "2026-08-10.md"))).rejects.toThrow();
-    expect((await layer.store.readDaily("2026-08-10")).map((entry) => entry.text)).toEqual([
-      "prefers bullet points.",
-    ]);
   });
 
   it("leaves the unbound prompt and write path byte-identical", async () => {

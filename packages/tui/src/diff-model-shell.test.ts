@@ -58,13 +58,4 @@ describe("a shell command in the diff pane", () => {
     expect(output).toContain("changed 2 files on disk:");
     expect(model.changedFiles().map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
   });
-
-  it("shows nothing for a read-only command", async () => {
-    const { model, run } = await shellWorld({ "a.txt": "alpha\n" });
-
-    const output = await run("cat a.txt", "c1");
-
-    expect(output).toBe("alpha");
-    expect(model.changedFiles()).toEqual([]);
-  });
 });

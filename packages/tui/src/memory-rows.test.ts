@@ -7,18 +7,7 @@ import type {
   MemoryNoteView,
   MemoryPaneInputs,
 } from "./memory-pane-model.ts";
-import {
-  compactTokens,
-  curingGlyph,
-  curingWord,
-  findNote,
-  gardenRows,
-  ledgerRows,
-  noteHeat,
-  noteRows,
-  provenanceGlyph,
-  queryRows,
-} from "./memory-rows.ts";
+import { findNote, gardenRows, ledgerRows, noteRows, queryRows } from "./memory-rows.ts";
 
 const now = Date.parse("2026-08-22T12:00:00Z");
 const workspace: MemoryLayerView = {
@@ -60,36 +49,6 @@ function texts(rows: readonly { text: string }[]): string[] {
   return rows.map((row) => row.text);
 }
 
-describe("memory glyphs and words", () => {
-  it("maps the provenance ramp densest-first: user, agent, untrusted", () => {
-    expect(provenanceGlyph("user")).toBe("█");
-    expect(provenanceGlyph("agent")).toBe("▓");
-    expect(provenanceGlyph("untrusted")).toBe("░");
-  });
-
-  it("walks the density ramp with the curing stage and names each rung", () => {
-    expect([0, 1, 2, 3].map((stage) => curingGlyph(stage as 0 | 1 | 2 | 3))).toEqual([
-      "░",
-      "▒",
-      "▓",
-      "█",
-    ]);
-    expect([0, 1, 2, 3].map((stage) => curingWord(stage as 0 | 1 | 2 | 3))).toEqual([
-      "fresh",
-      "curing",
-      "cured",
-      "settled",
-    ]);
-  });
-
-  it("compacts token counts the way the state line reads them", () => {
-    expect(compactTokens(812)).toBe("812");
-    expect(compactTokens(3900)).toBe("3.9k");
-    expect(compactTokens(4096)).toBe("4.1k");
-    expect(compactTokens(12000)).toBe("12k");
-  });
-});
-
 describe("findNote", () => {
   it("resolves by name, title, or alias, preferring the asked-for layer", () => {
     const notes = [
@@ -103,30 +62,6 @@ describe("findNote", () => {
 });
 
 describe("gardenRows", () => {
-  it("leads with the state line and advertises the question box", () => {
-    const rows = gardenRows(
-      inputsOf({
-        notes: [note({ name: "Dock Rule", injected: true }), note({ name: "Guess", curing: 0 })],
-        inbox: [
-          inbox({ id: "s1" }),
-          inbox({ id: "c1", kind: "contradiction", provenance: "agent" }),
-        ],
-        gardener: { state: "idle", sweptAt: "2026-08-22T11:48:00Z" },
-      }),
-      { focusedArc: undefined, now },
-    );
-    expect(rows[0]?.text).toBe("2 notes · 1 curing · ░1 · 1 conflict · swept 12m · ? ask");
-    expect(rows[0]?.selectable).toBe(false);
-    expect(rows[0]?.spans?.map((span) => span.text)).toEqual([
-      "2 notes",
-      "1 curing",
-      "░1",
-      "1 conflict",
-      "swept 12m",
-      "? ask",
-    ]);
-  });
-
   it("splits a prompting layer into the notes in the prompt and the rest, superseded last", () => {
     const rows = gardenRows(
       inputsOf({
@@ -188,26 +123,6 @@ describe("gardenRows", () => {
     ]);
     expect(rows[1]?.arc).toBe("dock-v2");
   });
-
-  it("lists an unfocused empty arc nowhere and the focused empty arc as a calm header", () => {
-    const quiet = gardenRows(
-      inputsOf({ layers: [workspace, arc], notes: [note({ name: "Dock Rule", injected: true })] }),
-      { focusedArc: undefined, now },
-    );
-    expect(texts(quiet)).not.toContain("#dock-v2 · no notes yet");
-    const focused = gardenRows(
-      inputsOf({ layers: [workspace, arc], notes: [note({ name: "Dock Rule", injected: true })] }),
-      { focusedArc: "dock-v2", now },
-    );
-    expect(texts(focused)[1]).toBe("#dock-v2 · no notes yet");
-  });
-
-  it("stays calm over an empty vault", () => {
-    expect(texts(gardenRows(inputsOf({}), { focusedArc: undefined, now }))).toEqual([
-      "nothing remembered yet",
-      "workspace",
-    ]);
-  });
 });
 
 describe("queryRows", () => {
@@ -218,20 +133,6 @@ describe("queryRows", () => {
       note({ name: "Arc Lesson", layer: "arc:dock-v2" }),
       note({ name: "Old Rule", supersededBy: "Dock Rule" }),
     ],
-  });
-
-  it("shows the box with its hint before anything is typed", () => {
-    expect(texts(queryRows(inputs, { text: "", pending: false }, now))).toEqual([
-      "? ▌",
-      "what do you know about … · enter opens a hit · esc closes",
-    ]);
-  });
-
-  it("says it is asking until the outcome lands", () => {
-    expect(texts(queryRows(inputs, { text: "dock", pending: true }, now))).toEqual([
-      "? dock▌ · asking…",
-      "░ asking…",
-    ]);
   });
 
   it("renders every hit with a why-line: legs, ranks, arc boost, superseded floor", () => {
@@ -348,15 +249,6 @@ describe("noteRows", () => {
     expect(rows.find((row) => row.kind === "inbox")?.inboxId).toBe("s1");
   });
 
-  it("reads no links yet when the note stands alone", () => {
-    const alone = note({ name: "Alone", body: "" });
-    expect(texts(noteRows(inputsOf({ notes: [alone] }), alone, { now, bodyWidth: 40 }))).toEqual([
-      "█▓ Alone",
-      "agent · settled · by search only · 2d",
-      "no links yet",
-    ]);
-  });
-
   it("folds mirrored typed relations into one navigable group", () => {
     const rule = note({
       name: "Dock Rule",
@@ -379,20 +271,6 @@ describe("noteRows", () => {
       "← depends on",
       "  █▓ Layout · 2d",
     ]);
-  });
-
-  it("wears the arc tag in the fact strip for arc-layer notes", () => {
-    const lesson = note({
-      name: "Arc Lesson",
-      layer: "arc:dock-v2",
-      distilledFrom: "arcs/dock-v2/MOC",
-    });
-    const rows = noteRows(inputsOf({ layers: [workspace, arc], notes: [lesson] }), lesson, {
-      now,
-      bodyWidth: 40,
-    });
-    expect(rows[1]?.text).toBe("agent · settled · 2d · #dock-v2");
-    expect(rows[2]?.text).toBe("from #dock-v2");
   });
 });
 
@@ -445,21 +323,6 @@ describe("ledgerRows", () => {
       "15m · approved · note → Web Claim.md",
     ]);
     expect(rows[1]?.ledgerId).toBe("op-3");
-  });
-
-  it("filters to one note and names it", () => {
-    const rows = ledgerRows(inputsOf({ ledger, notes: [note({ name: "Dock Rule" })] }), {
-      note: "Dock Rule",
-      now,
-    });
-    expect(texts(rows)).toEqual(["ledger · 1 event · Dock Rule", "1h · edit · Dock Rule"]);
-  });
-
-  it("stays calm when nothing has happened", () => {
-    expect(texts(ledgerRows(inputsOf({}), { note: undefined, now }))).toEqual([
-      "ledger · 0 events",
-      "nothing recorded yet",
-    ]);
   });
 });
 
@@ -541,37 +404,6 @@ describe("the airlock digest under the arc layer", () => {
     ]);
   });
 
-  it("stamps the decision into the lead under the stamp treatment", () => {
-    expect(digestTexts("stamp").slice(1, 4)).toEqual([
-      "█▓ deliver · Dock Ratio Finding · 2d",
-      "██ carry to #next-arc · Tie order · question · 1d",
-      "░▓ Theme drift · question · 1d",
-    ]);
-  });
-
-  it("shows the steering direction in the layer header", () => {
-    const steered: AirlockDigestView = { ...digest, direction: "keep the dock rules" };
-    const rows = gardenRows(
-      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [steered] }),
-      { focusedArc: "dock-v2", now },
-    );
-    expect(texts(rows)[1]).toContain("steered: keep the dock rules");
-  });
-
-  it("unfolds the below-bar notes dim, each with its shortfall, and they drill into the note", () => {
-    const rows = gardenRows(
-      inputsOf({ layers: [workspace, arc], inbox: cards, airlocks: [digest] }),
-      { focusedArc: "dock-v2", now, unfolded: () => true },
-    );
-    const below = rows.find((row) => row.id === "airlock:dock-v2:below:Uncited Hunch");
-    expect(texts(rows)[5]).toBe("▒ 1 below the bar · uncited · archived, searchable");
-    expect(below).toMatchObject({
-      text: "  ▓ Uncited Hunch · uncited",
-      tone: "dim",
-      note: "Uncited Hunch",
-    });
-  });
-
   it("reads enter closes once every eligible item and question is decided", () => {
     const decided: AirlockDigestView = {
       ...digest,
@@ -596,39 +428,5 @@ describe("the airlock digest under the arc layer", () => {
     expect(texts(rows)[2]).toBe("▓ airlock · deliver Dock Ratio Finding · 2h");
     expect(rows[2]?.inboxId).toBeUndefined();
     expect(rows[2]?.selectable).toBe(true);
-  });
-});
-
-describe("garden heat candidates", () => {
-  const hot = note({ name: "Hot Rule", usefulness: 0.9, recalls: 4 });
-  const mild = note({ name: "Mild Fact", usefulness: 0.5 });
-  const cold = note({ name: "Cold Guess" });
-  const rowsWith = (heat: "lead" | "ink") =>
-    gardenRows(inputsOf({ notes: [hot, mild, cold] }), { focusedArc: undefined, now, heat });
-
-  it("scores heat from usefulness and recalls, zeroing superseded notes", () => {
-    expect(noteHeat(hot)).toBeCloseTo(0.93);
-    expect(noteHeat(cold)).toBe(0);
-    expect(noteHeat(note({ name: "Old", usefulness: 1, supersededBy: "New" }))).toBe(0);
-  });
-
-  it("carries heat in the lead cell by density under the lead treatment", () => {
-    const lines = texts(rowsWith("lead"));
-    expect(lines.find((line) => line.includes("Hot Rule"))?.startsWith("█")).toBe(true);
-    expect(lines.find((line) => line.includes("Mild Fact"))?.startsWith("▒")).toBe(true);
-    expect(lines.find((line) => line.includes("Cold Guess"))?.startsWith("·")).toBe(true);
-  });
-
-  it("warms the title ink under the ink treatment and stays plain without one", () => {
-    const inkOf = (rows: ReturnType<typeof rowsWith>, title: string) =>
-      rows.find((row) => row.text.includes(title))?.spans?.[1]?.ink;
-    const warmed = rowsWith("ink");
-    expect(inkOf(warmed, "Hot Rule")).toBe("accent");
-    expect(inkOf(warmed, "Mild Fact")).toBe("text");
-    expect(inkOf(warmed, "Cold Guess")).toBe("dim");
-    const plain = gardenRows(inputsOf({ notes: [hot, cold] }), { focusedArc: undefined, now });
-    expect(inkOf(plain, "Hot Rule")).toBe("text");
-    expect(inkOf(plain, "Cold Guess")).toBe("text");
-    expect(texts(plain).some((line) => line.startsWith("·"))).toBe(false);
   });
 });

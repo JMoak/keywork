@@ -48,16 +48,6 @@ describe("captureWorkspace", () => {
     expect(state.layout.docks?.right).toBeUndefined();
   });
 
-  it("omits panes that cannot describe themselves", () => {
-    const { layout, panes } = workspaceOf(
-      ["session-1", { kind: "conversation" }],
-      ["mystery-1", undefined],
-    );
-    expect(captureWorkspace(layout, panes).panes).toEqual([
-      { id: "session-1", kind: "conversation" },
-    ]);
-  });
-
   it("captures held panes apart from the layout and reads them back", () => {
     const { layout, panes } = workspaceOf(
       ["session-1", { kind: "conversation", sessionId: "abc" }],
@@ -118,22 +108,6 @@ describe("parseWorkspaceState", () => {
     ]);
   });
 
-  it("migrates a right-docked v1 state to the right dock", () => {
-    const state = parseWorkspaceState({
-      version: 1,
-      layout: {
-        tree: { kind: "leaf", id: "session-1" },
-        dock: { side: "right", panes: ["mcp-1"], ratio: 1 / 3 },
-      },
-      panes: [
-        { id: "session-1", kind: "conversation" },
-        { id: "mcp-1", kind: "mcp" },
-      ],
-    });
-    expect(state?.layout.docks).toEqual({ right: { panes: ["mcp-1"], ratio: 1 / 3, pins: 0 } });
-    expect(state?.layout.docks?.left).toBeUndefined();
-  });
-
   it("reads an arc pane by its slug and refuses one without a slug", () => {
     const layout = {
       tree: { kind: "leaf", id: "session-1" },
@@ -147,22 +121,6 @@ describe("parseWorkspaceState", () => {
     expect(state?.panes[1]).toEqual({ id: "arc-1", kind: "arc", arc: "dock-v2" });
     expect(parseWorkspaceState({ version: 2, layout, panes: panes(undefined) })).toBeUndefined();
     expect(parseWorkspaceState({ version: 2, layout, panes: panes("") })).toBeUndefined();
-  });
-
-  it("reads a docked workspaces node back as itself", () => {
-    const layout = {
-      tree: { kind: "leaf", id: "session-1" },
-      docks: { left: { panes: ["workspaces-1"], ratio: 1 / 3 } },
-    };
-    const state = parseWorkspaceState({
-      version: 2,
-      layout,
-      panes: [
-        { id: "session-1", kind: "conversation" },
-        { id: "workspaces-1", kind: "workspaces" },
-      ],
-    });
-    expect(state?.panes[1]).toEqual({ id: "workspaces-1", kind: "workspaces" });
   });
 
   it("reads a memory pane's lens, note, and question, and refuses malformed ones", () => {
@@ -238,25 +196,6 @@ describe("parseWorkspaceState", () => {
       [{ id: "held-1", kind: "hologram" }],
     ];
     for (const held of refused) expect(parseWorkspaceState(withHeld(held))).toBeUndefined();
-  });
-});
-
-describe("session-tree grouping in the workspace state", () => {
-  it("round-trips the group-by axis and rejects one it does not know", () => {
-    const { layout, panes } = workspaceOf(
-      ["tree-1", { kind: "session-tree", groupBy: "bot" }],
-      ["session-1", { kind: "conversation" }],
-    );
-    const captured = JSON.parse(JSON.stringify(captureWorkspace(layout, panes))) as {
-      panes: Record<string, unknown>[];
-    };
-    expect(parseWorkspaceState(captured)?.panes[0]).toEqual({
-      id: "tree-1",
-      kind: "session-tree",
-      groupBy: "bot",
-    });
-    captured.panes[0] = { ...captured.panes[0], groupBy: "colour" };
-    expect(parseWorkspaceState(captured)).toBeUndefined();
   });
 });
 

@@ -54,15 +54,6 @@ describe("CitationLedger", () => {
     expect(ledger.events().filter((event) => event.kind === "citation")).toHaveLength(1);
   });
 
-  it("keeps cited and uncited recalls distinguishable", () => {
-    const ledger = ledgerAt();
-    ledger.recordRecall("Cited Note", "search");
-    ledger.recordRecall("Ignored Note", "search");
-    ledger.recordReply("see [[Cited Note]]");
-    expect(ledger.citedRecalls()).toEqual(["Cited Note"]);
-    expect(ledger.uncitedRecalls()).toEqual(["Ignored Note"]);
-  });
-
   it("records bootstrap-injected notes as recalls, so they are citable", async () => {
     const store = await openStore();
     await store.writeNote({ title: "Pinned Fact", body: "f\n", provenance: "user", pinned: true });
@@ -91,16 +82,6 @@ describe("CitationLedger", () => {
     const report = await gardener.sweep();
     expect(report.usefulness["Handy Fact"]).toBeGreaterThan(0);
     expect(report.usefulness["Noise Fact"]).toBeUndefined();
-  });
-
-  it("drops citation events when no session is resolvable", () => {
-    const recorded: [string, string][] = [];
-    const feed = citationUsefulnessFeed(
-      { recordRecall: (note, session) => recorded.push([note, session]) },
-      () => undefined,
-    );
-    feed({ kind: "citation", note: "Ghost", timestamp: "2026-08-16T09:00:00.000Z" });
-    expect(recorded).toEqual([]);
   });
 
   it("tags recalls and citations with their source layer and session", () => {

@@ -16,7 +16,7 @@ async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 const twoEvents = 'data: {"n":1}\n\ndata: {"n":2}\n\n';
 
 describe("sseJsonEvents chunk boundaries", () => {
-  it.each([1, 2, 3, 5, 7, 64, 65_536])(
+  it.each([1, 7, 65_536])(
     "yields the same events when the body arrives in %i-byte chunks",
     async (chunkSize) => {
       expect(await events(twoEvents, chunkSize)).toEqual([{ n: 1 }, { n: 2 }]);

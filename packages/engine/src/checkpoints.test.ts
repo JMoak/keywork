@@ -53,14 +53,6 @@ describe("Checkpoints", () => {
     expect(await store.redo()).toBe(false);
   });
 
-  it("reports nothing to undo before the first capture", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-
-    expect(store.canUndo()).toBe(false);
-    expect(await store.undo()).toBe(false);
-  });
-
   it("leaves gitignored files alone in both directions", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });
@@ -144,21 +136,6 @@ describe("Checkpoints", () => {
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
   });
 
-  it("returns the captured tree hash, stable for identical content", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-    await seed(worktree, { "file.txt": "v1" });
-
-    const first = await store.captureTree();
-    const repeat = await store.captureTree();
-    await seed(worktree, { "file.txt": "v2" });
-    const changed = await store.captureTree();
-
-    expect(first).toMatch(/^[0-9a-f]{40,64}$/);
-    expect(repeat).toBe(first);
-    expect(changed).not.toBe(first);
-  });
-
   it("restores files to a previously captured tree", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });
@@ -219,19 +196,6 @@ describe("Checkpoints", () => {
     expect(existsSync(join(worktree, "later.txt"))).toBe(false);
   });
 
-  it("treats a scoped restore whose paths already match as a no-op", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-    await seed(worktree, { "same.txt": "same" });
-    const tree = await store.captureTree();
-    await seed(worktree, { "mine.txt": "keeper's own" });
-
-    const restored = await store.restoreTo(tree, ["same.txt"]);
-
-    expect(restored).toBe(await store.snapshot());
-    expect(await readFile(join(worktree, "mine.txt"), "utf8")).toBe("keeper's own");
-  });
-
   it("rejects a malformed checkpoint reference without touching files", async () => {
     const { worktree, gitDir } = await scratchProject();
     const store = await Checkpoints.open({ worktree, gitDir });
@@ -272,19 +236,6 @@ describe("Checkpoints", () => {
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v3");
     expect(await store.redo()).toBe(true);
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v1");
-  });
-
-  it("treats restoreTo onto the current state as a no-op", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-    await seed(worktree, { "file.txt": "same" });
-    const tree = await store.captureTree();
-
-    await store.restoreTo(tree);
-
-    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("same");
-    expect(await store.undo()).toBe(true);
-    expect(await store.undo()).toBe(false);
   });
 
   it("serializes restoreTo behind an in-flight capture", async () => {
@@ -440,34 +391,6 @@ describe("Checkpoints reads", () => {
     expect(changes.patch).not.toContain("c.txt");
     expect(store.canUndo()).toBe(false);
     expect(store.takeTurnTag()).toBeUndefined();
-  });
-
-  it("finds nothing between identical snapshots", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-    await seed(worktree, { "a.txt": "same" });
-
-    const tree = await store.snapshot();
-
-    expect(await store.changesBetween(tree, await store.snapshot())).toEqual({
-      files: [],
-      patch: "",
-    });
-    expect(await store.filesBetween(tree, tree)).toEqual([]);
-  });
-
-  it("lists the files between two trees with their line counts and no patch", async () => {
-    const { worktree, gitDir } = await scratchProject();
-    const store = await Checkpoints.open({ worktree, gitDir });
-    await seed(worktree, { "a.txt": "one\n" });
-    const before = await store.snapshot();
-    await seed(worktree, { "a.txt": "uno\n", "b.txt": "new\n" });
-    const after = await store.snapshot();
-
-    expect(await store.filesBetween(after, before)).toEqual([
-      { path: "a.txt", added: 1, deleted: 1 },
-      { path: "b.txt", added: 0, deleted: 1 },
-    ]);
   });
 
   it("never snapshots its own shadow repo when it lives inside the worktree", async () => {

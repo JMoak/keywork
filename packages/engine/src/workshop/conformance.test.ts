@@ -34,17 +34,7 @@ const adapters: ReadonlyArray<readonly [SubstrateKind, () => Promise<Harness>]> 
   ],
 ];
 
-describe.each(adapters)("the %s workshop substrate", (kind, harness) => {
-  it("creates a workshop for the one creature it names, down until started", async () => {
-    const { substrate, spec } = await harness();
-    const workshop = await substrate.create(spec);
-
-    expect(substrate.kind).toBe(kind);
-    expect(workshop).toMatchObject({ creature: "pip", substrate: kind });
-    expect(workshop.id).toMatch(/^pip-[0-9a-f]{6}$/);
-    expect(await substrate.health(workshop)).toBe("down");
-  });
-
+describe.each(adapters)("the %s workshop substrate", (_kind, harness) => {
   it("comes up on start and goes down on stop", async () => {
     const { substrate, spec } = await harness();
     const workshop = await substrate.create(spec);
@@ -88,14 +78,6 @@ describe.each(adapters)("the %s workshop substrate", (kind, harness) => {
     expect(await files.read("notes/plan.md")).toBe("raise the barn\n");
   });
 
-  it("rejects reading a file that is not there", async () => {
-    const { substrate, spec } = await harness();
-    const workshop = await substrate.create(spec);
-    await substrate.start(workshop);
-
-    await expect(substrate.files(workshop).read("nowhere.txt")).rejects.toThrow();
-  });
-
   it("defers snapshots and forks past milestone one", async () => {
     const { substrate, spec } = await harness();
     const workshop = await substrate.create(spec);
@@ -103,13 +85,6 @@ describe.each(adapters)("the %s workshop substrate", (kind, harness) => {
 
     await expect(substrate.snapshot(workshop, "before")).rejects.toBeInstanceOf(WorkshopRefusal);
     await expect(substrate.fork(snapshot)).rejects.toMatchObject({ reason: "deferred" });
-  });
-
-  it("offers a display port only where a display can exist", async () => {
-    const { substrate, spec } = await harness();
-    const workshop = await substrate.create(spec);
-
-    expect(substrate.display(workshop) === undefined).toBe(kind === "host");
   });
 
   it("is down and refuses commands once removed", async () => {

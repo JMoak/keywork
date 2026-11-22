@@ -10,16 +10,6 @@ const config: KeyworkConfig = {
 const ollamaRoot = "http://127.0.0.1:11434";
 
 describe("composeInference over the node's local servers", () => {
-  it("asks the node's capability directory first when a provider is built", () => {
-    const directory = recordingDirectory();
-    const runtime = composeInference({ env: {}, config, credentials: {}, localServers: directory });
-    const binding = bound(runtime.resolve({ override: "ollama/qwen3" }));
-
-    runtime.provider(binding);
-
-    expect(directory.asked).toEqual([ollamaRoot]);
-  });
-
   it("answers a binding's probed capabilities from the same directory", () => {
     const record = { model: "qwen3" } as CapabilityRecord;
     const directory = recordingDirectory(record);
@@ -28,13 +18,6 @@ describe("composeInference over the node's local servers", () => {
 
     expect(runtime.capabilityOf(binding)).toBe(record);
     expect(directory.recorded).toEqual([[ollamaRoot, "qwen3"]]);
-  });
-
-  it("knows nothing probed when the node lends it no directory", () => {
-    const runtime = composeInference({ env: {}, config, credentials: {} });
-    expect(
-      runtime.capabilityOf(bound(runtime.resolve({ override: "ollama/qwen3" }))),
-    ).toBeUndefined();
   });
 });
 

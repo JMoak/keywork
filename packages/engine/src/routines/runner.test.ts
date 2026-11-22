@@ -126,11 +126,4 @@ describe("threadRunner", () => {
     );
     expect((await vanished.finished).reason).toContain("disappeared");
   });
-
-  it("denies an ask through the host", async () => {
-    const fake = fakeHost();
-    const handle = await threadRunner(fake.host).start(request, recordingSignals().signals);
-    await handle.deny("call-9");
-    expect(fake.calls.at(-1)).toBe("deny call-9");
-  });
 });

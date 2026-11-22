@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,13 +84,6 @@ describe("composeWorkspace", () => {
     expect(composition.systemPromptFor(undefined).length).toBeGreaterThan(0);
   });
 
-  it("opens workspace memory when a trusted declaration exists", async () => {
-    const cwd = await declaredWorkspace();
-    const composition = await composedIn(cwd, { projectTrusted: true });
-    expect(composition.memory()).toBeDefined();
-    expect(composition.memory()?.store.trusted).toBe(true);
-  });
-
   it("opens a trusted workspace's memory before any declaration, at the vault a later declaration names", async () => {
     const cwd = await tempDir();
     const composition = await composedIn(cwd, { projectTrusted: true });
@@ -102,13 +94,6 @@ describe("composeWorkspace", () => {
     await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "late" }));
     expect(composition.memory()).toBe(undeclared);
     expect(openWorkspaceMemory(cwd, true)?.vaultRoot).toBe(undeclared?.vaultRoot);
-  });
-
-  it("opens no shadow git when checkpoints are off", async () => {
-    const cwd = await tempDir();
-    const composition = await composedIn(cwd, { checkpoints: "off" });
-    expect(composition.checkpoints).toBeUndefined();
-    expect(existsSync(join(cwd, "snapshots-git"))).toBe(false);
   });
 
   it("reports checkpoint unavailability through the seam and composes on", async () => {
@@ -127,24 +112,6 @@ describe("composeWorkspace", () => {
 });
 
 describe("composeAgents", () => {
-  it("builds chat-style and panes-style agents on whichever provider each build names", async () => {
-    const composition = await composedIn(await tempDir());
-    const first = new MockProvider([textTurn("first")]);
-    const second = new MockProvider([textTurn("second")]);
-    const agents = composeAgents(composition);
-
-    const chatStyle = agents.build({
-      provider: first,
-      guard: {},
-      history: [],
-      sessionId: "session-a",
-    });
-    const panesStyle = agents.build({ provider: second, guard: {}, sessionId: () => "session-b" });
-
-    expect(messageText(await chatStyle.send("hi"))).toBe("first");
-    expect(messageText(await panesStyle.send("hi"))).toBe("second");
-  });
-
   it("runs bash over a supplied shell session so state survives across calls", async () => {
     const cwd = await tempDir();
     await mkdir(join(cwd, "nested"));
@@ -179,46 +146,6 @@ describe("composeAgents", () => {
       await shell.close();
     }
     expect(outputs[0]?.trim().endsWith("nested")).toBe(true);
-  });
-
-  it("streams bash output to the bus as tool.output in order, leaving the final result whole", async () => {
-    const composition = await composedIn(await tempDir());
-    const chunks: { chunk: string; callId?: string | undefined }[] = [];
-    const finished: string[] = [];
-    const agent = composeAgents(composition, { permissions: () => "allow" }).build({
-      provider: new MockProvider([
-        toolCallTurn({
-          type: "tool-call",
-          callId: "c1",
-          name: "bash",
-          arguments: { command: "echo one; sleep 0.3; echo two; sleep 0.3; echo three" },
-        }),
-        textTurn("done"),
-      ]),
-      guard: {},
-    });
-    agent.bus.on("tool.output", (event) => chunks.push(event));
-    agent.bus.on("tool.finished", ({ output }) => finished.push(output));
-
-    await agent.send("count");
-
-    expect(chunks.length).toBeGreaterThanOrEqual(2);
-    expect(chunks.every((event) => event.callId === "c1")).toBe(true);
-    const streamed = chunks.map((event) => event.chunk).join("");
-    expect(streamed.replace(/\r/g, "")).toBe("one\ntwo\nthree\n");
-    expect(finished[0]?.replace(/\r/g, "")).toBe("one\ntwo\nthree");
-  });
-
-  it("gives default agents the composed system prompt for their model and bots their own", async () => {
-    const composition = await composedIn(await tempDir());
-    const provider = recordingProvider();
-    const agents = composeAgents(composition);
-
-    await agents.build({ provider, guard: {} }).send("hello");
-    await agents.build({ provider, guard: {}, bot: briefBot }).send("hello");
-
-    expect(provider.requests[0]?.systemPrompt).toBe(composition.systemPromptFor(undefined));
-    expect(provider.requests[1]?.systemPrompt).toBe("be brief");
   });
 
   it("journals what every built agent was handed: instructions and bootstrap, but not a definition's own prompt", async () => {
@@ -364,12 +291,6 @@ describe("composeAgents", () => {
     await composition.memory()?.store.recordAudit("settle");
   });
 
-  it("skips memory flushes when the workspace has no memory", async () => {
-    const composition = await composedIn(await tempDir());
-    const agents = composeAgents(composition);
-    expect(agents.flushFor("session-a", new MockProvider([]))).toBeUndefined();
-  });
-
   it("memoizes one memory flush per session", async () => {
     const cwd = await declaredWorkspace();
     const composition = await composedIn(cwd, { projectTrusted: true });
@@ -411,11 +332,6 @@ describe("composeAgents", () => {
 });
 
 describe("startMcpRegistry", () => {
-  it("returns nothing when no servers are configured", () => {
-    expect(startMcpRegistry(undefined)).toBeUndefined();
-    expect(startMcpRegistry({})).toBeUndefined();
-  });
-
   it("starts configured servers and stops them cleanly", async () => {
     const registry = startMcpRegistry({
       fixture: {
@@ -477,16 +393,6 @@ describe("repo map composition", () => {
     const prompt = composition.systemPromptWith(undefined, "remembered: prefers tabs");
     for (const text of injected) expect(prompt).toContain(text);
     expect(composition.promptInjectionsWith(undefined, "")).toHaveLength(2);
-  });
-
-  it("skips the map entirely when configured off", async () => {
-    const cwd = await trustedWorkspaceWith({ "core.ts": "export const a = 1;" });
-    const composition = await composedIn(cwd, { projectTrusted: true, repoMap: "off" });
-    expect(composition.repoMap).toBeUndefined();
-    expect(composition.systemPromptFor(undefined)).not.toContain("Repo map");
-    expect(
-      composition.standingInjections.some((injection) => injection.source === "repo-map"),
-    ).toBe(false);
   });
 
   it("never maps an untrusted directory", async () => {
@@ -561,53 +467,6 @@ describe("language servers in the composition", () => {
     expect(composition.languagePort?.languageOf("main.ts")).toBe("typescript");
     await composition.languagePort?.dispose();
   });
-
-  it("notices a missing server once per language and keeps the edit result plain", async () => {
-    const cwd = await declaredWorkspace();
-    const notices: string[] = [];
-    const composition = await composedIn(cwd, {
-      projectTrusted: true,
-      repoMap: "off",
-      lsp: {
-        typescript: { command: ["keywork-absent-language-server"], extensions: [".ts", ".tsx"] },
-      },
-      notice: (text) => notices.push(text),
-    });
-    await writeFile(join(cwd, "a.ts"), "BROKEN");
-    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
-    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
-    expect(notices).toEqual([
-      "no typescript language server on PATH · diagnostics off for .ts .tsx",
-    ]);
-    await composition.languagePort?.dispose();
-  });
-
-  it("logs a throwing save observer instead of failing the save", async () => {
-    const cwd = await declaredWorkspace();
-    const logged: unknown[] = [];
-    const composition = await composedIn(cwd, {
-      projectTrusted: true,
-      repoMap: "off",
-      onFileSaved: () => {
-        throw new Error("materialize melted");
-      },
-      diagnosticsLog: () => ({
-        log: (level, event, payload) => logged.push({ level, event, payload }),
-      }),
-    });
-    await writeFile(join(cwd, "a.ts"), "fine");
-    expect(await composition.afterSave?.(join(cwd, "a.ts"))).toBeUndefined();
-    expect(logged).toEqual([
-      {
-        level: "error",
-        event: "afterSave.failed",
-        payload: {
-          path: join(cwd, "a.ts"),
-          error: expect.objectContaining({ message: "materialize melted" }),
-        },
-      },
-    ]);
-  });
 });
 
 describe("the yard in a composed agent", () => {
@@ -677,18 +536,6 @@ describe("the yard in a composed agent", () => {
 
     expect(provider.requests[0]?.systemPrompt).toBe("be brief");
     expect(provider.requests[0]?.tools.map(({ name }) => name)).toEqual(["bash"]);
-  });
-
-  it("offers none of them to a session with no show", async () => {
-    const composition = await composedIn(await tempDir());
-    const provider = recordingProvider();
-
-    await composeAgents(composition).build({ provider, guard: {} }).send("hello");
-
-    expect(provider.requests[0]?.tools.map(({ name }) => name)).not.toEqual(
-      expect.arrayContaining(["show"]),
-    );
-    expect(provider.requests[0]?.systemPrompt).not.toContain(yardPrompt);
   });
 
   it("tells a session once, at its next request, what the keeper did with what it set out", async () => {

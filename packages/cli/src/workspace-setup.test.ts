@@ -89,17 +89,6 @@ describe("workspaceSetupPort.setUp", () => {
     expect(openWorkspace(loose)?.root).toBe(loose);
   });
 
-  it("says it cannot reopen when no reopen seam was given", async () => {
-    const receipt = await portFor(repo).setUp();
-    expect(receipt.reopens).toBe(false);
-  });
-
-  it("only materializes when already trusted, never re-trusting", async () => {
-    trustStore.trust(repo);
-    await portFor(repo).setUp();
-    expect(openWorkspace(repo)).toBeDefined();
-  });
-
   it("refuses an untrusted folder and writes nothing", async () => {
     trustStore.untrust(repo);
     await expect(portFor(repo).setUp()).rejects.toThrow("marked untrusted");

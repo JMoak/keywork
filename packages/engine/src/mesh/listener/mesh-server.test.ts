@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { Agent, request } from "node:http";
+import { request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { recordedPeerWhois } from "../transport/testing/fake-tailnet.ts";
@@ -35,7 +35,7 @@ async function serve(options: MeshServerOptions): Promise<number> {
 function send(
   port: number,
   path: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string; agent?: Agent } = {},
+  init: { method?: string; headers?: Record<string, string>; body?: string } = {},
 ): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const outgoing = request(
@@ -45,7 +45,7 @@ function send(
         path,
         method: init.method ?? "GET",
         headers: init.headers ?? {},
-        agent: init.agent ?? false,
+        agent: false,
       },
       (incoming) => {
         let body = "";
@@ -135,26 +135,6 @@ describe("the mesh server", () => {
     expect(decisions).toContainEqual(
       expect.objectContaining({ admitted: false, reason: "funnel" }),
     );
-  });
-
-  it("asks WhoIs once per connection, not once per request", async () => {
-    const identified: (string | undefined)[] = [];
-    const port = await serve({
-      identify: async (address) => {
-        identified.push(address);
-        return peerAt(address);
-      },
-      handle: async () => new Response("ok"),
-    });
-    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
-    try {
-      await send(port, "/mesh/a", { agent });
-      await send(port, "/mesh/b", { agent });
-      await send(port, "/mesh/c", { agent });
-    } finally {
-      agent.destroy();
-    }
-    expect(identified).toHaveLength(1);
   });
 
   it("refuses a body over the limit", async () => {

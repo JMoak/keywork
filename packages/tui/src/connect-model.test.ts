@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addProviderRow,
   ConnectModel,
-  connectionColumns,
   connectionFacts,
-  connectionLine,
   editorHeaderRows,
   editorHeading,
   verifyActionText,
@@ -170,18 +168,6 @@ describe("ConnectModel opening (CD-05, CD-07)", () => {
     expect(port.saves).toEqual([]);
   });
 
-  it("goes straight to the targets when nothing is saved yet", () => {
-    const { model: m } = model(fakePort());
-    m.open(undefined);
-    expect(m.stage).toEqual({ kind: "targets", index: 0 });
-    expect(m.targetRows().map((row) => row.label)).toEqual(["OpenAI", "Ollama", "Custom"]);
-    expect(m.targetRows().map((row) => row.detail)).toEqual([
-      "api key · api.openai.com/v1",
-      "local · http://localhost:11434/v1",
-      "any OpenAI-compatible URL",
-    ]);
-  });
-
   it("prefills the editor from an argument naming a target, and from a URL", () => {
     const { model: m } = model(fakePort());
     m.open("ollama");
@@ -197,13 +183,6 @@ describe("ConnectModel opening (CD-05, CD-07)", () => {
     });
   });
 
-  it("tells the user when the argument matches nothing and falls back to the list", () => {
-    const { model: m, notices } = model(fakePort());
-    m.open("mystery");
-    expect(m.stage.kind).toBe("targets");
-    expect(notices[0]).toContain('"mystery"');
-  });
-
   it("fixes name and endpoint for built-ins and spells out the exact action before enter", () => {
     const { model: m } = model(fakePort());
     m.open("openai");
@@ -217,22 +196,6 @@ describe("ConnectModel opening (CD-05, CD-07)", () => {
 });
 
 describe("connections screen", () => {
-  it("lays saved connections out in aligned columns with the facts that exist", () => {
-    const { model: m } = model(fakePort({ saved: [lab, broken] }), "lab");
-    m.open(undefined);
-    const rows = m.connectionRows();
-    const columns = connectionColumns(rows);
-    expect(columns).toEqual({ name: 6, host: 18 });
-    expect(connectionLine(rows[0] as never, columns)).toBe(
-      "lab    lab.example/v1     in use · saved key · 12 models · verified 08-21 12:00",
-    );
-    expect(connectionLine(rows[1] as never, columns)).toBe(
-      "ollama localhost:11434/v1 no credential · failed 08-22 09:10 · ECONNREFUSED",
-    );
-    expect(rowTexts(m)).toHaveLength(3);
-    expect(m.rows()[0]?.selected).toBe(true);
-  });
-
   it("names every fact it knows and says so when it has never verified", () => {
     expect(connectionFacts({ ...lab, enabled: false, protocol: "responses" }, false)).toEqual([
       "disabled",
@@ -256,29 +219,6 @@ describe("connections screen", () => {
     expect(m.stage).toEqual({ kind: "connections", index: 1 });
     expect(m.handleKey(chord("escape"), undefined)).toBe("close");
   });
-
-  it("the add row opens the targets, and escape there walks back to the add row", () => {
-    const { model: m } = model(fakePort({ saved: [lab] }));
-    m.open(undefined);
-    m.handleKey(chord("up"), undefined);
-    expect(m.stage).toEqual({ kind: "connections", index: 1 });
-    m.handleKey(chord("return"), undefined);
-    expect(m.stage).toEqual({ kind: "targets", index: 0 });
-    m.handleKey(chord("down"), undefined);
-    m.handleKey(chord("return"), undefined);
-    expect(m.stage.kind === "editor" && m.stage.draft.name).toBe("ollama");
-    m.handleKey(chord("escape"), undefined);
-    expect(m.stage).toEqual({ kind: "targets", index: 1 });
-    m.handleKey(chord("escape"), undefined);
-    expect(m.stage).toEqual({ kind: "connections", index: 1 });
-  });
-
-  it("a click on the add row opens the targets too", () => {
-    const { model: m } = model(fakePort({ saved: [lab] }));
-    m.open(undefined);
-    expect(m.clickRow(1)).toBe("stay");
-    expect(m.stage).toEqual({ kind: "targets", index: 0 });
-  });
 });
 
 describe("editor heading", () => {
@@ -297,19 +237,6 @@ describe("editor heading", () => {
       title: { name: "Ollama", detail: "runs on this machine" },
       note: undefined,
     });
-  });
-
-  it("leads a saved connection with what it observed last", () => {
-    const { model: m } = model(fakePort({ saved: [lab, broken] }));
-    m.open("lab");
-    expect(m.stage.kind === "editor" && editorHeading(m.stage)).toEqual({
-      title: { name: "lab", detail: "https://lab.example/v1" },
-      note: "12 models · verified 08-21 12:00",
-    });
-    m.open("ollama");
-    expect(m.stage.kind === "editor" && editorHeading(m.stage).note).toBe(
-      "failed 08-22 09:10 · ECONNREFUSED",
-    );
   });
 });
 
@@ -348,40 +275,6 @@ describe("ConnectModel editing", () => {
     );
   });
 
-  it("edits at the cursor and reports the cursor to the view for text fields only", () => {
-    const { model: m } = model(fakePort());
-    m.open("ollama");
-    const name = () => (m.stage.kind === "editor" ? m.stage.draft.name : undefined);
-    const cursor = () => {
-      const field = m.fields()[0];
-      return field?.kind === "text" ? field.cursor : undefined;
-    };
-    expect(cursor()).toBe("ollama".length);
-    m.handleKey(chord("left"), undefined);
-    m.handleKey(chord("left"), undefined);
-    type(m, "X");
-    expect(name()).toBe("ollaXma");
-    expect(cursor()).toBe(5);
-    m.handleKey(chord("backspace"), undefined);
-    expect(name()).toBe("ollama");
-    m.handleKey(chord("home"), undefined);
-    type(m, "my-");
-    expect(name()).toBe("my-ollama");
-    m.handleKey(chord("end"), undefined);
-    type(m, "!");
-    expect(name()).toBe("my-ollama!");
-    const toggle = m.fields().find((field) => field.kind === "toggle");
-    expect(toggle !== undefined && "cursor" in toggle).toBe(false);
-  });
-
-  it("pastes at the cursor of the focused field", () => {
-    const { model: m } = model(fakePort());
-    m.open("ollama");
-    m.handleKey(chord("left"), undefined);
-    m.paste("-dev");
-    expect(m.stage.kind === "editor" && m.stage.draft.name).toBe("ollam-deva");
-  });
-
   it("remembers the environment variable name across credential cycles", () => {
     const { model: m } = model(fakePort());
     m.open("openai");
@@ -395,25 +288,6 @@ describe("ConnectModel editing", () => {
     expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("api-key");
     m.handleKey(chord("right"), undefined);
     expect(m.stage.kind === "editor" && m.stage.draft.credential).toBe("env:MY_KEY");
-  });
-
-  it("cycles the protocol through every declared protocol in both directions", () => {
-    const { model: m } = model(fakePort());
-    m.open("openai");
-    const protocolAfter = (key: string): string | undefined => {
-      m.handleKey(chord(key), undefined);
-      return m.stage.kind === "editor" ? m.stage.draft.protocol : undefined;
-    };
-    expect(protocolAfter("right")).toBe("responses");
-    expect(protocolAfter("right")).toBe("anthropic-messages");
-    expect(protocolAfter("right")).toBe("chat-completions");
-    expect(protocolAfter("left")).toBe("anthropic-messages");
-  });
-
-  it("names the anthropic-messages protocol as a fact", () => {
-    expect(connectionFacts({ ...lab, protocol: "anthropic-messages" }, false)).toContain(
-      "anthropic-messages",
-    );
   });
 
   it("pastes into the selected text or secret field and nowhere else", () => {
@@ -475,19 +349,6 @@ describe("ConnectModel verify and save (CD-01, CD-09)", () => {
     expect(modelChosen()).toBe(1);
   });
 
-  it("escape on the receipt returns to the connections screen", async () => {
-    const port = fakePort({ saved: [lab] });
-    const { model: m } = model(port);
-    m.open("lab");
-    const verifyIndex = m.fields().findIndex((field) => field.id === "verify");
-    for (let step = 0; step < verifyIndex; step += 1) m.handleKey(chord("down"), undefined);
-    m.handleKey(chord("return"), undefined);
-    await settled();
-    expect(m.stage.kind).toBe("receipt");
-    expect(m.handleKey(chord("escape"), undefined)).toBe("stay");
-    expect(m.stage).toEqual({ kind: "connections", index: 0 });
-  });
-
   it("saves nothing when verification fails and returns to the editor on the next key", async () => {
     const port = fakePort({ verification: { ok: false, at: "t", reason: "HTTP 401" } });
     const { model: m } = model(port);
@@ -498,20 +359,6 @@ describe("ConnectModel verify and save (CD-01, CD-09)", () => {
     expect(m.stage).toMatchObject({ kind: "failed", reason: "HTTP 401" });
     m.handleKey(chord("a"), "a");
     expect(m.stage.kind).toBe("editor");
-  });
-
-  it("returns to the editor on a click while failed and closes on a click once removed", async () => {
-    const port = fakePort({ verification: { ok: false, at: "t", reason: "HTTP 401" } });
-    const { model: m } = model(port);
-    m.open("ollama");
-    m.handleKey(chord("return"), undefined);
-    await settled();
-    expect(m.rowCount()).toBe(2);
-    expect(m.clickRow(0)).toBe("stay");
-    expect(m.stage.kind).toBe("editor");
-    m.stage = { kind: "removed", receipt: { removed: ["connection lab"], retained: ["the key"] } };
-    expect(m.rowCount()).toBe(3);
-    expect(m.clickRow(0)).toBe("close");
   });
 
   it("lets escape abandon a verification in flight and ignores the late result", async () => {

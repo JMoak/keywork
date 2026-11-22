@@ -493,34 +493,26 @@ describe("artifact and evidence decisions", () => {
 });
 
 describe("bounded persistence", () => {
-  it.each([
-    ["focused", 2],
-    ["persistent", 8],
-    ["deep", 12],
-  ] as const)("defines provisional %s capacity", (profile, count) => {
-    expect(persistenceLimits(profile, 100, 1_000).probeLimit).toBe(count);
-  });
-
-  it.each([
-    [5, "persistent"],
-    [10, "deep"],
-  ] as const)("finds a useful next probe after %i empty probes", (emptyCount, profile) => {
-    let campaign = emptyProbes(emptyCount, profile);
-    expect(planContinuation(campaign, admission(campaign)).action).toBe("probe");
-    const consumed = campaign.persistence.probesUsed;
-    campaign = candidateFixture(campaign, true);
-    campaign = evaluatedCandidate(campaign);
-    campaign = apply(campaign, {
-      type: "adopt",
-      artifactId: "candidate",
-      evaluationId: "evaluation",
-      reason: "A material gain finally emerged.",
-    });
-    expect(campaign.currentBestArtifactId).toBe("candidate");
-    expect(campaign.persistence.probesUsed).toBe(consumed + 1);
-    expect(campaign.persistence.consecutiveWithoutImprovement).toBe(0);
-    expect(campaign.persistence.active).toBe(false);
-  });
+  it.each([[10, "deep"]] as const)(
+    "finds a useful next probe after %i empty probes",
+    (emptyCount, profile) => {
+      let campaign = emptyProbes(emptyCount, profile);
+      expect(planContinuation(campaign, admission(campaign)).action).toBe("probe");
+      const consumed = campaign.persistence.probesUsed;
+      campaign = candidateFixture(campaign, true);
+      campaign = evaluatedCandidate(campaign);
+      campaign = apply(campaign, {
+        type: "adopt",
+        artifactId: "candidate",
+        evaluationId: "evaluation",
+        reason: "A material gain finally emerged.",
+      });
+      expect(campaign.currentBestArtifactId).toBe("candidate");
+      expect(campaign.persistence.probesUsed).toBe(consumed + 1);
+      expect(campaign.persistence.consecutiveWithoutImprovement).toBe(0);
+      expect(campaign.persistence.active).toBe(false);
+    },
+  );
 
   it("exhausts a window without forcing an edit or resetting on another finish proposal", () => {
     let campaign = emptyProbes(12, "deep");

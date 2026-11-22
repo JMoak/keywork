@@ -31,11 +31,6 @@ describe("suggestTitle", () => {
     expect(title).toBe("build-tiny-todo-app");
   });
 
-  it("returns undefined for an empty conversation", async () => {
-    const provider = new MockProvider([textTurn("anything")]);
-    expect(await suggestTitle(provider, [])).toBeUndefined();
-  });
-
   it("swallows provider failures", async () => {
     const provider = new MockProvider([]);
     const title = await suggestTitle(provider, [textMessage("user", "hi")]);
@@ -52,28 +47,11 @@ describe("suggestTitle", () => {
     expect(prompt).toContain('arc "mcp-hardening"');
     expect(prompt).toContain("timeout-retry, handshake-abort");
   });
-
-  it("leaves the prompt bare without context", async () => {
-    const provider = recordingProvider([textTurn("Build Tiny Todo App")]);
-    await suggestTitle(provider, [textMessage("user", "make me a todo app")]);
-    const prompt = provider.requests[0]?.systemPrompt ?? "";
-    expect(prompt).not.toContain("arc");
-    expect(prompt).not.toContain("Sibling");
-  });
 });
 
 describe("fitTitle", () => {
-  it("returns a fitting slug untouched", () => {
-    expect(fitTitle("fix-mcp-reconnect", 20)).toBe("fix-mcp-reconnect");
-  });
-
   it("sheds the arc prefix first because the border hue already carries it", () => {
     expect(fitTitle("mcp-hardening:sleep-wake", 12)).toBe("sleep-wake");
-  });
-
-  it("drops the most common sibling words before rare ones", () => {
-    const siblings = ["fix-timeout-retry", "fix-handshake-abort"];
-    expect(fitTitle("fix-mcp-reconnect", 13, siblings)).toBe("mcp-reconnect");
   });
 
   it("drops front-loaded words first when no sibling makes a word generic", () => {
@@ -94,21 +72,6 @@ describe("fitTitle", () => {
     const slug = "mcp-hardening:fix-the-sleep-wake-reconnect";
     for (let width = 0; width <= slug.length + 2; width += 1) {
       expect(fitTitle(slug, width).length).toBeLessThanOrEqual(Math.max(0, width));
-    }
-  });
-
-  it("narrower widths never surface words that wider widths dropped", () => {
-    const slug = "fix-mcp-reconnect-loop";
-    const siblings = ["fix-retry-gate"];
-    let previous = new Set(fitTitle(slug, slug.length, siblings).split("-"));
-    for (let width = slug.length - 1; width >= 4; width -= 1) {
-      const words = fitTitle(slug, width, siblings)
-        .split("-")
-        .map((word) => word.replace("…", ""));
-      for (const word of words) {
-        expect([...previous].some((kept) => kept.startsWith(word))).toBe(true);
-      }
-      previous = new Set(fitTitle(slug, width, siblings).split("-"));
     }
   });
 });

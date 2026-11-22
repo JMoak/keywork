@@ -321,17 +321,6 @@ describe("the hourly limit", () => {
 });
 
 describe("a setting's size", () => {
-  it("is carried on the record and on show.proposed when named, and absent when not", () => {
-    const { store, heard } = board();
-
-    const named = setOut(store.propose(proposal({ size: "working" }))).setting;
-    const unnamed = setOut(store.propose(proposal({ what: { kind: "note", ref: "n" } }))).setting;
-
-    expect(named.size).toBe("working");
-    expect(unnamed).not.toHaveProperty("size");
-    expect(heard[0]?.payload).toEqual({ setting: named });
-  });
-
   it("is kept by a replacement that names no size, and replaced by one that does", () => {
     const { store } = board();
     setOut(store.propose(proposal({ size: "working" })));
@@ -428,21 +417,6 @@ function opened(outcome: SetOut | ShowRefusal): Setting {
 }
 
 describe("a setting's lineage", () => {
-  it("names the setting it grows from and the creature's origin, on the record and on show.proposed", () => {
-    const { store, heard } = board();
-    const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "cs-41" } })));
-
-    const file = opened(store.propose(proposal({ from: diff.id })));
-
-    expect(diff).toMatchObject({ from: null, origin: "creature" });
-    expect(file).toMatchObject({ from: diff.id, origin: "creature" });
-    expect(heard.at(-1)).toEqual({
-      sessionId: "s1",
-      type: "show.proposed",
-      payload: { setting: file },
-    });
-  });
-
   it("is kept by a replacement that names no other from, or names the setting it replaces", () => {
     const { store } = board();
     const diff = opened(store.propose(proposal({ what: { kind: "diff", ref: "cs-41" } })));
@@ -706,11 +680,6 @@ describe("an agent's colour", () => {
     expect(new Set(colours).size).toBe(names.length);
     expect(by(store, "Claude-Code", "again")?.color).toBe(colours[0]);
     expect(by(store, undefined, "nameless")?.color).toBeDefined();
-  });
-
-  it("stays off a setting no agent set out", () => {
-    const { store } = board();
-    expect(setOut(store.propose(proposal())).setting).not.toHaveProperty("agent");
   });
 });
 

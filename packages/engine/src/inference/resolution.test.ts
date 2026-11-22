@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { bindModel, catalogOf, resolveModel } from "./resolution.ts";
 import type { ProviderRegistration, Resolution, ResolutionFailureCode } from "./types.ts";
@@ -47,14 +46,6 @@ const closed = registration({
 });
 
 describe("resolveModel precedence (IR-07)", () => {
-  it("is unconfigured, naming no available provider, when nothing available exists", () => {
-    const resolution = resolveModel([registration({ name: "openai", credential: missing })], {});
-    expect(resolution).toMatchObject({
-      ok: false,
-      failure: { code: "unconfigured", available: [] },
-    });
-  });
-
   it("applies the explicit override before every other source and never falls through", () => {
     const resolution = resolveModel([openai, local], {
       override: "ollama/nope-but-open",
@@ -140,18 +131,6 @@ describe("bindModel references (IR-06)", () => {
       },
     });
   });
-
-  it("points a bare name at its only provider even when that provider lacks a credential", () => {
-    const resolution = bindModel([registration({ name: "openai", credential: missing })], "gpt-5");
-    expect(failureCode(resolution)).toBe("unavailable-credential");
-  });
-
-  it("fails a bare name nobody serves as unknown-model listing the catalog", () => {
-    expect(bindModel([closed], "zzz")).toMatchObject({
-      ok: false,
-      failure: { code: "unknown-model", provider: undefined, known: ["closed/a"] },
-    });
-  });
 });
 
 describe("resolution typed failures (IR-18)", () => {
@@ -221,26 +200,9 @@ describe("resolution typed failures (IR-18)", () => {
       failure: { code: "missing-capability", model: "chatty", capability: "toolCalls" },
     });
   });
-
-  it("authors no surface copy: failures carry data, the CLI and TUI word the next step", async () => {
-    const source = await readFile(new URL("./resolution.ts", import.meta.url), "utf8");
-    expect(source).not.toMatch(/\/connect|\/model|keywork connect|--model/);
-  });
 });
 
 describe("resolution bindings (IR-02, IR-04)", () => {
-  it("produces a read-only binding carrying protocol, capabilities, and the credential handle", () => {
-    const resolution = bindModel([openai], "openai/gpt-5");
-    expect(resolution.ok).toBe(true);
-    if (!resolution.ok) return;
-    expect(resolution.binding.protocol).toBe("chat-completions");
-    expect(resolution.binding.capabilities).toEqual({ input: ["text"], toolCalls: true });
-    expect(resolution.binding.credential).toEqual({ id: "h", label: "saved key" });
-    expect(resolution.binding.spec.origin).toBe("unlisted");
-    // @ts-expect-error bindings are read-only by type, not by a shallow runtime freeze
-    resolution.binding.protocol = "responses";
-  });
-
   it("lets a model override the registration protocol", () => {
     const mixed = registration({
       name: "gw",

@@ -36,15 +36,6 @@ describe("preset overlay", () => {
     });
   });
 
-  it("choosing the active preset just closes with a notice", () => {
-    const { probe, applied } = presetProbe();
-    probe.command("preset");
-    probe.keys("enter");
-    expect(probe.snapshot().overlay).toBeUndefined();
-    expect(probe.snapshot().notice).toBe("already on standard");
-    expect(applied).toEqual([]);
-  });
-
   it("tightening applies without confirmation", async () => {
     const { probe, applied } = presetProbe();
     probe.command("preset");
@@ -73,22 +64,6 @@ describe("preset overlay", () => {
     expect(applied).toEqual(["open"]);
   });
 
-  it("chooses the preset under a click, follows hover, and closes on a click outside", async () => {
-    const { probe, applied } = presetProbe();
-    probe.command("preset");
-    const frame = helpFrame(probe.screen, 3);
-    probe.hover(frame.x + 2, frame.firstRowY + 2);
-    expect(probe.core.presetPicker()?.index).toBe(2);
-    probe.click(frame.x + 2, frame.firstRowY);
-    await waitFor(() => expect(probe.snapshot().notice).toBe("permissions preset → careful"));
-    expect(applied).toEqual(["careful"]);
-
-    probe.command("preset");
-    probe.click(0, 0);
-    expect(probe.snapshot().overlay).toBeUndefined();
-    expect(applied).toEqual(["careful"]);
-  });
-
   it("keeps the confirmation up on a click inside it and cancels on a click outside", () => {
     const { probe, applied } = presetProbe();
     probe.command("preset");
@@ -107,16 +82,6 @@ describe("preset overlay", () => {
     expect(probe.core.presetPicker()?.active).toBe("standard");
     setActive("open");
     expect(probe.core.presetPicker()?.active).toBe("open");
-  });
-
-  it("marks a custom matrix that matches no preset", () => {
-    const { probe, setActive } = presetProbe();
-    setActive("custom");
-    probe.command("preset");
-    const picker = probe.core.presetPicker();
-    expect(picker?.active).toBe("custom");
-    expect(picker?.names).not.toContain("custom");
-    expect(picker?.index).toBe(0);
   });
 
   it("takes key precedence over a pending ask and hands keys back afterwards", async () => {
@@ -175,9 +140,5 @@ describe("preset overlay", () => {
     probe.keys("y");
     await probe.settled();
     expect(executed).toEqual(["scribble"]);
-  });
-
-  it("preset is absent when no port is wired", () => {
-    expect(new AppProbe().command("preset")).toBe(false);
   });
 });

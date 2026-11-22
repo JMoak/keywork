@@ -45,14 +45,6 @@ describe("eventStreamMessages", () => {
     expect(messages).toHaveLength(2);
   });
 
-  it("reassembles a frame split mid-payload", async () => {
-    const frame = eventFrame("a", { text: "x".repeat(200) });
-    const messages = await parsed(frame, frame.length - 40);
-
-    expect(messages).toHaveLength(1);
-    expect(textDecoder.decode(messages[0]?.payload)).toContain("xxx");
-  });
-
   it("rejects a frame declaring a length above the ceiling", async () => {
     const lying = eventFrame("a", { n: 1 });
     new DataView(lying.buffer).setUint32(0, 2_000_000);
@@ -135,9 +127,5 @@ describe("eventStreamMessages", () => {
     );
 
     await expect(parsed(frame)).rejects.toThrow(/unknown type/);
-  });
-
-  it("yields nothing for an empty body", async () => {
-    await expect(parsed(new Uint8Array(0))).resolves.toEqual([]);
   });
 });

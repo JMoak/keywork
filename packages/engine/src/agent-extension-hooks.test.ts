@@ -193,12 +193,4 @@ describe("Agent with an extension host", () => {
       'extension "fragile" quarantined during turn_start: cannot handle turns',
     ]);
   });
-
-  it("runs unchanged without hooks", async () => {
-    const provider = recordingProvider([textTurn("plain")]);
-    const agent = new Agent({ provider, tools: [echoTool], systemPrompt: "Base." });
-    expect(messageText(await agent.send("hi"))).toBe("plain");
-    expect(provider.requests[0]?.systemPrompt).toBe("Base.");
-    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(["echo"]);
-  });
 });

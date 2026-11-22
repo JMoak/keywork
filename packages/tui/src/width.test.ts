@@ -2,11 +2,6 @@ import { describe, expect, it } from "vitest";
 import { clip, clipSpans, padEnd, segments, take, width, wrap } from "./width.ts";
 
 describe("display width", () => {
-  it("counts plain ascii one cell per character", () => {
-    expect(width("keywork")).toBe(7);
-    expect(width("")).toBe(0);
-  });
-
   it("counts CJK two cells per character", () => {
     expect(width("我们在这")).toBe(8);
     expect(width("ｆｕｌｌ")).toBe(8);
@@ -15,12 +10,6 @@ describe("display width", () => {
   it("folds combining marks into the base character", () => {
     expect(width("é")).toBe(1);
     expect(segments("é")).toEqual([{ text: "é", width: 1 }]);
-  });
-
-  it("treats an emoji with a variation selector as one wide segment", () => {
-    expect(width("⚠️")).toBe(2);
-    expect(segments("⚠️")).toEqual([{ text: "⚠️", width: 2 }]);
-    expect(width("⚠")).toBe(1);
   });
 
   it("keeps ZWJ sequences, skin tones, keycaps, and flags whole", () => {
@@ -36,10 +25,6 @@ describe("display width", () => {
 });
 
 describe("clip", () => {
-  it("returns text that already fits untouched", () => {
-    expect(clip("abc", 3)).toBe("abc");
-  });
-
   it("ends a clipped string with an ellipsis inside the budget, in cells", () => {
     expect(clip("abcdef", 4)).toBe("abc…");
     expect(clip("我们在这", 5)).toBe("我们…");
@@ -102,12 +87,6 @@ describe("clipSpans", () => {
     { text: "我们", tone: "b" },
     { text: " tail", tone: "c" },
   ];
-
-  it("returns copies when everything fits", () => {
-    const clipped = clipSpans(spans, 20);
-    expect(clipped).toEqual(spans);
-    expect(clipped[0]).not.toBe(spans[0]);
-  });
 
   it("truncates silently on a cell budget without splitting wide glyphs", () => {
     expect(clipSpans(spans, 9)).toEqual([

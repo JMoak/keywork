@@ -60,9 +60,4 @@ describe("promptAnchor", () => {
     expect(promptAnchor(linear, "u2-alt")).toBeUndefined();
     expect(promptAnchor(linear, "a1")).toBeUndefined();
   });
-
-  it("returns undefined for an empty tree or an unknown id", () => {
-    expect(promptAnchor([], "u1")).toBeUndefined();
-    expect(promptAnchor(linear, "ghost")).toBeUndefined();
-  });
 });

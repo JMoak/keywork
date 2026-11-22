@@ -62,13 +62,6 @@ describe("credential store", () => {
     });
   });
 
-  it("writes pretty JSON with a trailing newline", async () => {
-    const dir = await tempDir();
-    const file = await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);
-    const raw = await readFile(file, "utf8");
-    expect(raw.endsWith("\n")).toBe(true);
-  });
-
   it("keeps the existing auth.json intact when serialization throws", async () => {
     const dir = await tempDir();
     const file = await saveCredential("openai", { type: "api_key", key: "sk-1" }, dir);

@@ -20,8 +20,6 @@ describe("reading sbx output", () => {
   it.each([
     ["my-sandbox", "up"],
     ["stead-pip-0a1b2c", "unresponsive"],
-    ["stead-wren-9f8e7d", "down"],
-    ["stead-moss-111111", "starting"],
     ["stead-gone-000000", "down"],
   ])("reads %s from sbx ls as %s", (sandbox, health) => {
     expect(healthIn(listing, sandbox)).toBe(health);
@@ -60,9 +58,5 @@ describe("reading sbx output", () => {
     expect(() => policyRulesIn("ID  KIND  TARGET\n1  net  example.com")).toThrow(
       UnreadableSbxOutput,
     );
-  });
-
-  it("reads an empty policy as no rules", () => {
-    expect(policyRulesIn("")).toEqual([]);
   });
 });

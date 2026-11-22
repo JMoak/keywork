@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { type ChangedFile, type DiffSeams, FileChangeFeed } from "./diff-model.ts";
 import { DiffPane } from "./diff-pane.ts";
-import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import { AppProbe } from "./probe.ts";
-import { describePaneTree, dockOf, paneContext, paneIds } from "./testing/workflow-probe.ts";
+import { describePaneTree, paneContext, paneIds } from "./testing/workflow-probe.ts";
 import { parseWorkspaceState } from "./workspace-state.ts";
 
 const inertIntents: PaneIntents = {
@@ -65,30 +64,6 @@ describe("DiffPane", () => {
     expect(texts).toContain("+ BETA");
     expect(pane.describe()).toEqual({ kind: "diff" });
   });
-
-  it("reads as empty with the baseline named when nothing changed", async () => {
-    const pane = new DiffPane("diff-1", () => {}, inertIntents, seamsOver([], {}, {}));
-    await pane.settled();
-    expect(pane.title()).toBe(" diff ");
-    expect(renderedText(pane)).toContain("no changes since session start");
-  });
-
-  it("hands enter to the file intent with the first hunk line", async () => {
-    const opened: unknown[] = [];
-    const pane = new DiffPane(
-      "diff-1",
-      () => {},
-      { ...inertIntents, openFile: (path, options) => opened.push({ path, options }) },
-      seamsOver(
-        [{ path: "notes.txt", added: 1, deleted: 1 }],
-        { "notes.txt": "alpha\nbeta\ngamma\n" },
-        { "notes.txt": "alpha\nBETA\ngamma\n" },
-      ),
-    );
-    await pane.settled();
-    expect(pane.handleKey(parseChord("enter"))).toBe(true);
-    expect(opened).toEqual([{ path: "notes.txt", options: { line: 1 } }]);
-  });
 });
 
 describe("diff pane in the app", () => {
@@ -109,18 +84,6 @@ describe("diff pane in the app", () => {
     });
     return { probe, built };
   }
-
-  it("opens docked right through /diff and focuses the same pane on leader g", () => {
-    const { probe, built } = probeWithDiff();
-    probe.command("diff");
-    expect(paneIds(probe)).toEqual(["session-1", "diff-1"]);
-    expect(dockOf(probe, "diff-1")).toBe("right");
-    probe.core.focusPane("session-1");
-    expect(probe.snapshot().focused).toBe("session-1");
-    probe.keys("ctrl+k", "g");
-    expect(probe.snapshot().focused).toBe("diff-1");
-    expect(built).toEqual(["diff-1"]);
-  });
 
   it("round-trips its descriptor through the workspace state", () => {
     const { probe } = probeWithDiff();

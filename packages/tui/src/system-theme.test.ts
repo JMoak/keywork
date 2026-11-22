@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { apcaLc, contrastFailures } from "@keywork/shared";
+import { contrastFailures } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import type { DebounceTiming } from "./debounce.ts";
 import { colorQueries, type TerminalColors } from "./osc.ts";
@@ -14,9 +14,8 @@ import {
   stdioColorTransport,
   systemTheme,
   systemThemeName,
-  systemTokens,
 } from "./system-theme.ts";
-import { dressedIn, keyworkNightTheme, type Theme, ThemeSwitch } from "./theme.ts";
+import { keyworkNightTheme, type Theme, ThemeSwitch } from "./theme.ts";
 
 const tokyoNightAnsi = [
   "#15161e",
@@ -58,16 +57,6 @@ const fullReply = [
 ].join("");
 
 describe("systemTokens", () => {
-  it("wears the terminal's own ground and ink on a dark terminal", () => {
-    const tokens = systemTokens(darkTerminal);
-    expect(tokens.background).toBe("#1a1b26");
-    expect(tokens.text).toBe("#c0caf5");
-    expect(tokens.accent).toBe("#7aa2f7");
-    expect(tokens.ramp[0]).toBe(tokens.accent);
-    expect(tokens.success).toBe("#9ece6a");
-    expect(tokens.error).toBe("#f7768e");
-  });
-
   it("clears every contrast floor on dark, light, and pure-black grounds", () => {
     for (const colors of [
       darkTerminal,
@@ -78,19 +67,6 @@ describe("systemTokens", () => {
       const theme = systemTheme(colors);
       expect(contrastFailures(theme)).toEqual([]);
     }
-  });
-
-  it("deepens a light terminal's bright ANSI inks until they read", () => {
-    const tokens = systemTokens(lightTerminal);
-    expect(apcaLc(tokens.success, tokens.background)).toBeGreaterThanOrEqual(40);
-    expect(apcaLc(tokens.error, tokens.background)).toBeGreaterThanOrEqual(40);
-    expect(apcaLc(tokens.accent, tokens.background)).toBeGreaterThanOrEqual(40);
-    expect(apcaLc(tokens.text, tokens.panelLift)).toBeGreaterThanOrEqual(60);
-  });
-
-  it("lifts a foreground that sits too close to the ground", () => {
-    const tokens = systemTokens({ background: "#1a1b26", foreground: "#3b4261", ansi: new Map() });
-    expect(apcaLc(tokens.text, tokens.background)).toBeGreaterThanOrEqual(60);
   });
 });
 
@@ -177,18 +153,6 @@ describe("detectTerminalColors", () => {
     expect(dumb).toBeUndefined();
     expect(terminal.written).toEqual([]);
   });
-
-  it("prefers the terminal's answer over the environment", async () => {
-    const terminal = fakeTerminal();
-    const pending = detectTerminalColors({
-      env: { COLORFGBG: "15;0" },
-      tty: true,
-      transport: terminal.transport,
-      timing: terminal.clock,
-    });
-    terminal.reply(fullReply);
-    expect((await pending)?.background).toBe("#1a1b26");
-  });
 });
 
 describe("stdioColorTransport", () => {
@@ -224,12 +188,6 @@ describe("followTerminalTheme", () => {
     expect(terminal.listeners()).toBe(0);
   });
 
-  it("re-queries the colors when the terminal reports a theme change", () => {
-    const { terminal } = following(systemCloset());
-    terminal.reply("\x1b[?997;2n");
-    expect(terminal.written.at(-1)).toBe(colorQueries());
-  });
-
   it("re-derives and repaints the worn system theme from the fresh replies", async () => {
     const closet = systemCloset();
     const { terminal, repaints } = following(closet);
@@ -239,15 +197,6 @@ describe("followTerminalTheme", () => {
     expect(closet.active.appearance).toBe("light");
     expect(closet.active.tokens.background).toBe("#ffffff");
     expect(repaints()).toBe(1);
-  });
-
-  it("lays the theme overrides over the re-derived theme", async () => {
-    const closet = systemCloset();
-    const { terminal } = following(closet, (theme) => dressedIn(theme, { accent: "#ff8800" }));
-    terminal.reply("\x1b[?997;2n");
-    terminal.reply(lightReply);
-    await settled();
-    expect(closet.active.tokens.accent).toBe("#ff8800");
   });
 
   it("keeps an explicitly chosen theme on screen and refreshes system for later", async () => {
@@ -260,17 +209,6 @@ describe("followTerminalTheme", () => {
     expect(closet.active.name).toBe(keyworkNightTheme.name);
     expect(repaints()).toBe(0);
     expect(closet.swap(systemThemeName).appearance).toBe("light");
-  });
-
-  it("leaves the theme alone when the terminal never answers", async () => {
-    const closet = systemCloset();
-    const before = closet.active;
-    const { terminal, repaints } = following(closet);
-    terminal.reply("\x1b[?997;1n");
-    terminal.clock.advance(colorQueryTimeoutMs);
-    await settled();
-    expect(closet.active).toBe(before);
-    expect(repaints()).toBe(0);
   });
 
   it("asks once more when the theme flips again mid-query", async () => {

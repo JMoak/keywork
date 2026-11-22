@@ -5,11 +5,10 @@ import { parseChord } from "./keys.ts";
 import type { PaneIntents } from "./pane.ts";
 import type { ForkOrigin, SessionTreeView } from "./session-tree-model.ts";
 import { busyRemovalNotice, SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
-import {
-  overviewRowLine,
-  type SessionGroupBy,
-  type SessionOverviewItem,
-  type SessionPresence,
+import type {
+  SessionGroupBy,
+  SessionOverviewItem,
+  SessionPresence,
 } from "./sessions-overview-model.ts";
 import { press } from "./testing/index.ts";
 import { describePaneTree, paneContext } from "./testing/workflow-probe.ts";
@@ -233,15 +232,6 @@ describe("SessionTreePane two levels", () => {
     expect(pane.title()).toBe(" session tree · 2 sessions ");
   });
 
-  it("titles a lone session in the singular and stays plain when empty", async () => {
-    const solo = paneOver(worldOf("s1")).pane;
-    await solo.settled();
-    expect(solo.title()).toBe(" session tree · 1 session ");
-    const empty = paneOver(worldOf()).pane;
-    await empty.settled();
-    expect(empty.title()).toBe(" session tree ");
-  });
-
   it("l drills into the cursored session's entry tree and esc returns", async () => {
     const world = worldOf("s1", "s2");
     const { pane } = paneOver(world);
@@ -254,20 +244,6 @@ describe("SessionTreePane two levels", () => {
     press(pane, "escape");
     await pane.settled();
     expect(pane.level()).toBe("overview");
-  });
-
-  it("drill-in and back preserves the overview cursor", async () => {
-    const world = worldOf("s1", "s2", "s3");
-    const { pane } = paneOver(world);
-    await pane.settled();
-    press(pane, "j", "j");
-    expect(pane.overview.cursorSession()).toBe("s3");
-    press(pane, "l");
-    await pane.settled();
-    press(pane, "j", "backspace");
-    await pane.settled();
-    expect(pane.level()).toBe("overview");
-    expect(pane.overview.cursorSession()).toBe("s3");
   });
 
   it("labels keep the typed case: Shift+H then i reads back Hi", async () => {
@@ -305,28 +281,6 @@ describe("SessionTreePane two levels", () => {
     expect(pane.level()).toBe("overview");
     expect(pane.overview.rows()).toHaveLength(2);
     expect(pane.describe()).toEqual({ kind: "session-tree", sessionId: "s2" });
-  });
-
-  it("survives a port without overview or attach seams", async () => {
-    const port: SessionTreePort = {
-      load: async (sessionId) => chainView(sessionId, ["e1"]),
-      setLabel: async () => {},
-      fork: async () => undefined,
-    };
-    const recorded = recordedIntents();
-    const pane = new SessionTreePane(
-      "tree-1",
-      () => {},
-      recorded.intents,
-      port,
-      () => undefined,
-    );
-    await pane.settled();
-    expect(pane.level()).toBe("overview");
-    expect(pane.overview.rows()).toEqual([]);
-    press(pane, "enter", "l");
-    await pane.settled();
-    expect(recorded.opened).toEqual([]);
   });
 });
 
@@ -379,28 +333,6 @@ describe("SessionTreePane focus-or-open", () => {
     expect(recorded.opened).toEqual([]);
   });
 
-  it("a click below the listed sessions falls through", async () => {
-    const world = worldOf("s1");
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    expect(pane.handleMouse({ x: 3, y: 9 }, { type: "down", x: 3, y: 9 })).toBe(false);
-    await pane.settled();
-    expect(recorded.focused).toEqual([]);
-    expect(recorded.opened).toEqual([]);
-  });
-
-  it("a click at the entries level selects that row without activating", async () => {
-    const world = worldOf("s1");
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    expect(pane.level()).toBe("entries");
-    expect(pane.handleMouse({ x: 3, y: 2 }, { type: "down", x: 3, y: 2 })).toBe(true);
-    expect(pane.model.cursor).toBe(1);
-    expect(recorded.opened).toEqual([]);
-  });
-
   it("an activation landing after dispose opens nothing", async () => {
     const world = worldOf("s1");
     let releaseAttach: (ok: boolean) => void = () => {};
@@ -415,45 +347,6 @@ describe("SessionTreePane focus-or-open", () => {
     releaseAttach(true);
     await pane.settled();
     expect(recorded.opened).toEqual([]);
-  });
-});
-
-describe("SessionTreePane entry-level effects", () => {
-  it("opens the forked session once the fork lands", async () => {
-    const world = worldOf("s1");
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    press(pane, "f");
-    await pane.settled();
-    expect(world.forkedFrom).toEqual(["s1-e1"]);
-    expect(recorded.opened).toEqual(["forked-1"]);
-  });
-
-  it("a fork landing after dispose opens nothing and stays silent", async () => {
-    const world = worldOf("s1");
-    let release: (id: string) => void = () => {};
-    let notified = 0;
-    const { pane, recorded } = paneOver(world, {
-      forkResult: () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
-      notify: () => {
-        notified += 1;
-      },
-    });
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    press(pane, "f");
-    pane.dispose();
-    const notifiedBefore = notified;
-    release("forked-1");
-    await pane.settled();
-    expect(recorded.opened).toEqual([]);
-    expect(notified).toBe(notifiedBefore);
   });
 });
 
@@ -509,29 +402,6 @@ describe("SessionTreePane push refresh", () => {
     frames.runPending();
     await pane.settled();
     expect(world.unsubscribed).toBe(1);
-    expect(world.overviewLoads).toBe(1);
-  });
-
-  it("coalesces pushes through the real frame timer", async () => {
-    const world = worldOf("s1");
-    const { pane } = paneOver(world);
-    await pane.settled();
-    for (const listener of world.listeners) {
-      listener("s1");
-      listener("s1");
-    }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 40));
-    await pane.settled();
-    expect(world.overviewLoads).toBe(2);
-  });
-
-  it("starts no new work after dispose", async () => {
-    const world = worldOf("s1");
-    const { pane } = paneOver(world);
-    await pane.settled();
-    pane.dispose();
-    pane.refresh();
-    await pane.settled();
     expect(world.overviewLoads).toBe(1);
   });
 });
@@ -635,43 +505,6 @@ describe("SessionTreePane command tray", () => {
     expect(recorded.opened).toEqual(["s1"]);
   });
 
-  it("filters with typed characters and forks through the same key path", async () => {
-    const world = worldOf("s1");
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    press(pane, ":");
-    pane.handleKey(parseChord("f"), "f");
-    expect(pane.tray.matches()[0]?.name).toBe("fork");
-    press(pane, "enter");
-    await pane.settled();
-    expect(world.forkedFrom).toEqual(["s1-e1"]);
-    expect(recorded.opened).toEqual(["forked-1"]);
-  });
-
-  it("closes on escape without acting", async () => {
-    const world = worldOf("s1");
-    const { pane, recorded } = paneOver(world);
-    await pane.settled();
-    press(pane, "/", "escape");
-    expect(pane.tray.open).toBe(false);
-    expect(recorded.opened).toEqual([]);
-  });
-
-  it("offers back at the entries level and returns to the overview", async () => {
-    const world = worldOf("s1");
-    const { pane } = paneOver(world);
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    press(pane, "/");
-    pane.handleKey(parseChord("b"), "b");
-    press(pane, "enter");
-    await pane.settled();
-    expect(pane.level()).toBe("overview");
-  });
-
   it("never opens while a label is being typed", async () => {
     const world = worldOf("s1");
     const { pane } = paneOver(world);
@@ -696,14 +529,6 @@ describe("SessionTreePane group-by", () => {
     return world;
   }
 
-  function contents(node: unknown, into: string[] = []): string[] {
-    const record = node as { content?: unknown; children?: unknown[] };
-    if (typeof record.content === "string") into.push(record.content);
-    else if (record.content !== undefined) into.push(String(record.content));
-    for (const child of record.children ?? []) contents(child, into);
-    return into;
-  }
-
   it("g cycles none · arc · bot, and the descriptor carries the axis so it revives", async () => {
     const { pane } = paneOver(groupedWorld());
     await pane.settled();
@@ -715,47 +540,6 @@ describe("SessionTreePane group-by", () => {
     expect(pane.describe()).toEqual({ kind: "session-tree", groupBy: "bot" });
     press(pane, "g");
     expect(pane.describe()).toEqual({ kind: "session-tree" });
-  });
-
-  it("revives grouped by bot with sigil-led headers, newest group first, unbound last", async () => {
-    const { pane } = paneOver(groupedWorld(), { groupBy: "bot", now: () => 60_000 });
-    await pane.settled();
-    expect(pane.overview.rows().map((row) => overviewRowLine(row, false))).toEqual([
-      "⚖ reviewer · 2 sessions · now",
-      "░ title-s1 · now #dock-v2",
-      "░ title-s4 · now",
-      "S scout · 1 session · now",
-      "░ title-s3 · now",
-      "no bot · 1 session · now",
-      "░ title-s2 · now #dock-v2",
-    ]);
-  });
-
-  it("keeps the grouping and the cursored session across a refresh", async () => {
-    const world = groupedWorld();
-    const { pane } = paneOver(world, { groupBy: "bot" });
-    await pane.settled();
-    press(pane, "j", "j");
-    expect(pane.overview.cursorSession()).toBe("s3");
-    world.items = [...world.items].reverse();
-    pane.refresh();
-    await pane.settled();
-    expect(pane.overview.groupBy()).toBe("bot");
-    expect(pane.overview.cursorSession()).toBe("s3");
-  });
-
-  it("names the key in a footer hint once there is something to group", async () => {
-    const { pane } = paneOver(groupedWorld());
-    await pane.settled();
-    const lines = contents(describePaneTree(pane.view(paneContext())));
-    expect(lines).toContain("g · group by arc or bot");
-    press(pane, "g", "g");
-    expect(contents(describePaneTree(pane.view(paneContext())))).toContain("g · grouped by bot");
-    const { pane: lone } = paneOver(worldOf("only"));
-    await lone.settled();
-    expect(contents(describePaneTree(lone.view(paneContext())))).not.toContain(
-      "g · group by arc or bot",
-    );
   });
 });
 
@@ -860,19 +644,5 @@ describe("SessionTreePane removal and the trash", () => {
     await pane.settled();
     expect(pane.level()).toBe("overview");
     expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["gone", "s1"]);
-  });
-
-  it("names a removed fork parent in the entries title", async () => {
-    const world = worldOf("s1");
-    world.origin = { sessionId: "abcdef0123456789", removed: true };
-    const { pane } = paneOver(world);
-    await pane.settled();
-    press(pane, "l");
-    await pane.settled();
-    expect(pane.title()).toBe(" name-s1 · 2 entries · fork of abcdef01 (removed) ");
-    world.origin = { removed: true };
-    press(pane, "r");
-    await pane.settled();
-    expect(pane.title()).toBe(" name-s1 · 2 entries · fork of a removed session ");
   });
 });

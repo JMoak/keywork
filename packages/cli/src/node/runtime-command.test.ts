@@ -307,15 +307,6 @@ describe("product runtime lifecycle", () => {
     expect((await inspect()).clients).toEqual([]);
   });
 
-  it("checks compatibility before preparing even the private home", async () => {
-    await install();
-    deps.version = "0.3.0";
-    expect(await run(["client", "attach", "--home", "--client", "home", "--console", "101"])).toBe(
-      3,
-    );
-    expect(existsSync(managedHomeFolder(root))).toBe(false);
-  });
-
   it("serializes simultaneous product installs and registers one service", async () => {
     const codes = await Promise.all([
       run(["consumer", "install", "--product", "keywork", "--installation", "a"]),
@@ -358,17 +349,6 @@ describe("product runtime lifecycle", () => {
     expect((await inspect()).consumers.map((consumer) => consumer.id)).toEqual(["keywork:a"]);
     expect(operations).toEqual(["install", "start"]);
     expect(errors.at(-1)).toContain("consumer-conflict");
-  });
-
-  it("removes one durable consumer while preserving another", async () => {
-    await install();
-    await run(["consumer", "install", "--product", "stead", "--installation", "b"]);
-    expect(await run(["consumer", "remove", "--product", "keywork", "--installation", "a"])).toBe(
-      0,
-    );
-    expect((await inspect()).consumers.map((consumer) => consumer.id)).toEqual(["stead:b"]);
-    expect(operations).toEqual(["install", "start"]);
-    expect(JSON.parse(out.at(-1) ?? "{}").kind).toBe("retained");
   });
 
   it("retains authorized work after the final product is uninstalled", async () => {

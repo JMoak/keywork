@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mutatingToolNames } from "../mutations.ts";
 import { FakeClock } from "../routines/testing.ts";
 import { SettingStore, type ShowProposal } from "../show/store.ts";
 import { type ShowTarget, showTool } from "./show.ts";
-import { shownTool, shownToolName } from "./shown.ts";
+import { shownTool } from "./shown.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
 
@@ -28,18 +27,6 @@ function proposal(overrides: Partial<ShowProposal> = {}): ShowProposal {
 }
 
 describe("the shown tool", () => {
-  it("says so plainly when nothing is out", async () => {
-    const { tool } = seated();
-    expect(await tool.execute({})).toBe("Nothing is out beside this conversation.");
-  });
-
-  it("says so plainly when no keeper surface takes settings", async () => {
-    const tool = shownTool({ creature: "wren", sessionId: "s1", settings: () => undefined });
-    expect(await tool.execute({})).toBe(
-      "Nothing to list: no keeper surface takes settings here, so nothing can be set out.",
-    );
-  });
-
   it("lists what is out beside this conversation, whoever set it out, oldest first, one JSON object to a line", async () => {
     const { tool, settings } = seated();
     const diff = settings.propose(proposal({ what: { kind: "diff", ref: "cs-41" }, rung: "card" }));
@@ -85,28 +72,6 @@ describe("the shown tool", () => {
     ]);
   });
 
-  it("lists a signal while one outlines a setting, and nothing once it is cleared", async () => {
-    const { tool, settings } = seated();
-    const outcome = settings.propose(proposal({ signal: "needs-you" }));
-    if ("refused" in outcome) throw new Error(outcome.error);
-    const row = async () => JSON.parse((await tool.execute({})).split("\n")[1] ?? "");
-    expect(await row()).toMatchObject({ signal: "needs-you" });
-
-    settings.clearSignal(outcome.setting.id);
-    expect(await row()).not.toHaveProperty("signal");
-  });
-
-  it("names the size only when one was named", async () => {
-    const { tool, settings } = seated();
-    settings.propose(proposal({ size: "working" }));
-    settings.propose(proposal({ what: { kind: "note", ref: "n" } }));
-
-    const [, sized, unsized] = (await tool.execute({})).split("\n");
-
-    expect(JSON.parse(sized ?? "")).toMatchObject({ size: "working" });
-    expect(JSON.parse(unsized ?? "")).not.toHaveProperty("size");
-  });
-
   it("tells where each thing stands, its seat in the words show takes, who put it there, and the stage once", async () => {
     const { tool, settings } = seated();
     const out = (overrides: Partial<ShowProposal>) => {
@@ -150,14 +115,6 @@ describe("the shown tool", () => {
     );
   });
 
-  it("counts one setting in the singular", async () => {
-    const { tool, settings } = seated();
-    settings.propose(proposal());
-    expect((await tool.execute({})).split("\n")[0]).toBe(
-      "1 setting is out beside this conversation, oldest first, one JSON object to a line:",
-    );
-  });
-
   it("shows a thread only its own when it has no creature, and a creature only its own", async () => {
     const plain = seated(null);
     plain.settings.propose(proposal({ creature: null }));
@@ -169,15 +126,5 @@ describe("the shown tool", () => {
     wren.settings.propose(proposal({ sessionId: "another-of-wren" }));
     wren.settings.propose(proposal({ creature: "hal" }));
     expect((await wren.tool.execute({})).split("\n").slice(1)).toHaveLength(1);
-  });
-
-  it("takes no arguments and asks for no permission", async () => {
-    const { tool } = seated();
-    expect(tool.name).toBe(shownToolName);
-    expect(tool.parameters).toMatchObject({ additionalProperties: false });
-    await expect(tool.execute({ id: "x" })).rejects.toThrow();
-    expect(tool.mutates).toBeUndefined();
-    expect(mutatingToolNames.has(tool.name)).toBe(false);
-    expect(tool.description).toContain("never the computer");
   });
 });

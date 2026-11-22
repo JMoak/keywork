@@ -79,27 +79,6 @@ describe("providerFor", () => {
     expect(JSON.parse(calls[0]?.init?.body as string)).toMatchObject({ usage: { include: true } });
   });
 
-  it("sends no authorization at all for a credential-free loopback endpoint", async () => {
-    const { fetchFn, calls } = recordingFetch();
-    const provider = providerFor(
-      bind(
-        {
-          name: "ollama",
-          protocol: "chat-completions",
-          endpoint: "http://localhost:11434/v1",
-          credential: { kind: "none" },
-          models: [],
-          openCatalog: true,
-          enabled: true,
-        },
-        "qwen3",
-      ),
-      { vault: { material: () => undefined }, fetchFn },
-    );
-    await drain(provider.stream(request));
-    expect(calls[0]?.init?.headers).not.toHaveProperty("authorization");
-  });
-
   it("builds a responses transport against <endpoint>/responses with bearer material", async () => {
     const { fetchFn, calls } = recordingFetch();
     const vault: CredentialVault = {

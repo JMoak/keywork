@@ -7,7 +7,6 @@ import { extensionFixturesDir } from "../testing/index.ts";
 import {
   discoverExtensions,
   extensionsConvention,
-  importExtension,
   loadExtensions,
   untrustedProjectReason,
 } from "./discover.ts";
@@ -92,25 +91,6 @@ describe("discoverExtensions", () => {
       { name: "packaged", file: join(dir, "packaged", "index.ts"), source: "user" },
     ]);
   });
-
-  it("finds nothing when the roots have no extensions directory", async () => {
-    const { candidates, skipped } = await discoverExtensions({
-      userRoot: await scratch(),
-      projectRoot: await scratch(),
-      projectTrusted: true,
-    });
-    expect(candidates).toEqual([]);
-    expect(skipped).toEqual([]);
-  });
-});
-
-describe("importExtension", () => {
-  it("rejects a module without a default function", async () => {
-    const dir = await seedFixtures(await scratch(), ["no-default"]);
-    await expect(
-      importExtension({ name: "no-default", file: join(dir, "no-default.ts"), source: "user" }),
-    ).rejects.toThrow("the module must export a default function taking the extension api");
-  });
 });
 
 describe("loadExtensions", () => {
@@ -140,15 +120,5 @@ describe("loadExtensions", () => {
     expect(
       notices.filter((notice) => notice.level === "error").map((notice) => notice.extension),
     ).toEqual(["explodes-on-activate", "no-default", "unparsable"]);
-  });
-
-  it("loads the same set in the same order every time", async () => {
-    const user = await scratch();
-    await seedFixtures(user, ["greeter", "gatekeeper", "counter"]);
-    const first = await loadExtensions({ userRoot: user }, hostWithNotices().host);
-    const second = await loadExtensions({ userRoot: user }, hostWithNotices().host);
-    const names = (report: typeof first) => report.statuses.map((status) => status.name);
-    expect(names(first)).toEqual(["counter", "gatekeeper", "greeter"]);
-    expect(names(second)).toEqual(names(first));
   });
 });

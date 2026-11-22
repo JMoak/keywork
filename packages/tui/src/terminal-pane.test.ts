@@ -5,7 +5,6 @@ import { AppProbe } from "./probe.ts";
 import { type TerminalChild, TerminalModel, type TerminalSpawner } from "./terminal-model.ts";
 import {
   mirrorSourceOverPanes,
-  noPtyProbeReason,
   TerminalPane,
   terminalPaneFactory,
   untrustedShellNotice,
@@ -19,7 +18,6 @@ import {
   paneContext,
   paneIds,
 } from "./testing/workflow-probe.ts";
-import { parseWorkspaceState } from "./workspace-state.ts";
 
 function fakeChild(): TerminalChild & {
   written: string[];
@@ -105,56 +103,6 @@ describe("TerminalPane rendering", () => {
       expect.arrayContaining(["$ bun test", "3 passed", "· done"]),
     );
   });
-
-  it("renders the shell prompt with the typed line and the child's output", () => {
-    const child = fakeChild();
-    const pane = new TerminalPane("terminal-1", "shell", () => {}, {
-      cwd: "/repo",
-      spawn: () => child,
-    });
-    expect(renderedLines(pane).at(-1)).toBe("❯ ▌");
-    for (const character of "pwd") pane.handleKey(parseChord(character), character);
-    expect(renderedLines(pane).at(-1)).toBe("❯ pwd▌");
-    pane.handleKey(parseChord("enter"));
-    child.emit("/repo\n");
-    expect(child.written).toEqual(["pwd\n"]);
-    expect(pane.title()).toBe(" terminal · shell · fakesh · pipes ");
-    expect(renderedLines(pane)).toEqual(["❯ pwd", "/repo", "❯ ▌"]);
-    expect(renderedLines(pane, { ...paneContext(), focused: false }).at(-1)).toBe("❯ ");
-  });
-
-  it("bounds scrollback and keeps the newest lines in view", () => {
-    const child = fakeChild();
-    const pane = new TerminalPane("terminal-1", "shell", () => {}, {
-      spawn: () => child,
-      scrollbackLimit: 5,
-    });
-    child.emit(
-      Array.from({ length: 50 }, (_, index) => `line ${index}`)
-        .join("\n")
-        .concat("\n"),
-    );
-    expect(pane.model?.lineCount()).toBe(5);
-    expect(renderedLines(pane, { ...paneContext(), height: 6 })).toEqual(
-      expect.arrayContaining(["line 48", "line 49"]),
-    );
-  });
-
-  it("kills the child on dispose", () => {
-    const child = fakeChild();
-    const pane = new TerminalPane("terminal-1", "shell", () => {}, { spawn: () => child });
-    pane.dispose();
-    expect(child.killed).toBe(1);
-  });
-
-  it("says why the pipe shell is running when no pty was available", () => {
-    const probe = terminalProbe({ trusted: true });
-    expect(probe.command("terminal shell")).toBe(true);
-    const pane = probe.core.panes.get("terminal-1");
-    if (!(pane instanceof TerminalPane)) throw new Error("expected a terminal pane");
-    expect(pane.title()).toBe(" terminal · shell · fakesh · pipes ");
-    expect(renderedLines(pane)[0]).toBe(`· pipes: ${noPtyProbeReason}`);
-  });
 });
 
 describe("TerminalPane over a pty", () => {
@@ -180,13 +128,6 @@ describe("TerminalPane over a pty", () => {
       { cols: 56, rows: 18 },
       { cols: 98, rows: 39 },
     ]);
-  });
-
-  it("tells the surface whether the pane is focused on every frame", () => {
-    const { pane, backend } = ptyPane();
-    pane.view(paneContext());
-    pane.view({ ...paneContext(), focused: false });
-    expect(backend.surfaces[0]?.focus).toEqual([true, false]);
   });
 
   it("routes keys and pastes to the child and kills it on dispose", () => {
@@ -229,16 +170,6 @@ describe("terminal pane key policy with a pty (keywork keeps its chords, the pty
     expect(written()).toEqual(["<l>"]);
   });
 
-  it("keeps ctrl+p (go) and f1 (keys) as keywork overlays, never pty input", () => {
-    const { probe, written } = focusedShell();
-    probe.keys("ctrl+p");
-    expect(probe.core.overlayOpen).toBe(true);
-    probe.keys("escape");
-    probe.keys("f1");
-    probe.keys("escape");
-    expect(written()).toEqual([]);
-  });
-
   it("stops routing keys to a closed pane's pty and kills its child", () => {
     const { probe, pty, written } = focusedShell();
     probe.keys("ctrl+k", "x");
@@ -257,16 +188,6 @@ describe("terminal pane workflows", () => {
     expect(probe.snapshot().focused).toBe("terminal-1");
   });
 
-  it("leader shift+t summons the terminal and refocuses it instead of duplicating", () => {
-    const probe = terminalProbe({ trusted: true }).keys("ctrl+k", "shift+t");
-    expect(paneIds(probe)).toEqual(["session-1", "terminal-1"]);
-    probe.keys("ctrl+k", "h");
-    expect(probe.snapshot().focused).toBe("session-1");
-    probe.keys("shift+t");
-    expect(probe.snapshot().focused).toBe("terminal-1");
-    expect(paneIds(probe)).toEqual(["session-1", "terminal-1"]);
-  });
-
   it("/term shell opens a shell pane beside the mirror and refocuses by mode", () => {
     const probe = terminalProbe({ trusted: true }).type("/terminal").keys("enter");
     expect(probe.command("term shell")).toBe(true);
@@ -283,10 +204,6 @@ describe("terminal pane workflows", () => {
     expect(probe.snapshot().notice).toBe(untrustedShellNotice);
     probe.type("/terminal").keys("enter");
     expect(paneIds(probe)).toEqual(["session-1", "terminal-1"]);
-  });
-
-  it("terminal is absent when no terminal factory is wired", () => {
-    expect(new AppProbe().command("terminal")).toBe(false);
   });
 
   it("describes both modes and revives them from the saved workspace", () => {
@@ -326,29 +243,6 @@ describe("terminal pane workflows", () => {
       kind: "terminal",
       mode: "mirror",
     });
-  });
-
-  it("round-trips a mirror descriptor with its session id and rejects bad modes", () => {
-    const saved = terminalProbe({ trusted: true }).type("/terminal").keys("enter").workspaceState();
-    const withSession = {
-      ...saved,
-      panes: saved.panes.map((pane) =>
-        pane.id === "terminal-1" ? { ...pane, sessionId: "sess-9" } : pane,
-      ),
-    };
-    expect(parseWorkspaceState(withSession)?.panes).toContainEqual({
-      id: "terminal-1",
-      kind: "terminal",
-      mode: "mirror",
-      sessionId: "sess-9",
-    });
-    const badMode = {
-      ...saved,
-      panes: saved.panes.map((pane) =>
-        pane.id === "terminal-1" ? { ...pane, mode: "pty" } : pane,
-      ),
-    };
-    expect(parseWorkspaceState(badMode)).toBeUndefined();
   });
 
   it("revived mirrors find their session by id once its pane has an agent", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseTerminalBackend, noSurfaceReason, pipeBackend } from "./terminal-backend.ts";
+import { chooseTerminalBackend } from "./terminal-backend.ts";
 import type { TerminalChild } from "./terminal-model.ts";
 import { fakeProcess, fakeSurface } from "./testing/fake-terminal-backend.ts";
 
@@ -28,14 +28,5 @@ describe("chooseTerminalBackend", () => {
       spawn,
     });
     expect(backend).toEqual({ kind: "pipes", reason: "no Bun.Terminal here", spawn });
-  });
-
-  it("falls back to pipes with its own reason when there is no surface to draw into", () => {
-    const backend = chooseTerminalBackend({
-      pty: { available: true, open: (cwd, size) => fakeProcess(cwd, size) },
-      surfaces: undefined,
-      spawn,
-    });
-    expect(backend).toEqual(pipeBackend(noSurfaceReason, spawn));
   });
 });

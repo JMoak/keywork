@@ -15,29 +15,6 @@ const scratch = scratchDirs("keywork-prompt-origin-");
 const voice: PromptOrigin = { kind: "external", client: "wispr-flow" };
 
 describe("a prompt's origin", () => {
-  it("rides turn.started and the queue, and holds only while its turn runs", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("one"), textTurn("two")]) });
-    const started: unknown[] = [];
-    const queued: unknown[] = [];
-    const seenDuringTurn: Array<PromptOrigin | undefined> = [];
-    agent.bus.on("turn.started", (payload) => {
-      started.push(payload);
-      seenDuringTurn.push(agent.turnOrigin());
-    });
-    agent.bus.on("queue.changed", ({ queued: prompts }) => queued.push(prompts));
-
-    const first = agent.send("typed");
-    const second = agent.send("spoken", { origin: voice });
-    await Promise.all([first, second]);
-
-    expect(started).toEqual([{ userText: "typed" }, { userText: "spoken", origin: voice }]);
-    expect(queued[0]).toEqual([
-      { id: expect.any(String), text: "spoken", behavior: "queue", origin: voice },
-    ]);
-    expect(seenDuringTurn).toEqual([undefined, voice]);
-    expect(agent.turnOrigin()).toBeUndefined();
-  });
-
   it("stages a memory note from an external turn as untrusted and a typed one as agent", async () => {
     const root = await scratch();
     const vault = new MemoryStore({ vaultRoot: join(root, ".keywork", "memory"), trusted: true });

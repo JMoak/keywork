@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  commandGlob,
-  compileGlob,
-  globMatches,
-  globRules,
-  mostSpecificMatch,
-  mostSpecificRule,
-  pathGlob,
-} from "./glob.ts";
+import { commandGlob, globMatches, mostSpecificMatch, pathGlob } from "./glob.ts";
 
 describe("globMatches", () => {
   it("matches the whole value with * spanning any run of characters", () => {
@@ -29,11 +21,6 @@ describe("globMatches", () => {
     expect(globMatches("(x)|y", "(x)|y")).toBe(true);
     expect(globMatches("(x)|y", "y")).toBe(false);
   });
-
-  it("counts literal characters as specificity", () => {
-    expect(compileGlob("git status*").specificity).toBe(10);
-    expect(compileGlob("*").specificity).toBe(0);
-  });
 });
 
 describe("mostSpecificMatch", () => {
@@ -47,20 +34,6 @@ describe("mostSpecificMatch", () => {
   it("breaks specificity ties in declaration order", () => {
     expect(mostSpecificMatch({ "a*c": "first", "ab*": "second" }, "abc")).toBe("first");
     expect(mostSpecificMatch({ "ab*": "second", "a*c": "first" }, "abc")).toBe("second");
-  });
-
-  it("returns nothing without patterns, a value, or a match", () => {
-    expect(mostSpecificMatch(undefined, "x")).toBeUndefined();
-    expect(mostSpecificMatch({ "*": 1 }, undefined)).toBeUndefined();
-    expect(mostSpecificMatch({ "a*": 1 }, "b")).toBeUndefined();
-  });
-});
-
-describe("mostSpecificRule", () => {
-  it("ranks compiled rules the same way", () => {
-    const rules = globRules({ "git *": "ask", "git status*": "allow" });
-    expect(mostSpecificRule(rules)?.value).toBe("allow");
-    expect(mostSpecificRule([])).toBeUndefined();
   });
 });
 

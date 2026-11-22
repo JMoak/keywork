@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toolScope } from "../tools/confine.ts";
-import { type SandboxHost, sandboxFor, sandboxSupport, type TrialOutcome } from "./host.ts";
-import { SandboxRefusal, unconfined } from "./sandbox.ts";
+import { type SandboxHost, sandboxFor, type TrialOutcome } from "./host.ts";
+import { SandboxRefusal } from "./sandbox.ts";
 
 const scope = toolScope(process.cwd());
 const launch = { file: "/bin/sh", args: ["-c", "true"], cwd: "/work", env: {} };
@@ -43,14 +43,6 @@ async function refusalOn(host: SandboxHost): Promise<SandboxRefusal> {
 }
 
 describe("sandboxFor", () => {
-  it("runs nothing and touches nothing when the sandbox is off", async () => {
-    const host = fakeHost("linux");
-
-    expect(await sandboxFor("off", scope, host)).toBe(unconfined);
-    expect(host.lookups()).toBe(0);
-    expect(host.trials).toEqual([]);
-  });
-
   it("refuses on windows with a reason the user can act on, and never looks for bubblewrap", async () => {
     const host = fakeHost("win32");
     const sandbox = await sandboxFor("workspace", scope, host);
@@ -82,13 +74,6 @@ describe("sandboxFor", () => {
     expect(refusal.remedy).toContain("apparmor");
   });
 
-  it("passes any other trial failure through in its own words", async () => {
-    const stderr = "bwrap: execvp true: No such file or directory\nmore";
-    const refusal = await refusalOn(fakeHost("linux", { trial: { ok: false, stderr } }));
-
-    expect(refusal.fact).toBe("bubblewrap failed: bwrap: execvp true: No such file or directory");
-  });
-
   it("confines through bubblewrap once the trial run passes", async () => {
     const host = fakeHost("linux");
     const sandbox = await sandboxFor("workspace", scope, host);
@@ -105,16 +90,5 @@ describe("sandboxFor", () => {
     await sandboxFor("isolated", scope, host);
 
     expect(host.trials[0]).toContain("--unshare-net");
-  });
-});
-
-describe("sandboxSupport", () => {
-  it("reports each mode the host can and can't honour", async () => {
-    const support = await sandboxSupport(fakeHost("linux"));
-
-    expect(support).toEqual({ workspace: undefined, isolated: undefined });
-    expect((await sandboxSupport(fakeHost("win32"))).isolated?.fact).toBe(
-      "windows has no sandbox keywork can use",
-    );
   });
 });

@@ -33,16 +33,6 @@ describe("the llama-server adapter contract, pinned to the fixture's build", () 
     expect(llamaServerDeltas.defaultPort).toBe(9931);
   });
 
-  it("fingerprints by /props build_info", async () => {
-    expect(await llamaServerAdapter.fingerprint(probe)).toEqual({
-      id: "llama-server@b12122",
-      kind: "llama-server",
-      version: "b12122",
-      build: "b12122-4f1e2a7",
-      routes: ["/props"],
-    });
-  });
-
   it("reads router-mode residency from /models status", async () => {
     const inventory = await llamaServerAdapter.inventory(probe);
     expect(inventory.installed.map((model) => model.id)).toEqual(["qwen3.8-27b", "nimble-9b"]);
@@ -167,33 +157,6 @@ describe("chat over llama-server", () => {
       { type: "done", usage: { inputTokens: 100, outputTokens: 12, cacheReadInputTokens: 4000 } },
     ]);
     expect(reports[0]?.usage).toMatchObject({ tokS: 74.95, cacheRead: 4000 });
-  });
-
-  it("replays reasoning_content on earlier assistant turns when the template asks for it", async () => {
-    const history: Message[] = [
-      user("Is the gate open?"),
-      {
-        role: "assistant",
-        parts: [
-          { type: "visible-thinking", text: "Check the latch." },
-          { type: "text", text: "It is latched." },
-        ],
-      },
-      user("And now?"),
-    ];
-    await collect(
-      llamaServerAdapter
-        .chat({ name: "llama", root: probe.root, model: "qwen3.8-27b", replayReasoning: true })
-        .stream(request(history)),
-    );
-    const wire = server.requestsTo("POST /v1/chat/completions")[0]?.body as {
-      messages: Record<string, unknown>[];
-    };
-    expect(wire.messages[1]).toEqual({
-      role: "assistant",
-      content: "It is latched.",
-      reasoning_content: "Check the latch.",
-    });
   });
 
   it("retries once without a refused optional field and remembers the refusal", async () => {

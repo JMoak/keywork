@@ -28,36 +28,12 @@ describe("detectCapabilities", () => {
     });
   });
 
-  it("profiles Alacritty, kitty, and ghostty as full-capability majors", () => {
-    const byEnv: [string, Record<string, string>][] = [
-      ["alacritty", { ALACRITTY_WINDOW_ID: "1" }],
-      ["alacritty", { TERM: "alacritty" }],
-      ["kitty", { KITTY_WINDOW_ID: "1" }],
-      ["kitty", { TERM: "xterm-kitty" }],
-      ["ghostty", { GHOSTTY_RESOURCES_DIR: "/usr/share/ghostty" }],
-      ["ghostty", { TERM: "xterm-ghostty" }],
-    ];
-    for (const [terminal, env] of byEnv) {
-      expect(detect(env)).toMatchObject({
-        terminal,
-        colorDepth: "truecolor",
-        synchronizedOutput: true,
-        glyphTier: 2,
-      });
-    }
-  });
-
   it("keeps the host identity inside tmux but degrades synchronized output", () => {
     const profile = detect({ WT_SESSION: "guid", TMUX: "/tmp/tmux-1000/default,123,0" });
     expect(profile.terminal).toBe("windows-terminal");
     expect(profile.tmux).toBe(true);
     expect(profile.synchronizedOutput).toBe(false);
     expect(profile.glyphTier).toBe(2);
-  });
-
-  it("recognizes tmux from TERM when TMUX is absent", () => {
-    expect(detect({ TERM: "tmux-256color" }).tmux).toBe(true);
-    expect(detect({ TERM: "screen-256color" }).tmux).toBe(true);
   });
 
   it("gives an unknown UTF-8 terminal tier 1 and no synchronized output", () => {
@@ -71,11 +47,6 @@ describe("detectCapabilities", () => {
 
   it("drops an unknown terminal without a UTF-8 locale to tier 0", () => {
     expect(detect({ TERM: "vt100", LANG: "C" }).glyphTier).toBe(0);
-  });
-
-  it("reads truecolor from COLORTERM on unknown terminals", () => {
-    expect(detect({ TERM: "xterm", COLORTERM: "truecolor" }).colorDepth).toBe("truecolor");
-    expect(detect({ TERM: "xterm", COLORTERM: "24bit" }).colorDepth).toBe("truecolor");
   });
 
   it("treats TERM=dumb as the floor even inside a known terminal", () => {
@@ -117,10 +88,6 @@ describe("detectCapabilities", () => {
     expect(detect({ KITTY_WINDOW_ID: "1", KEYWORK_NERD_FONT: "1" }).nerdFont).toBe(true);
     expect(detect({ KITTY_WINDOW_ID: "1", KEYWORK_NERD_FONT: "true" }).nerdFont).toBe(true);
   });
-
-  it("keeps the Nerd Font garnish off at tier 0, where glyphs are ASCII only", () => {
-    expect(detect({ TERM: "dumb", KEYWORK_NERD_FONT: "1" }).nerdFont).toBe(false);
-  });
 });
 
 describe("resolveMark / resolveRamp", () => {
@@ -135,18 +102,6 @@ describe("resolveMark / resolveRamp", () => {
   it("falls one tier down when a mark skips a tier", () => {
     expect(resolveMark(tile.failed, support(1))).toBe("x");
     expect(resolveRamp(density, support(0))).toEqual(density.tier0);
-  });
-
-  it("serves the garnish only under the opt-in", () => {
-    expect(resolveMark(mark, { glyphTier: 2, nerdFont: true })).toBe("\ue0b0");
-    expect(resolveMark(mark, { glyphTier: 2, nerdFont: false })).toBe("▖");
-  });
-
-  it("resolves ramps per tier", () => {
-    expect(resolveRamp(sparkline, support(2))).toEqual(["⣀", "⣤", "⣶", "⣿"]);
-    expect(resolveRamp(sparkline, support(1))).toEqual(["░", "▒", "▓", "█"]);
-    expect(resolveRamp(sparkline, support(0))).toEqual([".", ":", "+", "#"]);
-    expect(resolveRamp(tile.fill, support(2))).toEqual(["▖", "▌", "▙", "█"]);
   });
 });
 

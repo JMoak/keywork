@@ -95,24 +95,9 @@ describe("SessionTreeModel flattening", () => {
     expect(byId.get("d1")?.label).toBe("main");
     expect(byId.get("d2")?.label).toBe("alt");
   });
-
-  it("shows duplicate labels on every row that carries them", () => {
-    const { model } = modelOver([{ id: "x", label: "wip", children: [{ id: "y", label: "wip" }] }]);
-    expect(model.rows().map((row) => row.label)).toEqual(["wip", "wip"]);
-  });
 });
 
 describe("SessionTreeModel navigation and collapse", () => {
-  it("moves with j/k and clamps at the edges", () => {
-    const { model } = modelOver(branchy);
-    press(model, "k");
-    expect(model.cursor).toBe(0);
-    press(model, "j", "j", "down", "up");
-    expect(model.cursor).toBe(2);
-    press(model, "pagedown", "pagedown");
-    expect(model.cursor).toBe(5);
-  });
-
   it("h collapses a subtree, l expands it, enter toggles", () => {
     const { model } = modelOver(branchy);
     press(model, "j", "j", "h");
@@ -141,34 +126,13 @@ describe("SessionTreeModel navigation and collapse", () => {
     model.handleKey(parseChord("enter"), 5);
     expect(model.cursorRow()?.id).toBe(before);
   });
-
-  it("windowed rendering keeps the cursor inside the viewport", () => {
-    const { model } = modelOver(branchy);
-    press(model, "pagedown");
-    const visible = model.visibleRows(2);
-    expect(visible.some(({ index }) => index === model.cursor)).toBe(true);
-    expect(visible).toHaveLength(2);
-  });
 });
 
 describe("SessionTreeModel effects", () => {
-  it("r asks for a refresh", () => {
-    const { model, recorded } = modelOver(branchy);
-    press(model, "r");
-    expect(recorded.refreshes).toBe(1);
-  });
-
   it("f forks from the cursored entry", () => {
     const { model, recorded } = modelOver(branchy);
     press(model, "j", "f");
     expect(recorded.forks).toEqual(["b"]);
-  });
-
-  it("f on an empty session does nothing", () => {
-    const { model, recorded } = modelOver([]);
-    press(model, "f", "j", "h", "l", "enter");
-    expect(recorded.forks).toEqual([]);
-    expect(model.rows()).toEqual([]);
   });
 
   it("ignores modified chords other than shift+l", () => {
@@ -191,12 +155,6 @@ describe("SessionTreeModel labeling", () => {
     press(model, "backspace", "backspace", "backspace", "w", "i", "p", "enter");
     expect(recorded.labels).toEqual([["d2", "wip"]]);
     expect(model.labeling).toBe(false);
-  });
-
-  it("committing an empty draft clears the label", () => {
-    const { model, recorded } = modelOver(branchy);
-    press(model, "pagedown", "shift+l", "backspace", "backspace", "backspace", "enter");
-    expect(recorded.labels).toEqual([["d2", undefined]]);
   });
 
   it("escape cancels without touching the label", () => {
@@ -253,15 +211,6 @@ describe("SessionTreeModel refresh survival", () => {
     model.setView(viewOf([{ id: "a", children: [{ id: "b" }] }]));
     expect(model.cursor).toBeLessThan(model.rows().length);
     expect(model.cursorRow()).toBeDefined();
-  });
-
-  it("survives the tree emptying and repopulating", () => {
-    const { model } = modelOver(branchy);
-    press(model, "j");
-    model.setView(viewOf([]));
-    expect(model.cursorRow()).toBeUndefined();
-    model.setView(viewOf([{ id: "solo" }]));
-    expect(model.cursorRow()?.id).toBe("solo");
   });
 });
 

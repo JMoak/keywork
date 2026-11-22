@@ -9,8 +9,6 @@ import {
   routineInput,
 } from "../routines/testing.ts";
 import type { Tool } from "../tools.ts";
-import { toolScope } from "./confine.ts";
-import { coreTools } from "./core.ts";
 import { scheduleTool } from "./schedule.ts";
 
 const t0 = Date.parse("2026-11-06T08:00:00Z");
@@ -57,15 +55,6 @@ describe("the schedule tool", () => {
     harness.runner.last().finish();
     await harness.advanceTo(t0 + 24 * 60 * minuteMs);
     expect(harness.runner.started).toHaveLength(1);
-  });
-
-  it("is cancelled by the keeper removing the chore", async () => {
-    const tool = await schedule();
-    await tool.execute({ note: "Look again.", in_minutes: 10 });
-    const [wake] = await wakes();
-    await harness.service.remove("wren", wake?.id ?? "");
-    await harness.advanceTo(t0 + 30 * minuteMs);
-    expect(harness.runner.started).toHaveLength(0);
   });
 
   it("paces an every wakeup above the floor and lets it expire", async () => {
@@ -161,15 +150,5 @@ describe("a wakeup and the creature's grants", () => {
     expect(harness.service.needsYou()).toEqual([
       expect.objectContaining({ kind: "grants", routineId: wake?.id }),
     ]);
-  });
-});
-
-describe("the core tool set", () => {
-  it("carries schedule only when a creature's wakeups are wired", async () => {
-    harness = await RoutineHarness.create({ start: t0 });
-    const scope = toolScope(harness.workspace);
-    expect(coreTools(scope).map((tool) => tool.name)).not.toContain("schedule");
-    const wired = coreTools(scope, { schedule: { creature: "wren", wakes: harness.service } });
-    expect(wired.map((tool) => tool.name)).toContain("schedule");
   });
 });

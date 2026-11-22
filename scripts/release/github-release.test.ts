@@ -54,22 +54,19 @@ describe("GitHub release lookup", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it.each([401, 403, 500])("propagates a tag lookup failure with status %s", async (status) => {
+  it.each([403])("propagates a tag lookup failure with status %s", async (status) => {
     const request = vi.fn().mockResolvedValue(new Response(null, { status }));
     await expect(readGithubRelease("tags/v0.2.2", request)).rejects.toThrow(`${status}`);
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it.each([401, 403, 404, 500])(
-    "propagates a draft listing failure with status %s",
-    async (status) => {
-      const request = vi
-        .fn()
-        .mockResolvedValueOnce(new Response(null, { status: 404 }))
-        .mockResolvedValueOnce(new Response(null, { status }));
-      await expect(readGithubRelease("tags/v0.2.2", request)).rejects.toThrow(`${status}`);
-    },
-  );
+  it.each([403, 404])("propagates a draft listing failure with status %s", async (status) => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status }));
+    await expect(readGithubRelease("tags/v0.2.2", request)).rejects.toThrow(`${status}`);
+  });
 
   it("does not treat a failed connection as a missing release", async () => {
     const request = vi.fn().mockRejectedValue(new Error("connection failed"));

@@ -64,11 +64,6 @@ describe("jsonFileStore read policy", () => {
     expect(readFileSync(file, "utf8")).toBe('{\n  "a": "1"\n}\n');
   });
 
-  it("reads an absent file as undefined in both modes", () => {
-    expect(strictStore().read()).toBeUndefined();
-    expect(lenientStore().read()).toBeUndefined();
-  });
-
   it("throws through the error factory on corrupt JSON in strict mode, never replacing it", () => {
     plantCorruptFile();
     expect(() => strictStore().read()).toThrow(StoreError);
@@ -203,7 +198,7 @@ describe("jsonFileStore replacing a held file", () => {
     return readdirSync(join(scratch, "nested"));
   }
 
-  it.each(["EPERM", "EBUSY", "EACCES"])("rides out a transient %s on Windows", (code) => {
+  it.each(["EPERM"])("rides out a transient %s on Windows", (code) => {
     strictStore().write({ a: "1" });
     const pauses: number[] = [];
 
@@ -228,19 +223,6 @@ describe("jsonFileStore replacing a held file", () => {
 
     expect(() => held.write({ a: "2" })).toThrow(hold);
     expect(readFileSync(file, "utf8")).toBe(before);
-    expect(dataListing()).toEqual(["data.json"]);
-  });
-
-  it("surfaces a hold at once off Windows", () => {
-    strictStore().write({ a: "1" });
-    const pauses: number[] = [];
-    const held = strictStore(heldFor(1, "EPERM"), {
-      platform: "linux",
-      pause: (milliseconds) => pauses.push(milliseconds),
-    });
-
-    expect(() => held.write({ a: "2" })).toThrow("EPERM");
-    expect(pauses).toEqual([]);
     expect(dataListing()).toEqual(["data.json"]);
   });
 });

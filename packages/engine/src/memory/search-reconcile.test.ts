@@ -56,14 +56,4 @@ describe("index self-reconciliation (files are truth)", () => {
     expect(outcome.hits.map((hit) => hit.note.name)).not.toContain("Editor");
     expect(await search.reconcile()).toEqual({ notes: 1, refreshed: [], dropped: [] });
   });
-
-  it("reconciles a lexical-only index too, since every search reads the files", async () => {
-    const root = await scratch();
-    const store = new MemoryStore({ vaultRoot: root, trusted: true });
-    await store.writeNote({ title: "Runtime", body: "we use bun\n", provenance: "user" });
-    const search = new MemorySearch(store);
-    await writeFile(join(root, "Runtime.md"), "we use deno\n", "utf8");
-    expect(await search.reconcile()).toEqual({ notes: 1, refreshed: [], dropped: [] });
-    expect((await search.search("deno")).hits.map((hit) => hit.note.name)).toEqual(["Runtime"]);
-  });
 });

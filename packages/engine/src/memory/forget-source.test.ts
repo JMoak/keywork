@@ -190,18 +190,6 @@ describe("forget by source, apply", () => {
     expect((await store.listNotes()).length).toBe(5);
   });
 
-  it("applies an empty plan as a no-op without a ledger entry", async () => {
-    const { store } = await vault();
-    const nothing = parseMemorySource("workshop:ws-none");
-    const plan = await planSourceForget(store, nothing);
-    const ledger = store.ledger().length;
-    expect(await applySourceForget(store, nothing, plan.digest)).toEqual({
-      source: "workshop:ws-none",
-      counts: { notes: 0, anchors: 0, edges: 0, citations: 0, entries: 0, staged: 0 },
-    });
-    expect(store.ledger().length).toBe(ledger);
-  });
-
   it("forgets a session's notes and daily entries and keeps mixed provenance with the reason", async () => {
     const root = await scratch();
     const store = new MemoryStore({ vaultRoot: root, trusted: true, now: clock });

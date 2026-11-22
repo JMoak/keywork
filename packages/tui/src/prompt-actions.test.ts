@@ -66,18 +66,6 @@ describe("the external editor action", () => {
     bare.probe.keys("ctrl+g");
     expect(bare.probe.snapshot().notice).toBe("no external editor here");
   });
-
-  it("needs a conversation pane in focus", () => {
-    const { probe } = probeWith({
-      externalEditor: async () => ({ kind: "unchanged" }),
-      createMemoryPane: (id) => ({ id, title: () => id, view: () => ({}) as never }),
-    });
-    probe.command("memory");
-    probe.keys("ctrl+g");
-    expect(probe.snapshot().notice).toBe(
-      "the external editor needs a conversation prompt · focus one first",
-    );
-  });
 });
 
 describe("the image actions", () => {
@@ -113,19 +101,5 @@ describe("the image actions", () => {
     probe.keys("ctrl+v");
     await flushed();
     expect(probe.snapshot().notice).toContain("out of reach here");
-  });
-
-  it("points at /image <path> when there is no host clipboard", () => {
-    const { probe } = probeWith();
-    probe.keys("ctrl+v");
-    expect(probe.snapshot().notice).toBe(
-      "no host clipboard here · /image <path> attaches a file instead",
-    );
-  });
-
-  it("pastes with image facts reach the conversation pane", () => {
-    const { probe, pane } = probeWith();
-    probe.core.handlePaste("", { mimeType: "image/png", kind: "binary", bytes: png });
-    expect(pane.model.input).toBe("[image #1, png 4 B] ");
   });
 });

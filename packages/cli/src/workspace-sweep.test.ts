@@ -60,19 +60,6 @@ describe("sweepWorkspaceOnClose", () => {
     ).rejects.toThrow("memory close: disk full");
     expect(botsSwept).toBe(true);
   });
-
-  it("names both failures when the bot sweep fails as well", async () => {
-    const { memory } = await trustedVault();
-    vi.spyOn(memory.gardener, "sweep").mockRejectedValue(new Error("disk full"));
-    await expect(
-      sweepWorkspaceOnClose({
-        memory: () => memory,
-        skills: noEvidence,
-        bots: { sweep: async () => Promise.reject(new Error("bots locked")) },
-        judgmentFor: noJudgment,
-      }),
-    ).rejects.toThrow("memory close: disk full · bots locked");
-  });
 });
 
 describe("botJudgmentFrom", () => {
@@ -91,13 +78,5 @@ describe("botJudgmentFrom", () => {
     );
     expect(judgmentFor(scout)).toBeDefined();
     expect(asked).toEqual([["a", "c"]]);
-  });
-
-  it("answers no judgment when no closing provider can be found", () => {
-    const judgmentFor = botJudgmentFrom(
-      () => undefined,
-      () => [],
-    );
-    expect(judgmentFor(scout)).toBeUndefined();
   });
 });

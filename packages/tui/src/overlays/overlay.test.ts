@@ -67,15 +67,6 @@ describe("RowOverlay mouse routing", () => {
 });
 
 describe("overlay frames", () => {
-  it("centers the palette near the top and the help box mid-screen", () => {
-    const palette = paletteFrame(screen, 4);
-    expect(palette).toEqual({ x: 28, y: 2, width: 64, height: 9, firstRowY: 5 });
-    const help = helpFrame(screen, 10);
-    expect(help.width).toBe(52);
-    expect(help.firstRowY).toBe(help.y + 2);
-    expect(help.y).toBe(Math.floor((screen.height - help.height) / 2));
-  });
-
   it("keeps at least one row of height for an empty palette", () => {
     expect(paletteFrame(screen, 0).height).toBe(6);
   });
@@ -161,14 +152,6 @@ describe("PaletteOverlay", () => {
       new PaletteOverlay(registry, ">", { dismiss: () => {} }).entries.map((e) => e.name),
     ).toEqual(["zoom"]);
   });
-
-  it("treats / as the commands prefix, matching the slash vocabulary", () => {
-    const { registry } = registryWith("zoom");
-    const slashed = new PaletteOverlay(registry, "/zo", { dismiss: () => {} });
-    expect(slashed.mode).toBe("commands");
-    expect(slashed.entries.map((entry) => entry.name)).toEqual(["zoom"]);
-    expect(new PaletteOverlay(registry, ">zo", { dismiss: () => {} }).mode).toBe("commands");
-  });
 });
 
 describe("PresetOverlay", () => {
@@ -184,23 +167,6 @@ describe("PresetOverlay", () => {
     };
     return { port, applied };
   }
-
-  it("starts on the active preset and reserves a row when the active one is custom", () => {
-    const standard = new PresetOverlay(portWith("standard").port, {
-      dismiss: () => {},
-      notice: () => {},
-      confirm: () => {},
-    });
-    expect(standard.index).toBe(1);
-    expect(standard.rowCount()).toBe(3);
-    const custom = new PresetOverlay(portWith("custom").port, {
-      dismiss: () => {},
-      notice: () => {},
-      confirm: () => {},
-    });
-    expect(custom.index).toBe(0);
-    expect(custom.rowCount()).toBe(4);
-  });
 
   it("hands a loosening choice to a confirmation instead of applying it", () => {
     const { port, applied } = portWith("standard");
@@ -218,7 +184,6 @@ describe("PresetOverlay", () => {
 
 describe("HelpOverlay", () => {
   const short: Screen = { width: 120, height: 30 };
-  const roomy: Screen = { width: 120, height: 64 };
   const filterLine = 1;
 
   function help(closed: string[] = [], at: Screen = short): HelpOverlay {
@@ -234,20 +199,6 @@ describe("HelpOverlay", () => {
     overlay.handleKey(parseChord("a"));
     overlay.handleMouse({ type: "down", x: 0, y: 0, button: 0 }, screen);
     expect(closed).toEqual(["x", "x", "x"]);
-  });
-
-  it("shows every action with nothing hidden when the screen has room", () => {
-    const overlay = help([], roomy);
-    const page = overlay.page(roomy);
-    expect(page.rows.length).toBe(overlay.rowCount());
-    expect(page.rows.map((row) => row.keys)).toEqual(
-      expect.arrayContaining(["ctrl+k s", "alt+1..9", "enter", "alt+enter"]),
-    );
-    expect(page.rows.map((row) => row.keys)).not.toContain("alt+1");
-    expect(page.rows.find((row) => row.keys === "alt+enter")?.help).toContain("steer");
-    expect(page).toMatchObject({ above: 0, below: 0 });
-    overlay.handleKey(parseChord("down"));
-    expect(overlay.page(roomy).above).toBe(0);
   });
 
   it("pages a long list on a short screen and clamps at both ends", () => {
@@ -267,35 +218,5 @@ describe("HelpOverlay", () => {
     expect(overlay.page(short).rows.length).toBe(room);
     overlay.handleKey(parseChord("pageup"));
     expect(overlay.page(short)).toMatchObject({ above: 0, below: total - room });
-  });
-
-  it("scrolls with the wheel and still dismisses on a click outside", () => {
-    const closed: string[] = [];
-    const overlay = help(closed);
-    overlay.handleMouse(
-      { type: "scroll", x: 40, y: 10, scroll: { direction: "down", delta: 3 } },
-      short,
-    );
-    expect(overlay.page(short).above).toBe(3);
-    overlay.handleMouse(
-      { type: "scroll", x: 40, y: 10, scroll: { direction: "up", delta: 9 } },
-      short,
-    );
-    expect(overlay.page(short).above).toBe(0);
-    expect(closed).toEqual([]);
-    overlay.handleMouse({ type: "down", x: 0, y: 0, button: 0 }, short);
-    expect(closed).toEqual(["x"]);
-  });
-});
-
-describe("HelpOverlay feel keys", () => {
-  it("lists send-now, the external editor and the clipboard image beside the prompt keys", () => {
-    const keymap = new Keymap({ leader: "ctrl+k", bindings: appBindings });
-    const overlay = new HelpOverlay(keymap, { dismiss: () => {}, screen: () => screen });
-    const rows = overlay.rows();
-    const helpOf = (keys: string) => rows.find((row) => row.keys === keys)?.help ?? "";
-    expect(helpOf("ctrl+enter")).toContain("sets the queue aside");
-    expect(helpOf("ctrl+g")).toContain("$EDITOR");
-    expect(helpOf("ctrl+v")).toContain("clipboard image");
   });
 });

@@ -72,13 +72,6 @@ describe("planCompaction", () => {
     expect(plan?.entriesToSummarize.length).toBeGreaterThan(0);
     expect(plan?.tokensBefore).toBeGreaterThan(0);
   });
-
-  it("declines when there is nothing worth summarizing", async () => {
-    const store = await SessionStore.create(await sessionFile(), ".");
-    await store.append(textMessage("user", "hi"));
-
-    expect(planCompaction(store, tinyBudget)).toBeUndefined();
-  });
 });
 
 describe("compactSession", () => {

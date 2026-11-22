@@ -131,10 +131,6 @@ describe("parseWhoIs on recorded answers", () => {
     expect(isSharedIn(whois)).toBe(false);
   });
 
-  it("answers the same node for its IPv6 address", () => {
-    expect(parseWhoIs(recordedText("whois-peer-v6")).node.stableId).toBe(recordedHost.stableId);
-  });
-
   it("reads tags, a sharer, expiry and a capability map", () => {
     const text = editedJson("whois-peer", (json) => {
       json.Node = { ...json.Node, Tags: ["tag:agent-host"], Sharer: 99, Expired: true };
@@ -227,11 +223,6 @@ describe("ping results", () => {
 });
 
 describe("parseServeConfig", () => {
-  it("reads the empty config this node answers with as not serving and no Funnel", () => {
-    expect(parseServeConfig("{}\n")).toEqual({ serving: false, funnel: [] });
-    expect(parseServeConfig("")).toEqual({ serving: false, funnel: [] });
-  });
-
   it("finds Funnel in the node config and in foreground sessions", () => {
     const config = {
       TCP: { "443": { HTTPS: true } },

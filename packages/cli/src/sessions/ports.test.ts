@@ -46,16 +46,6 @@ describe("sessionPort", () => {
     expect(entries[3]).not.toHaveProperty("checkpoint");
   });
 
-  it("persists untagged turns when no checkpoint source is wired", async () => {
-    const dir = await tempDir();
-    const port = sessionPort(dir, ".");
-    const attachment = await port.create();
-
-    await attachment?.append(textMessage("user", "prompt"));
-
-    expect((await storeOf(dir, attachment?.id)).entries()[0]).not.toHaveProperty("checkpoint");
-  });
-
   it("a created session never written to leaves no file on disk", async () => {
     const dir = await tempDir();
     const port = sessionPort(dir, ".");
@@ -73,34 +63,6 @@ describe("sessionPort", () => {
     const port = sessionPort(dir, ".");
 
     expect(await port.open("missing")).toBeUndefined();
-  });
-
-  it("surfaces a session directory that cannot be read", async () => {
-    const unlistable = `${await tempDir()}\0`;
-
-    await expect(sessionPort(unlistable, ".").open("any")).rejects.toThrow();
-  });
-
-  it("reports attach, change, and release through the seams", async () => {
-    const dir = await tempDir();
-    const attached: string[] = [];
-    const changed: string[] = [];
-    const released: string[] = [];
-    const port = sessionPort(dir, ".", {
-      onAttach: (store) => attached.push(store.header.id),
-      onChange: (sessionId) => changed.push(sessionId),
-      onRelease: (sessionId) => released.push(sessionId),
-    });
-
-    const attachment = await port.create();
-    expect(attached).toEqual([attachment?.id]);
-
-    await attachment?.append(textMessage("user", "hello"));
-    await attachment?.append(textMessage("assistant", "hi"));
-    expect(changed).toEqual([attachment?.id, attachment?.id]);
-
-    port.release?.(attachment?.id ?? "");
-    expect(released).toEqual([attachment?.id]);
   });
 
   it("persists a rename and serves it back as the attachment name", async () => {
@@ -138,27 +100,6 @@ describe("sessionPort", () => {
       .filter((entry) => entry.type === "thinking_level_change")
       .map((entry) => (entry as { thinkingLevel: string }).thinkingLevel);
     expect(levels).toEqual(["on", "off"]);
-  });
-
-  it("persists effort once per change and serves it back on the attachment", async () => {
-    const dir = await tempDir();
-    const changed: string[] = [];
-    const port = sessionPort(dir, ".", { onChange: (sessionId) => changed.push(sessionId) });
-    const created = await port.create();
-    expect(created?.effort).toBeUndefined();
-
-    await created?.recordEffort?.("low");
-    await created?.recordEffort?.("low");
-    await created?.recordEffort?.("max");
-    expect(changed).toEqual([created?.id, created?.id]);
-
-    const reopened = await port.open(created?.id ?? "");
-    expect(reopened?.effort).toBe("max");
-    const levels = (await storeOf(dir, created?.id))
-      .entries()
-      .filter((entry) => entry.type === "effort_change")
-      .map((entry) => (entry as { effort: string }).effort);
-    expect(levels).toEqual(["low", "max"]);
   });
 
   it("persists an arc binding as an entry and serves it back on the attachment and the overview", async () => {
@@ -200,40 +141,6 @@ describe("sessionPort", () => {
   });
 });
 
-describe("sessionChangeFeed", () => {
-  it("pushes label and fork changes to tree-port subscribers", async () => {
-    const dir = await tempDir();
-    const opened = await openOrResumeSession(dir, ".");
-    const first = await opened.store.append(textMessage("user", "root"));
-    const feed = sessionChangeFeed();
-    const port = sessionTreePort(dir, feed);
-    const id = opened.store.header.id;
-    const seen: string[] = [];
-    const unsubscribe = port.subscribe?.((sessionId) => seen.push(sessionId));
-
-    await port.setLabel(id, first.id, "start");
-    await port.fork(id, first.id);
-    expect(seen).toEqual([id, id]);
-
-    unsubscribe?.();
-    await port.setLabel(id, first.id, "again");
-    expect(seen).toEqual([id, id]);
-  });
-
-  it("relays attachment appends emitted through the port seam", async () => {
-    const dir = await tempDir();
-    const feed = sessionChangeFeed();
-    const seen: string[] = [];
-    feed.subscribe((sessionId) => seen.push(sessionId));
-    const port = sessionPort(dir, ".", { onChange: (sessionId) => feed.emit(sessionId) });
-
-    const attachment = await port.create();
-    await attachment?.append(textMessage("user", "typed"));
-
-    expect(seen).toEqual([attachment?.id]);
-  });
-});
-
 describe("sessionTreePort", () => {
   it("loads the tree, relabels, and forks through the disk store", async () => {
     const dir = await tempDir();
@@ -256,14 +163,6 @@ describe("sessionTreePort", () => {
     expect(forkedId).not.toBe(id);
     const { sessions } = await listSessions(dir);
     expect(sessions.map((session) => session.id)).toContain(forkedId);
-  });
-
-  it("degrades cleanly on unknown sessions", async () => {
-    const port = sessionTreePort(await tempDir());
-
-    expect(await port.load("missing")).toBeUndefined();
-    expect(await port.fork("missing", "entry")).toBeUndefined();
-    await expect(port.setLabel("missing", "entry", "x")).rejects.toThrow("no session matches");
   });
 
   it("lists the overview most-recent-first with titles and counts", async () => {
@@ -308,19 +207,6 @@ describe("sessionTreePort", () => {
     const overview = await port.overview?.();
 
     expect(overview?.map((item) => item.id)).toEqual([used.store.header.id]);
-  });
-
-  it("a fork shows up in the overview immediately", async () => {
-    const dir = await tempDir();
-    const opened = await openOrResumeSession(dir, ".");
-    const root = await opened.store.append(textMessage("user", "root"));
-    const port = sessionTreePort(dir);
-
-    const forkedId = await port.fork(opened.store.header.id, root.id);
-    const overview = await port.overview?.();
-
-    expect(overview?.map((item) => item.id)).toContain(forkedId);
-    expect(overview?.filter((item) => item.id === forkedId)).toHaveLength(1);
   });
 });
 

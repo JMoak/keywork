@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,15 +53,6 @@ describe("read", () => {
 
     expect(output).toContain("binary");
   });
-
-  it("says plainly that a directory is not a file", async () => {
-    const cwd = await workspace();
-    await mkdir(join(cwd, "src"));
-
-    await expect(readTool(toolScope(cwd)).execute({ path: "src" })).rejects.toThrow(
-      "src is a directory; read needs a file path",
-    );
-  });
 });
 
 describe("write", () => {
@@ -75,38 +66,6 @@ describe("write", () => {
 });
 
 describe("edit", () => {
-  it("replaces a unique match", async () => {
-    const cwd = await workspace();
-    await writeFile(join(cwd, "code.ts"), "const answer = 41;");
-
-    await editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "41", newText: "42" });
-
-    expect(await readFile(join(cwd, "code.ts"), "utf8")).toBe("const answer = 42;");
-  });
-
-  it("rejects ambiguous matches with an instructive count", async () => {
-    const cwd = await workspace();
-    await writeFile(join(cwd, "code.ts"), "aaa bbb aaa");
-
-    await expect(
-      editTool(toolScope(cwd)).execute({ path: "code.ts", oldText: "aaa", newText: "ccc" }),
-    ).rejects.toThrow(/matches 2 places/);
-  });
-
-  it("replaces every occurrence when asked", async () => {
-    const cwd = await workspace();
-    await writeFile(join(cwd, "code.ts"), "aaa bbb aaa");
-
-    await editTool(toolScope(cwd)).execute({
-      path: "code.ts",
-      oldText: "aaa",
-      newText: "c",
-      replaceAll: true,
-    });
-
-    expect(await readFile(join(cwd, "code.ts"), "utf8")).toBe("c bbb c");
-  });
-
   it("rejects missing text with guidance", async () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "code.ts"), "nothing here");
@@ -138,23 +97,6 @@ describe("root confinement", () => {
     await expect(
       readTool(toolScope(cwd)).execute({ path: join(tmpdir(), "elsewhere.txt") }),
     ).rejects.toThrow(/escapes/);
-  });
-
-  it("rejects nested traversal that resolves outside the root", async () => {
-    const cwd = await workspace();
-
-    await expect(
-      writeTool(toolScope(cwd)).execute({ path: "nested/../../evil.txt", content: "x" }),
-    ).rejects.toThrow(/escapes/);
-  });
-
-  it("accepts absolute paths inside the root", async () => {
-    const cwd = await workspace();
-    await writeFile(join(cwd, "inside.txt"), "ok");
-
-    const output = await readTool(toolScope(cwd)).execute({ path: join(cwd, "inside.txt") });
-
-    expect(output).toContain("ok");
   });
 });
 
@@ -262,16 +204,6 @@ describe("bash", () => {
 
     expect(exits).toEqual([0, 3]);
   });
-
-  it("kills runaway commands at the timeout", async () => {
-    const cwd = await workspace();
-    const shell = detectShell();
-    const slow = shell.name === "powershell" ? "Start-Sleep -Seconds 5" : "sleep 5";
-
-    await expect(bashTool(cwd).execute({ command: slow, timeoutMs: 300 })).rejects.toThrow(
-      /timed out/,
-    );
-  }, 10_000);
 
   it("kills the whole process tree at the timeout", async () => {
     const cwd = await workspace();

@@ -203,22 +203,6 @@ describe("compactNow", () => {
     expect(tail).toEqual(chronological.slice(chronological.length - tail.length));
     expect((await SessionStore.open(store.file)).messages()).toEqual(store.messages());
   });
-
-  it("says so when there is nothing to fold yet", async () => {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), ".");
-    await store.append(textMessage("user", "hi"));
-    const settlement = await compactNow({
-      store,
-      provider: new MockProvider([]),
-      budget: contextBudgetFor(200_000),
-    });
-    expect(settlement).toEqual({
-      history: undefined,
-      notices: ["nothing to compact yet · the recent turns are all that's here"],
-      flushed: [],
-      compacted: undefined,
-    });
-  });
 });
 
 describe("settleTurn between tool batches", () => {
@@ -280,22 +264,5 @@ describe("settleTurn between tool batches", () => {
     expect(afterTurn.compacted).toBeUndefined();
     expect(afterTurn.flushed).toHaveLength(2);
     expect(flushProvider.remaining()).toBe(0);
-  });
-
-  it("stays quiet between batches while the context has room", async () => {
-    const store = await midTurnSession();
-    const settlement = await settleTurn({
-      store,
-      provider: new MockProvider([]),
-      history: store.messages(),
-      budget: contextBudgetFor(200_000),
-      phase: "between-tool-batches",
-    });
-    expect(settlement).toEqual({
-      history: undefined,
-      notices: [],
-      flushed: [],
-      compacted: undefined,
-    });
   });
 });

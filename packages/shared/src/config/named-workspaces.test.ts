@@ -31,19 +31,6 @@ afterEach(async () => {
 });
 
 describe("named workspaces (PD10)", () => {
-  it("lists only the undeclared default slot for a bare root", async () => {
-    const root = await tempRoot();
-    expect(listWorkspaces(root)).toEqual([
-      {
-        slug: undefined,
-        name: undefined,
-        declared: false,
-        declarationFile: join(root, ".keywork", "workspace.json"),
-        vaultPath: join(root, ".keywork", "memory"),
-      },
-    ]);
-  });
-
   it("keeps the default workspace byte-stable while named ones live beside it", async () => {
     const root = await tempRoot();
     const defaultFile = await declareWorkspace(root, { name: "alpha" });

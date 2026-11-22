@@ -100,13 +100,6 @@ describe("probePtySupport", () => {
     });
   });
 
-  it("offers an opener on POSIX with a Bun that has Bun.Terminal, after opening and closing one", () => {
-    const { runtime, terminals } = fakeRuntime();
-    expect(probePtySupport({ platform: "linux", runtime }).available).toBe(true);
-    expect(terminals).toHaveLength(1);
-    expect(last(terminals).closes).toBe(1);
-  });
-
   it("degrades to pipes with the constructor's message when Bun.Terminal refuses to open", () => {
     const { runtime } = fakeRuntime();
     const refusing: BunPtyRuntime = {

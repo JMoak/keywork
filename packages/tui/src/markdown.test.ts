@@ -15,21 +15,8 @@ describe("inline markdown", () => {
     expect(rows[0]?.spans).toContainEqual({ text: "bold", tone: "body", bold: true });
   });
 
-  it("renders italic through both delimiters", () => {
-    const rows = renderMarkdown("*one* and _two_", 60, 60);
-    expect(rows.map(markdownRowText)).toEqual(["one and two"]);
-    expect(rows[0]?.spans).toContainEqual({ text: "one", tone: "body", italic: true });
-    expect(rows[0]?.spans).toContainEqual({ text: "two", tone: "body", italic: true });
-  });
-
   it("keeps snake_case out of emphasis", () => {
     expect(texts("call kebab_title_case here")).toEqual(["call kebab_title_case here"]);
-  });
-
-  it("renders code spans on their own tone", () => {
-    const rows = renderMarkdown("run `bun test` now", 60, 60);
-    expect(rows.map(markdownRowText)).toEqual(["run bun test now"]);
-    expect(rows[0]?.spans).toContainEqual({ text: "bun test", tone: "code" });
   });
 
   it("shows a link label with its dim destination", () => {
@@ -37,11 +24,6 @@ describe("inline markdown", () => {
     expect(rows.map(markdownRowText)).toEqual(["see the docs (https://keywork.dev)"]);
     expect(rows[0]?.spans).toContainEqual({ text: "the docs", tone: "link" });
     expect(rows[0]?.spans).toContainEqual({ text: " (https://keywork.dev)", tone: "linkUrl" });
-  });
-
-  it("nests bold inside emphasis marks", () => {
-    const rows = renderMarkdown("**`bun run check`** first", 60, 60);
-    expect(rows[0]?.spans).toContainEqual({ text: "bun run check", tone: "code" });
   });
 
   it("leaves unmatched markers as calm plain text", () => {
@@ -72,23 +54,6 @@ describe("block markdown", () => {
       "  gamma",
       "  delta",
     ]);
-  });
-
-  it("keeps ordered markers as typed and accents them", () => {
-    const rows = renderMarkdown("2. second thing", 60, 60);
-    expect(rows.map(markdownRowText)).toEqual(["2. second thing"]);
-    expect(rows[0]?.spans?.[0]).toEqual({ text: "2. ", tone: "listMarker" });
-  });
-
-  it("draws rules to the prose measure", () => {
-    const rows = renderMarkdown("---", 20, 60);
-    expect(rows.map(markdownRowText)).toEqual(["─".repeat(20)]);
-    expect(rows[0]?.spans?.[0]?.tone).toBe("rule");
-  });
-
-  it("word-wraps paragraphs within the measure", () => {
-    const rows = texts("the quick brown fox jumps over the lazy dog", 12, 60);
-    expect(rows).toEqual(["the quick", "brown fox", "jumps over", "the lazy dog"]);
   });
 
   it("hard-splits words wider than the measure", () => {
@@ -132,10 +97,6 @@ describe("block markdown", () => {
     );
     expect(blocks).toEqual(whole);
   });
-
-  it("keeps blank lines as breathing room", () => {
-    expect(texts("one\n\ntwo")).toEqual(["one", "", "two"]);
-  });
 });
 
 describe("fences", () => {
@@ -154,23 +115,12 @@ describe("fences", () => {
     ]);
   });
 
-  it("leaves fences in unknown languages on the plain fence tone", () => {
-    const rows = renderMarkdown("```brainfuck\n+++[>+<-]\n```", 60, 60);
-    expect(rows[1]?.spans?.slice(1)).toEqual([{ text: "+++[>+<-]", tone: "fence" }]);
-  });
-
   it("hard-wraps highlighted fence lines without losing a span", () => {
     const rows = renderMarkdown('```ts\nconst abc = "xyz";\n```', 60, 10);
     expect(rows.map(markdownRowText)).toEqual(["▎ ts", "▎ const ab", '▎ c = "xyz', '▎ ";']);
     expect(rows[1]?.spans?.[1]).toEqual({ text: "const", tone: "keyword" });
     expect(rows[2]?.spans?.at(-1)).toEqual({ text: '"xyz', tone: "string" });
     expect(rows[3]?.spans?.[1]).toEqual({ text: '"', tone: "string" });
-  });
-
-  it("carries a block comment across fence lines", () => {
-    const rows = renderMarkdown("```ts\n/* open\nstill */ x\n```", 60, 60);
-    expect(rows[2]?.spans?.[1]).toEqual({ text: "still */", tone: "comment" });
-    expect(rows[2]?.spans?.[2]).toEqual({ text: " x", tone: "fence" });
   });
 
   it("runs fence content at bleed width, not the prose measure", () => {

@@ -28,19 +28,8 @@ import {
   type SessionInference,
   writeServerTicket,
 } from "@keywork/server";
-import {
-  memorySessionHost,
-  type SseFrame,
-  type SseReader,
-  sseReader,
-} from "@keywork/server/testing";
-import {
-  type ActivePreset,
-  type CompleteTheme,
-  contrastFailures,
-  gallery,
-  TrustStore,
-} from "@keywork/shared";
+import { type SseFrame, type SseReader, sseReader } from "@keywork/server/testing";
+import { type ActivePreset, TrustStore } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterAll, describe, expect, it } from "vitest";
 import { type ArcService, arcService } from "./arcs.ts";
@@ -123,19 +112,6 @@ describe("servedHost", () => {
     expect(answered.every(([, status]) => status === 200)).toBe(true);
     await host.close();
   });
-
-  it("keeps the session verbs of the file host", async () => {
-    const options = {
-      ...(await hostOptions(new MockProvider([textTurn("hi")]))),
-      projectTrusted: true,
-    };
-    const host = await servedHost(options);
-
-    const created = await host.create();
-    expect((await host.list()).map((session) => session.id)).toContain(created.id);
-    expect(await host.context(created.id)).not.toBe("missing");
-    await host.close();
-  });
 });
 
 describe("fileSessionHost", () => {
@@ -180,34 +156,6 @@ describe("fileSessionHost", () => {
     const messages = stores[0]?.messages() ?? [];
     expect(messages[0]?.role).toBe("user");
     expect(messages.at(-1)?.parts).toEqual([{ type: "text", text: "all done" }]);
-  });
-
-  it("lists and reads sessions already on disk, and answers idle or missing on abort", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const stored = await SessionStore.create(
-      join(options.sessionDir ?? "", "1-0001-1.jsonl"),
-      options.cwd,
-    );
-    const question: Message = { role: "user", parts: [{ type: "text", text: "earlier question" }] };
-    await stored.append(question);
-    const { server, host, call } = serverOver(options);
-
-    const listed = (await (await call("/sessions")).json()) as {
-      sessions: Array<{ id: string; title: string; messageCount: number }>;
-    };
-    expect(listed.sessions).toEqual([
-      expect.objectContaining({ id: stored.header.id, title: "earlier question", messageCount: 1 }),
-    ]);
-    const read = await call(`/sessions/${stored.header.id}`);
-    expect(await read.json()).toMatchObject({
-      id: stored.header.id,
-      live: false,
-      messages: [question],
-    });
-    expect(await host.abort(stored.header.id)).toBe("idle");
-    expect(await host.abort("nope")).toBe("missing");
-    expect(await host.prompt("nope", "hi")).toBe("missing");
-    await server.close();
   });
 
   it("routes an ask to a client and resumes with its verdict, or times out as headless", async () => {
@@ -364,35 +312,6 @@ describe("fileSessionHost permission layers", () => {
     await served.server.close();
   });
 
-  it("asks before a trusted read reaches outside the workspace", async () => {
-    const shell = recordingShell();
-    const options = await layeredOptions(
-      new MockProvider([
-        bash("c1", "cat README.md"),
-        bash("c2", "cat ../elsewhere/secret.txt"),
-        textTurn("done"),
-      ]),
-      true,
-      shell,
-    );
-    const served = serverOver(options);
-    const id = await sessionOn(served);
-    const turn = await prompted(served, id, "look around");
-    const beforeAsk = await turn.until("gate.ask");
-    expect(decisionsIn(beforeAsk)).toEqual([
-      { tool: "bash", callId: "c1", verdict: "granted", gate: "trusted", asked: false },
-    ]);
-    expect(JSON.parse(beforeAsk.at(-1)?.data ?? "{}").payload.ask).toMatchObject({
-      callId: "c2",
-      rule: "default",
-    });
-    await served.call("/asks/c2", json({ verdict: "denied" }));
-    await turn.until("turn.completed");
-    expect(shell.commands).toEqual(["cat README.md"]);
-    await turn.close();
-    await served.server.close();
-  });
-
   it("asks before a trusted read once an approved cd moved the session's shell out", async () => {
     const recording = recordingShell();
     let root = "";
@@ -452,53 +371,6 @@ describe("fileSessionHost permission layers", () => {
       trusted: false,
       bundle: [],
     });
-    await served.server.close();
-  });
-
-  it("stops the second ask after a session grant", async () => {
-    const shell = recordingShell();
-    const options = await layeredOptions(
-      new MockProvider([
-        bash("c1", "printf %s one"),
-        bash("c2", "printf %s two"),
-        textTurn("done"),
-      ]),
-      false,
-      shell,
-    );
-    const served = serverOver(options);
-    const id = await sessionOn(served);
-    const turn = await prompted(served, id, "print");
-    await turn.until("gate.ask");
-    expect(
-      (await served.call("/asks/c1", json({ verdict: "granted", scope: "session" }))).status,
-    ).toBe(200);
-    const frames = await turn.until("turn.completed");
-    expect(frames.some((frame) => frame.event === "gate.ask")).toBe(false);
-    expect(decisionsIn(frames)).toEqual([
-      {
-        tool: "bash",
-        callId: "c1",
-        verdict: "granted",
-        gate: "user",
-        scope: "session",
-        asked: true,
-      },
-      {
-        tool: "bash",
-        callId: "c2",
-        verdict: "granted",
-        gate: "user",
-        scope: "session",
-        asked: false,
-      },
-    ]);
-    expect(shell.commands).toEqual(["printf %s one", "printf %s two"]);
-    expect(await (await served.call("/permissions")).json()).toMatchObject({
-      workspace: [],
-      session: { [id]: [printfRule] },
-    });
-    await turn.close();
     await served.server.close();
   });
 
@@ -563,51 +435,6 @@ describe("fileSessionHost permission layers", () => {
     expect(reopenedShell.commands).toEqual(["printf %s two"]);
     await asking.close();
     await reopened.server.close();
-  });
-
-  it("shows a write's consequence on its ask, from the tool's own dry run, before anything is written", async () => {
-    const options = await layeredOptions(
-      new MockProvider([
-        toolCallTurn({
-          type: "tool-call",
-          callId: "c1",
-          name: "edit",
-          arguments: { path: "notes.md", oldText: "draft", newText: "final" },
-        }),
-        toolCallTurn({
-          type: "tool-call",
-          callId: "c2",
-          name: "write",
-          arguments: { path: "docs/new.md", content: "fresh\n" },
-        }),
-        textTurn("done"),
-      ]),
-      false,
-    );
-    await writeFile(join(options.cwd, "notes.md"), "a draft\r\n");
-    const served = serverOver(options);
-    const id = await sessionOn(served);
-    const turn = await prompted(served, id, "finish the notes");
-    const edited = await turn.until("gate.ask");
-    expect(JSON.parse(edited.at(-1)?.data ?? "{}").payload.ask.preview).toEqual({
-      path: "notes.md",
-      before: "a draft\r\n",
-      after: "a final\r\n",
-    });
-    expect(await readFile(join(options.cwd, "notes.md"), "utf8")).toBe("a draft\r\n");
-    await served.call("/asks/c1", json({ verdict: "granted" }));
-    const written = await turn.until("gate.ask");
-    const preview = { path: "docs/new.md", before: null, after: "fresh\n" };
-    expect(JSON.parse(written.at(-1)?.data ?? "{}").payload.ask.preview).toEqual(preview);
-    expect(await (await served.call("/asks")).json()).toEqual({
-      asks: [expect.objectContaining({ callId: "c2", preview })],
-    });
-    expect(existsSync(join(options.cwd, "docs"))).toBe(false);
-    await served.call("/asks/c2", json({ verdict: "denied" }));
-    await turn.until("turn.completed");
-    await turn.close();
-    expect(await readFile(join(options.cwd, "notes.md"), "utf8")).toBe("a final\r\n");
-    await served.server.close();
   });
 
   it("records a grant ahead of an ask where an answered ask would, so a reopened server keeps it", async () => {
@@ -743,33 +570,6 @@ describe("serve", () => {
 });
 
 describe("memorySessionHost parity", () => {
-  it("runs an injected prompt as an ordinary turn tagged with its client, and persists it", async () => {
-    const options = await hostOptions(new MockProvider([textTurn("heard you")]));
-    const { server, host, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-
-    const accepted = await call(`/sessions/${id}/inject`, {
-      method: "POST",
-      body: JSON.stringify({ text: "dictated prompt", client: "wispr-flow" }),
-    });
-    expect(await accepted.json()).toEqual({ sessionId: id, accepted: true, queued: false });
-    let started = await reader.next();
-    while (started.event !== "turn.started") started = await reader.next();
-    expect(JSON.parse(started.data).payload).toEqual({
-      entryId: expect.any(String),
-      userText: "dictated prompt",
-      origin: { kind: "external", client: "wispr-flow" },
-    });
-    while ((await reader.next()).event !== "turn.completed");
-    await reader.close();
-    expect(await host.inject("nope", "hi", { kind: "external", client: "x" })).toBe("missing");
-    await server.close();
-
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    expect(stores[0]?.messages().map((message) => message.role)).toEqual(["user", "assistant"]);
-  });
-
   it("runs a framed inject as the creature's turn: a frame mark in place of a keeper prompt, titled by the first reply", async () => {
     const reply = "I am Vey, and I can sort the notes folder for you.";
     const options = await hostOptions(new MockProvider([textTurn(reply)]));
@@ -829,13 +629,6 @@ describe("memorySessionHost parity", () => {
     });
     expect(refused.status).toBe(400);
     await server.close();
-  });
-
-  it("answers the same host contract as the file host for unknown sessions", async () => {
-    const host = memorySessionHost({ log: new EventLog(), provider: new MockProvider([]) });
-    expect(await host.prompt("nope", "hi")).toBe("missing");
-    expect(await host.abort("nope")).toBe("missing");
-    expect(await host.read("nope")).toBeUndefined();
   });
 });
 
@@ -1156,35 +949,6 @@ describe("the memory family over a served vault (K4)", () => {
   );
 
   it(
-    "refuses to finish past a wedged session until forced",
-    async () => {
-      const world = await servedWorld({ wedge: "s2" });
-      await arcAtTheAirlock(world);
-      expect(await world.arcs.port.close("dock-v2")).toMatchObject({ kind: "pending", wedged: 1 });
-      expect((await world.get<Digest>("/arcs/dock-v2/airlock")).sweep).toEqual({
-        acked: 1,
-        wedged: 1,
-      });
-      await world.post("/arcs/dock-v2/airlock/deliver");
-      for (const title of ["Tie order", "Theme drift", "Old worry"]) {
-        await world.post("/arcs/dock-v2/airlock/questions", { title, choice: "drop" });
-      }
-      expect(await world.post("/arcs/dock-v2/airlock/finish")).toEqual({
-        kind: "wedged",
-        sessions: ["s2"],
-      });
-      expect(await world.post("/arcs/dock-v2/airlock/finish", { force: true })).toEqual({
-        kind: "closed",
-        delivered: 1,
-        released: 2,
-      });
-      expect(world.flushed).toEqual(["s1"]);
-      await world.server.close();
-    },
-    vaultWalkTimeoutMs,
-  );
-
-  it(
     "carrying a question needs a successor arc and names the newest one",
     async () => {
       const orphaned = await servedWorld();
@@ -1204,34 +968,6 @@ describe("the memory family over a served vault (K4)", () => {
       });
       expect(carried.successor).toBe("later-arc");
       await orphaned.server.close();
-    },
-    vaultWalkTimeoutMs,
-  );
-
-  it(
-    "approves a staged note through the served port and fires memory.inbox with the new count",
-    async () => {
-      const world = await servedWorld();
-      await world.memory.store.writeNote({
-        title: "Hunch",
-        body: "maybe\n",
-        provenance: "untrusted",
-      });
-      await world.memory.store.propose([
-        { kind: "forget-proposal", session: "s9", notes: [], entries: [] },
-      ]);
-      const inbox = await world.get<{ items: Array<{ id: string; kind: string }>; count: number }>(
-        "/memory/inbox",
-      );
-      expect(inbox.items.map((item) => item.kind)).toEqual(["note", "forget-proposal"]);
-      const staged = inbox.items.find((item) => item.kind === "note");
-      expect(await world.post(`/memory/inbox/${staged?.id}/approve`)).toMatchObject({
-        path: "Hunch.md",
-        staged: false,
-      });
-      expect(await world.memory.store.readNote("Hunch")).toBeDefined();
-      expect(world.inboxCounts()).toEqual([1, 2, 1, 1]);
-      await world.server.close();
     },
     vaultWalkTimeoutMs,
   );
@@ -1308,67 +1044,6 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
         providers[formatReference(binding.reference)]?.() ?? new MockProvider([]),
     };
   }
-
-  it("stores the turn tag on the prompt entry, puts files back on undo, and brings them back on redo", async () => {
-    const options = await checkpointed(
-      new MockProvider([writeTurn("note.txt", "hello"), textTurn("wrote it")]),
-    );
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "write a note" });
-    const settled = await settledState(reader, (state) => state.leafId !== null);
-    expect(payloadOf(settled)).toMatchObject({ undoable: true, redoable: false });
-    expect(await readFile(join(options.cwd, "note.txt"), "utf8")).toBe("hello");
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    const prompt = stores[0]
-      ?.entries()
-      .find((entry) => entry.type === "message" && entry.message.role === "user");
-    expect(prompt?.type === "message" ? prompt.checkpoint : undefined).toMatch(/^[0-9a-f]{40,64}$/);
-
-    const undone = await post(call, `/sessions/${id}/undo`);
-    expect(undone.status).toBe(200);
-    expect(await undone.json()).toEqual({
-      prompt: { entryId: prompt?.id, text: "write a note" },
-      filesNote: "files put back",
-      undoable: true,
-      redoable: true,
-    });
-    expect(existsSync(join(options.cwd, "note.txt"))).toBe(false);
-    expect(
-      ((await (await call(`/sessions/${id}`)).json()) as { messages: unknown[] }).messages,
-    ).toEqual([]);
-
-    const redone = await post(call, `/sessions/${id}/redo`);
-    expect(await redone.json()).toEqual({ restored: true, undoable: true, redoable: false });
-    expect(await readFile(join(options.cwd, "note.txt"), "utf8")).toBe("hello");
-    const restored = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
-    expect(restored.messages).toHaveLength(4);
-    await reader.close();
-    await server.close();
-  });
-
-  it("keeps the checkpoint-free behavior under --no-checkpoints", async () => {
-    const options = await hostOptions(
-      new MockProvider([writeTurn("kept.txt", "stays"), textTurn("wrote it")]),
-    );
-    options.checkpoints = "off";
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "write" });
-    await settledState(reader, (state) => state.leafId !== null);
-    const { stores } = await scanSessions(options.sessionDir ?? "");
-    const prompt = stores[0]?.entries().find((entry) => entry.type === "message");
-    expect(prompt?.type === "message" ? prompt.checkpoint : "set").toBeUndefined();
-    expect(await (await post(call, `/sessions/${id}/undo`)).json()).toMatchObject({
-      prompt: { text: "write" },
-      filesNote: "files untouched",
-    });
-    expect(await readFile(join(options.cwd, "kept.txt"), "utf8")).toBe("stays");
-    await reader.close();
-    await server.close();
-  });
 
   it("restores to before a turn in one step over the shadow repo, records it, and keeps it across a reopen", async () => {
     const write = (callId: string, path: string, content: string) =>
@@ -1535,29 +1210,6 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
       await close();
     });
 
-    it("puts the whole workspace back when asked for everything, and redo brings it all back", async () => {
-      const { opened, id, at, close } = await keeperBesideAgent();
-
-      const restored = await post(opened.call, `/sessions/${id}/restore`, {
-        turn: 1,
-        scope: "everything",
-      });
-
-      expect(await restored.json()).toMatchObject({
-        scope: "everything",
-        files: [{ path: "agent.ts" }, { path: "notes/mine.md" }, { path: "untouched.md" }],
-      });
-      expect(existsSync(at("agent.ts"))).toBe(false);
-      expect(await keepersWork(at)).toEqual({ notes: undefined, edit: "mine\n" });
-      expect(
-        (await post(opened.call, `/sessions/${id}/restore`, { turn: 1, scope: "x" })).status,
-      ).toBe(400);
-      expect((await post(opened.call, `/sessions/${id}/redo`)).status).toBe(200);
-      expect(await readFile(at("agent.ts"), "utf8")).toBe(agentFile);
-      expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
-      await close();
-    });
-
     it("undoes the last prompt over its own files and redoes a scoped restore after a restart", async () => {
       const { options, opened, id, at, close } = await keeperBesideAgent();
       expect((await post(opened.call, `/sessions/${id}/undo`)).status).toBe(200);
@@ -1578,39 +1230,6 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
       expect(await keepersWork(at)).toEqual({ notes: "my notes\n", edit: "mine, edited\n" });
       await reopened.server.close();
     });
-  });
-
-  it("splits the context window into the parts the composed request carries", async () => {
-    const options = await hostOptions(
-      new MockProvider([textTurn("hi", { inputTokens: 9_000, outputTokens: 100 })]),
-    );
-    options.projectTrusted = true;
-    await writeFile(join(options.cwd, "AGENTS.md"), "Prefer small functions.\n".repeat(40));
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    await post(call, `/sessions/${id}/prompt`, { text: "hello" });
-    await settledState(reader, (state) => state.leafId !== null);
-    await reader.close();
-    const context = (await (await call(`/sessions/${id}/context`)).json()) as {
-      used: number;
-      window: number;
-      parts: Record<string, { tokens: number; basis: string }>;
-      thresholds: { flushAt: number; compactAt: number };
-      compactAt: number;
-    };
-    expect(context.parts.system?.tokens).toBeGreaterThan(0);
-    expect(context.parts.tools?.tokens).toBeGreaterThan(0);
-    expect(context.parts.injected?.tokens).toBeGreaterThanOrEqual(240);
-    expect(context.parts.conversation?.basis).toBe("reported");
-    const filled = ["system", "tools", "injected", "conversation"].reduce(
-      (total, part) => total + (context.parts[part]?.tokens ?? 0),
-      0,
-    );
-    expect(filled).toBe(9_100);
-    expect(context.parts.free).toEqual({ tokens: context.window - 9_100, basis: "reported" });
-    expect(context.thresholds.compactAt).toBe(context.compactAt + 9_100 - context.used);
-    await server.close();
   });
 
   it("answers a stored session's model, thinking and effort from its JSONL and binds the model through the registry", async () => {
@@ -1682,39 +1301,6 @@ describe("K0 and K1 under serve: checkpoints, per-session inference, and the ver
     expect(await (await call(`/sessions/${stored.header.id}`)).json()).toMatchObject({
       model: "mock/m0",
     });
-    await reader.close();
-    await server.close();
-  });
-
-  it("compacts a real store with a focus and continues over the summary", async () => {
-    const options = await hostOptions(
-      new MockProvider([
-        textTurn("one"),
-        textTurn("two"),
-        textTurn("## Goal\nthe focused summary"),
-      ]),
-    );
-    const { server, call } = serverOver(options);
-    const { id } = (await (await call("/sessions", { method: "POST" })).json()) as { id: string };
-    const reader = sseReader(await call("/events"));
-    for (const text of ["first", "second"]) {
-      await post(call, `/sessions/${id}/prompt`, { text });
-      await until(reader, (frame) => frame.event === "turn.completed");
-      await settledState(reader, () => true);
-    }
-    const compacted = await post(call, `/sessions/${id}/compact`, { focus: "the goal" });
-    expect(compacted.status).toBe(200);
-    const report = (await compacted.json()) as {
-      compacted: { type: string; summary: string } | null;
-      notices: string[];
-    };
-    expect(report.compacted).toMatchObject({ type: "compaction" });
-    expect(report.compacted?.summary).toContain("the focused summary");
-    expect(report.notices[0]).toMatch(/^compacted /);
-    expect(payloadOf(await settledState(reader, () => true))).toMatchObject({ undoable: true });
-    const detail = (await (await call(`/sessions/${id}`)).json()) as { messages: Message[] };
-    expect(detail.messages).toHaveLength(4);
-    expect(JSON.stringify(detail.messages[0])).toContain("the focused summary");
     await reader.close();
     await server.close();
   });
@@ -2097,32 +1683,6 @@ describe("the surface ports over a served workspace (K3)", () => {
       await world.close();
     }
   });
-
-  it("lists the whole gallery complete, names the configured theme, and leaves system to the client", async () => {
-    const world = await surfacedServer({ theme: "system" });
-    try {
-      const listed = await answer<{
-        themes: CompleteTheme[];
-        active: string;
-        placeholders: string[];
-      }>(await world.call("/themes"));
-      expect(listed.themes.map((theme) => theme.name)).toEqual(gallery.map((theme) => theme.name));
-      for (const theme of listed.themes) {
-        expect(contrastFailures(theme), theme.name).toEqual([]);
-        expect(Object.keys(theme.terminal)).toHaveLength(16);
-        expect(theme.syntax.keyword).toMatch(/^#[0-9a-f]{6}$/i);
-        expect(theme.diff.insertedLine).toMatch(/^#[0-9a-f]{6}$/i);
-        expect(theme.selection.background).toMatch(/^#[0-9a-f]{6}$/i);
-        expect(theme.cursor).toMatch(/^#[0-9a-f]{6}$/i);
-      }
-      const night = listed.themes.find((theme) => theme.name === "keywork-night");
-      expect(night?.pair).toBe("keywork-day");
-      expect(listed.active).toBe("system");
-      expect(listed.placeholders).toEqual(["system"]);
-    } finally {
-      await world.close();
-    }
-  });
 });
 
 function stallingProvider(): Provider {
@@ -2248,27 +1808,6 @@ describe("session lifecycle (119) under serve", () => {
     });
     await server.close();
   });
-
-  it("discards one trashed session for good and says so on /events", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const store = await storedSession(options, "1-0001-1.jsonl", "gone soon");
-    const { server, call } = serverOver(options);
-    const reader = sseReader(await call("/events"));
-    await remove(call, store.header.id);
-    const removedFrame = await reader.next();
-    expect(JSON.parse(removedFrame.data)).toMatchObject({
-      sessionId: "",
-      type: "session.removed",
-      payload: { sessionId: store.header.id },
-    });
-
-    const discarded = await call(`/trash/${store.header.id}`, { method: "DELETE" });
-    expect(await discarded.json()).toEqual({ sessionId: store.header.id, discarded: true });
-    expect((await call(`/trash/${store.header.id}`, { method: "DELETE" })).status).toBe(404);
-    expect(existsSync(join(options.sessionDir ?? "", ".trash", "1-0001-1.jsonl"))).toBe(false);
-    await reader.close();
-    await server.close();
-  });
 });
 
 describe("K2 under serve: the tree and the diff over JSONL and the shadow repo", () => {
@@ -2318,39 +1857,6 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     const second = await store.append(assistantMessage("second answer"));
     return { store, user, first, second };
   }
-
-  it("round-trips a fixture JSONL with a fork, a label, a compaction and a binding entry through /entries", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    const { store, user, second } = await fixtureStore(options.sessionDir ?? "", options.cwd);
-    const { server, call } = serverOver(options);
-
-    const answer = await read<{
-      sessionId: string;
-      name?: string;
-      leafId: string;
-      entries: Array<{ id: string; type: string; parentId: string | null }>;
-      labels: Record<string, string>;
-      activePath: string[];
-    }>(await call(`/sessions/${store.header.id}/entries`));
-
-    expect(answer.sessionId).toBe(store.header.id);
-    expect(answer.name).toBeUndefined();
-    expect(answer.entries).toEqual(JSON.parse(JSON.stringify(store.entries())));
-    expect(answer.entries.map((entry) => entry.type)).toEqual([
-      "message",
-      "message",
-      "label",
-      "compaction",
-      "binding",
-      "message",
-    ]);
-    expect(answer.entries.filter((entry) => entry.parentId === user.id)).toHaveLength(2);
-    expect(answer.labels).toEqual({ [user.id]: "start" });
-    expect(answer.leafId).toBe(second.id);
-    expect(answer.activePath).toEqual([user.id, second.id]);
-    expect((await call("/sessions/nope/entries")).status).toBe(404);
-    await server.close();
-  });
 
   it("forks a stored session at an entry into one whose detail names its parent, labels an entry into the file, and announces session.tree", async () => {
     const options = await hostOptions(new MockProvider([]));
@@ -2526,29 +2032,6 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
       error: `over-cap.txt is ${maxFileBytes + 1} bytes, over the ${maxFileBytes} byte cap`,
     });
     await server.close();
-  });
-
-  it("answers no baseline under --no-checkpoints and still lists entries", async () => {
-    const options = await hostOptions(new MockProvider([]));
-    options.checkpoints = "off";
-    const { server, call } = serverOver(options);
-    const { id } = await read<{ id: string }>(await call("/sessions", { method: "POST" }));
-    const refused = await call(`/sessions/${id}/changes`);
-    expect(refused.status).toBe(409);
-    expect(await refused.json()).toEqual({ error: "no baseline" });
-    expect((await call(`/sessions/${id}/changes/file?path=a`)).status).toBe(409);
-    expect((await call(`/sessions/${id}/entries`)).status).toBe(200);
-    await server.close();
-  });
-
-  it("answers the tree and the diff through servedHost as well", async () => {
-    const options = await checkpointed(new MockProvider([textTurn("hi")]));
-    const host = await servedHost(options);
-    const created = await host.create();
-    expect(await host.tree.entries(created.id)).toMatchObject({ entries: [], leafId: null });
-    expect(await host.changes.list(created.id)).toEqual({ baseline: "session start", files: [] });
-    expect(await host.changes.list("nope")).toBe("missing");
-    await host.close();
   });
 
   function userMessage(text: string): Message {

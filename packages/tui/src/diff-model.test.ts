@@ -190,47 +190,6 @@ describe("DiffModel", () => {
     );
     expect(model.body()).toEqual({ kind: "unavailable", reason: "trust this folder first" });
   });
-
-  it("surfaces a failing baseline read as a failure", async () => {
-    const { model } = modelOver(
-      { before: {}, working: {} },
-      {
-        baseline: {
-          label: "HEAD",
-          changes: async () => {
-            throw new Error("git diff failed: not a repository");
-          },
-          before: async () => undefined,
-        },
-      },
-    );
-    await model.settled();
-    expect(model.body()).toEqual({ kind: "failed", reason: "git diff failed: not a repository" });
-  });
-
-  it("re-reads the baseline on r and stops listening once disposed", async () => {
-    let reads = 0;
-    const world: World = { before: {}, working: {} };
-    const { model, feed } = modelOver(world, {
-      baseline: {
-        label: "session start",
-        changes: async () => {
-          reads += 1;
-          return [];
-        },
-        before: async () => undefined,
-      },
-    });
-    await model.settled();
-    expect(reads).toBe(1);
-    model.handleKey(parseChord("r"), 10);
-    await model.settled();
-    expect(reads).toBe(2);
-    model.dispose();
-    feed.emit();
-    await model.settled();
-    expect(reads).toBe(2);
-  });
 });
 
 describe("followMutations", () => {

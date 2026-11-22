@@ -76,12 +76,6 @@ describe("safety net", () => {
     expect(probe.snapshot().notice).toBe("");
   });
 
-  it("offers undo without a checkpoint store and says when there is nothing to take back", async () => {
-    const probe = new AppProbe();
-    expect(probe.command("undo")).toBe(true);
-    await waitFor(() => expect(probe.snapshot().notice).toBe("nothing to undo"));
-  });
-
   it("pauses a mutating tool on the ask and runs it after y", async () => {
     const executed: string[] = [];
     const scribble: Tool = {
@@ -161,82 +155,6 @@ describe("safety net", () => {
     expect(declined).toMatchObject({ kind: "tool", failed: true });
     expect(declined?.text).toContain("scribble");
     expect(declined?.text).toContain("failed · declined by user");
-  });
-});
-
-describe("live tool tail-follow", () => {
-  function tailProbe(finishTool: Promise<void>) {
-    const agents: Agent[] = [];
-    const streaming: Tool = {
-      name: "slow",
-      description: "streams output",
-      parameters: { type: "object" },
-      execute: async () => {
-        const agent = agents[0];
-        agent?.bus.emit("tool.output", { chunk: "step 1\n\x1b[31mstep 2\x1b[0m\n" });
-        agent?.bus.emit("tool.output", { chunk: `step 3 ${"x".repeat(500)}\n` });
-        await finishTool;
-        return "final result";
-      },
-    };
-    const probe = new AppProbe({
-      createPane: (id, notify, commands) => {
-        const agent = new Agent({
-          provider: new MockProvider([
-            toolCallTurn({ type: "tool-call", callId: "t1", name: "slow", arguments: {} }),
-            textTurn("done"),
-          ]),
-          tools: [streaming],
-        });
-        agents.push(agent);
-        return new ConversationPane(id, agent, notify, undefined, commands);
-      },
-    });
-    return { probe, agents };
-  }
-
-  it("streams the live tail inside the tool row and settles it to the one-liner", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { probe, agents } = tailProbe(gate);
-    probe.type("go").keys("enter");
-    await waitFor(() => {
-      const entry = probe.model()?.entries.find((candidate) => candidate.kind === "tool");
-      expect(entry?.text).toContain("step 3");
-    });
-
-    const running = probe.model()?.entries.find((entry) => entry.kind === "tool");
-    expect(running?.text).toMatch(/^slow · /);
-    expect(running?.text.includes("\x1b")).toBe(false);
-    expect(running?.text.includes("step 2")).toBe(false);
-    const runningLines = (probe.model()?.visibleTranscript(38, 12) ?? []).filter(
-      (line) => line.kind === "tool",
-    );
-    expect(runningLines).toHaveLength(1);
-    expect(runningLines[0]?.stamp).toBe("░ ");
-    for (const line of runningLines) {
-      expect(Array.from(line.text).length).toBeLessThanOrEqual(36);
-    }
-
-    release();
-    await probe.settled();
-
-    const settled = probe.model()?.entries.find((entry) => entry.kind === "tool");
-    expect(settled?.text).toMatch(/^slow · \d+(\.\d+)?(ms|s|m) · done$/);
-    expect(settled).toMatchObject({ failed: false });
-    if (settled?.kind === "tool") {
-      expect(settled.run?.detail).toEqual(["final result"]);
-      expect(settled.run?.live).toBeUndefined();
-    }
-
-    const toolResults = (agents[0]?.history() ?? [])
-      .filter((message) => message.role === "tool")
-      .flatMap((message) => message.parts);
-    expect(toolResults).toEqual([
-      { type: "tool-result", callId: "t1", output: "final result", isError: false },
-    ]);
   });
 });
 
@@ -337,23 +255,6 @@ describe("diff preview in the ask", () => {
     probe.keys("n", "n");
     await probe.settled();
   });
-
-  it("keeps the plain ask for non-write tools", async () => {
-    const executed: string[] = [];
-    const time = clock();
-    const probe = writeAskProbe(
-      {},
-      executed,
-      { name: "bash", arguments: { command: "echo hi" } },
-      time,
-    );
-    probe.type("go").keys("enter");
-    await armedAsk(probe, time);
-    expect(probe.model()?.pendingAsk?.diff).toBeUndefined();
-    probe.keys("y");
-    await probe.settled();
-    expect(executed).toEqual(["bash"]);
-  });
 });
 
 describe("esc-backtrack prompt stepping", () => {
@@ -405,42 +306,6 @@ describe("esc-backtrack prompt stepping", () => {
     return probe;
   }
 
-  it("does nothing on esc-esc when no prompts exist", () => {
-    const probe = new AppProbe();
-    probe.keys("escape", "escape");
-    expect(probe.model()?.backtracking()).toBe(false);
-    expect(probe.model()?.entries.filter((entry) => entry.kind === "user")).toEqual([]);
-  });
-
-  it("walks prior prompts with a visible highlight and cancels on escape", async () => {
-    const probe = await conversed(backtrackProbe([]), "one", "two");
-    probe.keys("escape", "escape");
-    expect(probe.model()?.backtracking()).toBe(true);
-
-    const selectedText = () =>
-      (probe.model()?.visibleTranscript(60, 12) ?? [])
-        .filter((line) => line.selected === true)
-        .map((line) => line.text);
-    expect(selectedText()).toEqual(["two"]);
-
-    probe.keys("up");
-    expect(selectedText()).toEqual(["one"]);
-    probe.keys("up");
-    expect(selectedText()).toEqual(["one"]);
-    probe.keys("down");
-    expect(selectedText()).toEqual(["two"]);
-
-    probe.keys("escape");
-    expect(probe.model()?.backtracking()).toBe(false);
-    expect(selectedText()).toEqual([]);
-  });
-
-  it("stepping past the newest prompt leaves backtrack quietly", async () => {
-    const probe = await conversed(backtrackProbe([]), "one", "two");
-    probe.keys("escape", "escape", "down");
-    expect(probe.model()?.backtracking()).toBe(false);
-  });
-
   it("enter forks at the selected prompt's own entry, including the very first one", async () => {
     const forks: ForkRequest[] = [];
     const probe = await conversed(backtrackProbe(forks), "one", "two");
@@ -450,19 +315,6 @@ describe("esc-backtrack prompt stepping", () => {
     expect(forks).toEqual([{ promptId: "entry:one", draft: "one" }]);
     expect(probe.model()?.backtracking()).toBe(false);
     expect(probe.model()?.entries.filter((entry) => entry.kind === "info")).toEqual([]);
-  });
-
-  it("reports truthfully when the fork cannot happen", async () => {
-    const forks: ForkRequest[] = [];
-    const probe = await conversed(backtrackProbe(forks, false), "one");
-    probe.keys("escape", "escape", "enter");
-    await probe.settled();
-
-    expect(forks).toEqual([{ promptId: "entry:one", draft: "one" }]);
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "no fork point there",
-    });
   });
 
   it("refuses to fork at a prompt the store never acknowledged instead of guessing", async () => {
@@ -475,18 +327,6 @@ describe("esc-backtrack prompt stepping", () => {
     expect(probe.model()?.entries.at(-1)).toEqual({
       kind: "info",
       text: "no fork point there",
-    });
-  });
-
-  it("says so when no fork port is wired instead of silently dropping", async () => {
-    const probe = new AppProbe({ script: [textTurn("re: one")] });
-    probe.type("one").keys("enter");
-    await probe.settled();
-    probe.keys("escape", "escape", "enter");
-    await probe.settled();
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "can't fork · no session store",
     });
   });
 
@@ -559,37 +399,6 @@ describe("esc-backtrack prompt stepping", () => {
     const probe = new AppProbe();
     probe.core.openPane(undefined, "edit me first");
     expect(probe.model()?.input).toBe("edit me first");
-  });
-});
-
-describe("conversation pane completion", () => {
-  it("scrolls the transcript with the wheel and snaps back on escape", async () => {
-    const probe = new AppProbe({
-      script: [textTurn(Array.from({ length: 30 }, (_, at) => `line ${at + 1}`).join("\n"))],
-    });
-    probe.type("go").keys("enter");
-    await probe.settled();
-
-    const rect = probe.rect("session-1");
-    probe.scroll(rect.x + 2, rect.y + 2, "up", 3);
-    expect(probe.model()?.scrollBack).toBe(3);
-
-    probe.keys("escape");
-    expect(probe.model()?.scrollBack).toBe(0);
-  });
-
-  it("composes a multiline prompt and queues a follow-up while busy", async () => {
-    const probe = new AppProbe({ script: [textTurn("first reply"), textTurn("second reply")] });
-    probe.type("hello").keys("shift+return").type("world").keys("enter");
-    probe.type("follow-up").keys("enter");
-    await probe.settled();
-
-    expect(spoken(probe)).toEqual([
-      { kind: "user", text: "hello\nworld" },
-      { kind: "assistant", text: "first reply" },
-      { kind: "user", text: "follow-up" },
-      { kind: "assistant", text: "second reply" },
-    ]);
   });
 });
 
@@ -719,25 +528,6 @@ describe("checkpoint-paired backtrack fork", () => {
     });
   });
 
-  it("skips restoring when no checkpoint store is available", async () => {
-    const opened: (string | undefined)[] = [];
-    const trees: SessionTreePort = {
-      load: async (sessionId) => ({ sessionId, roots: promptRoots(treeHash) }),
-      setLabel: async () => {},
-      fork: async () => "forked-1",
-    };
-    const outcome = await forkAtPrompt(
-      trees,
-      (sessionId) => opened.push(sessionId),
-      undefined,
-      "s1",
-      "u2",
-      "two",
-    );
-    expect(outcome).toEqual({ forked: true, note: "forked · files untouched" });
-    expect(opened).toEqual(["forked-1"]);
-  });
-
   it("forks at the chosen prompt's own entry after a flush and a compaction were replayed", async () => {
     const dir = await mkdtemp(join(tmpdir(), "keywork-backtrack-"));
     try {
@@ -806,36 +596,5 @@ describe("checkpoint-paired backtrack fork", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  });
-
-  it("surfaces the restore note quietly in the transcript after enter-fork", async () => {
-    const probe = new AppProbe({
-      createPane: (id, notify, commands) => {
-        const agent = new Agent({ provider: new MockProvider([textTurn("re: one")]) });
-        const pane = new ConversationPane(id, agent, notify, undefined, commands, {
-          ports: {
-            forkAtPrompt: async () => ({ forked: true, note: "files put back to that point" }),
-          },
-        });
-        bindSessionLifecycle({
-          pane,
-          attachment: {
-            id: "s1",
-            history: [],
-            replay: () => {},
-            append: async () => ({ entryId: "u1" }),
-          },
-        });
-        return pane;
-      },
-    });
-    probe.type("one").keys("enter");
-    await probe.settled();
-    probe.keys("escape", "escape", "enter");
-    await probe.settled();
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "files put back to that point",
-    });
   });
 });

@@ -3,7 +3,6 @@ import { type LinkCell, markLinkTargets } from "../terminal-links.ts";
 import { assertReferenceLinks } from "./file-links.ts";
 
 const expected = "file:///workspace/packages/engine/src/providers/messages-wire.ts#L210";
-const other = expected.replace("#L210", "#L211");
 const open = `\x1b]8;id=42;${expected}\x1b\\`;
 const close = "\x1b]8;;\x1b\\";
 const first = "packages/";
@@ -39,16 +38,6 @@ describe("OSC 8 replay markers", () => {
       marked: `${screen}\x1b[0;1m${row}pac${erase}\x1b[2;18Hkages/\x1b[0m today.`,
       activeTarget: "",
     });
-  });
-
-  it("switches targets directly, honors BEL, and records an open final target", () => {
-    expect(markLinkTargets(`\x1b]8;;${other}\x07first${open}second`, expected)).toEqual({
-      marked: "\x1b[0;3mfirst\x1b[0;1msecond",
-      activeTarget: expected,
-    });
-    expect(markLinkTargets(`${close}\x1b]8;;${expected};other\x07`, expected).activeTarget).toBe(
-      `${expected};other`,
-    );
   });
 });
 

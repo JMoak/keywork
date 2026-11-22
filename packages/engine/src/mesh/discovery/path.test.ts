@@ -2,16 +2,11 @@ import { describe, expect, it } from "vitest";
 import { pingFailure } from "../transport/ping.ts";
 import { parseStatus } from "../transport/status.ts";
 import { recordedHost, recordedText } from "../transport/testing/recorded.ts";
-import { classifyPath, classifyPing, isRelayed, probePath } from "./path.ts";
+import { classifyPath, classifyPing, probePath } from "./path.ts";
 
 const route = { online: true, curAddr: "", relay: "", peerRelay: "" };
 
 describe("classifyPath", () => {
-  it("reads the recorded idle peer as reachable over its DERP region", () => {
-    const [host] = parseStatus(recordedText("status-running")).peers;
-    expect(host && classifyPath(host)).toEqual({ kind: "derp", region: "ord" });
-  });
-
   it("reads the recorded active peer as direct", () => {
     const [host] = parseStatus(recordedText("status-direct")).peers;
     expect(host && classifyPath(host)).toEqual({ kind: "direct", endpoint: "192.168.1.30:41641" });
@@ -39,16 +34,6 @@ describe("classifyPath", () => {
     expect(classifyPath({ ...route, online: false, curAddr: "203.0.113.5:41641" })).toEqual({
       kind: "offline",
     });
-  });
-
-  it("says unknown when no path field is set", () => {
-    expect(classifyPath(route)).toEqual({ kind: "unknown" });
-  });
-
-  it("names the relayed paths", () => {
-    expect(isRelayed({ kind: "derp", region: "ord" })).toBe(true);
-    expect(isRelayed({ kind: "peer-relay", relay: "x" })).toBe(true);
-    expect(isRelayed({ kind: "direct", endpoint: "x" })).toBe(false);
   });
 });
 

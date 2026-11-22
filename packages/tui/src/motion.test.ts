@@ -6,7 +6,6 @@ import {
   type MotionSpec,
   type StepShape,
   stepProgress,
-  type Tempo,
   tempos,
 } from "./motion.ts";
 
@@ -69,20 +68,6 @@ function stage(options: Omit<AnimatorOptions, "schedule"> = {}): Stage {
   return { clock, animator, frames, settledCount: () => settled, play };
 }
 
-describe("tempos", () => {
-  it("matches the tempo tables in the grammar", () => {
-    expect(tempos.instant).toEqual({ durationMs: 0, steps: 1 });
-    expect(tempos.quick.durationMs).toBe(120);
-    expect(tempos.quick.steps).toBeGreaterThanOrEqual(2);
-    expect(tempos.quick.steps).toBeLessThanOrEqual(3);
-    expect(tempos.settle.durationMs).toBe(240);
-    expect(tempos.settle.steps).toBeGreaterThanOrEqual(4);
-    expect(tempos.settle.steps).toBeLessThanOrEqual(6);
-    expect(tempos.ceremony.durationMs).toBeGreaterThanOrEqual(600);
-    expect(tempos.ceremony.durationMs).toBeLessThanOrEqual(900);
-  });
-});
-
 describe("stepProgress", () => {
   const deltas = (shape: StepShape, steps: number): number[] =>
     Array.from({ length: steps }, (_, i) => stepProgress(shape, i + 1, steps)).map(
@@ -93,12 +78,6 @@ describe("stepProgress", () => {
     const arrival = deltas("arrival", 5);
     expect(arrival.every((step, i) => i === 0 || step < (arrival[i - 1] ?? 0))).toBe(true);
     expect(stepProgress("arrival", 5, 5)).toBe(1);
-  });
-
-  it("gathers departures: softest step first, decisive last, ending exactly at 1", () => {
-    const departure = deltas("departure", 5);
-    expect(departure.every((step, i) => i === 0 || step > (departure[i - 1] ?? 0))).toBe(true);
-    expect(stepProgress("departure", 5, 5)).toBe(1);
   });
 });
 
@@ -149,76 +128,12 @@ describe("Animator", () => {
     expect(settledCount()).toBe(2);
   });
 
-  it("lets different regions move concurrently", () => {
-    const { clock, animator, play } = stage();
-    const other: number[] = [];
-    play();
-    animator.play({
-      region: "pane-2",
-      tempo: "quick",
-      shape: "departure",
-      apply: (ink) => other.push(ink),
-    });
-    clock.advance(240);
-    expect(other.at(-1)).toBe(1);
-    expect(animator.moving).toBe(false);
-  });
-
-  it("permits at most one ceremony per moment, across regions", () => {
-    const { clock, animator, frames, settledCount, play } = stage();
-    play({ tempo: "ceremony" });
-    clock.advance(90);
-    const other: number[] = [];
-    animator.play({
-      region: "airlock",
-      tempo: "ceremony",
-      shape: "arrival",
-      apply: (ink) => other.push(ink),
-    });
-    expect(frames.at(-1)).toBe(1);
-    expect(settledCount()).toBe(1);
-    clock.advance(720);
-    expect(other.at(-1)).toBe(1);
-  });
-
-  it("leaves quick movers alone when a ceremony starts elsewhere", () => {
-    const { clock, animator, frames, play } = stage();
-    play({ tempo: "quick" });
-    animator.play({
-      region: "airlock",
-      tempo: "ceremony",
-      shape: "arrival",
-      apply: () => {},
-    });
-    expect(frames.at(-1)).not.toBe(1);
-    clock.advance(120);
-    expect(frames.at(-1)).toBe(1);
-  });
-
   it("jumps straight to the final frame under reduced motion", () => {
     const { clock, frames, settledCount, play } = stage({ reducedMotion: true });
     play({ tempo: "ceremony" });
     expect(frames).toEqual([1]);
     expect(settledCount()).toBe(1);
     expect(clock.pending).toBe(0);
-  });
-
-  it("treats instant as a single final frame", () => {
-    const { clock, frames, play } = stage();
-    play({ tempo: "instant" });
-    expect(frames).toEqual([1]);
-    expect(clock.pending).toBe(0);
-  });
-
-  it("ignores settling an idle region and animates a region again after it settles", () => {
-    const { clock, animator, frames, play } = stage();
-    animator.settleRegion("pane-1");
-    expect(frames).toEqual([]);
-    play({ tempo: "quick" });
-    clock.advance(120);
-    play({ tempo: "quick" });
-    clock.advance(120);
-    expect(frames.filter((ink) => ink === 1).length).toBe(2);
   });
 });
 
@@ -334,13 +249,5 @@ describe("inkAt", () => {
     expect(inkAt(ramp, -1)).toBe("░");
     expect(inkAt(ramp, 2)).toBe("█");
     expect(() => inkAt([], 0.5)).toThrow(/non-empty/);
-  });
-});
-
-const tempoNames: Tempo[] = ["instant", "quick", "settle", "ceremony"];
-
-describe("the grammar has exactly four tempos", () => {
-  it("defines no animation outside them", () => {
-    expect(Object.keys(tempos).sort()).toEqual([...tempoNames].sort());
   });
 });

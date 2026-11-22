@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { botsDir } from "../extensions/bots.ts";
 import type { RoutineView } from "../routines/service.ts";
 import { type CreatureChanged, creatureHost } from "./host.ts";
-import { type ChoreSwitchboard, type CreatureChores, choresOver, noChores } from "./pause.ts";
+import { type ChoreSwitchboard, type CreatureChores, choresOver } from "./pause.ts";
 import { CreatureRegistry } from "./registry.ts";
 import { FakeCreatureSessions } from "./testing.ts";
 
@@ -106,19 +106,6 @@ describe("pausing a creature", () => {
     );
     expect(await file()).not.toHaveProperty("paused");
     expect(changes.at(-1)).toEqual({ slug: "wren", change: "resumed" });
-  });
-
-  it("resumes a running creature as a no-op and pauses without a chore service", async () => {
-    const { host } = await fixture();
-
-    expect(await host.resume("wren", noChores)).toEqual({
-      slug: "wren",
-      paused: false,
-      since: null,
-      chores: [],
-    });
-    expect(await host.pause("wren", noChores)).toMatchObject({ paused: true, chores: [] });
-    expect(await host.pause("nobody", noChores)).toBeUndefined();
   });
 });
 

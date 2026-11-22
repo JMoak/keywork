@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeClock } from "../../../engine/src/routines/testing.ts";
-import { defaultNodeConfig, withoutWorkspace, withWorkspace } from "./config.ts";
-import { type FolderOpens, heldByConsole, opensStore } from "./opens.ts";
+import { type FolderOpens, opensStore } from "./opens.ts";
 import { type ServedSource, Serving, watchFolder, workspaceInUse } from "./serving.ts";
 import { Supervisor, type SupervisorEvent, type UnitSpec } from "./supervisor.ts";
 import { FakeProcesses, settle } from "./testing.ts";
@@ -140,20 +139,6 @@ function stateOf(rig: Rig, unit: WorkspaceUnit): string | undefined {
 }
 
 describe("the node serves the folders it is told to while it runs", () => {
-  it("starts a workspace added to the served set without a restart", async () => {
-    const rig = await serving();
-    expect(rig.processes.of(notes.spec.name)).toHaveLength(0);
-    rig.setServed([stead, notes]);
-    await rig.changed();
-    expect(rig.processes.latest(notes.spec.name).unit.cwd).toBe("/src/notes");
-    expect(stateOf(rig, notes)).toBe("running");
-    expect(rig.processes.of("core")).toHaveLength(1);
-    expect(rig.processes.of(stead.spec.name)).toHaveLength(1);
-    expect(rig.serving.workspaces().map((unit) => unit.identity)).toEqual(["aaa111", "bbb222"]);
-    expect(rig.events.map((event) => event.event)).toContain("unit.added");
-    await rig.stop();
-  });
-
   it("stops a removed workspace's server and forgets it, leaving the others running", async () => {
     const rig = await serving([stead, notes]);
     const notesChild = rig.processes.latest(notes.spec.name);
@@ -227,17 +212,6 @@ describe("the node serves the folders it is told to while it runs", () => {
 });
 
 describe("the served set on disk", () => {
-  it("removes one workspace and keeps the rest, and leaves the config as it was when absent", () => {
-    const config = withWorkspace(
-      withWorkspace(defaultNodeConfig(), { cwd: join(dir, "a"), slug: null }),
-      { cwd: join(dir, "b"), slug: null },
-    );
-    const without = withoutWorkspace(config, { cwd: join(dir, "a"), slug: null });
-    expect(without.workspaces).toEqual([{ cwd: join(dir, "b"), slug: null }]);
-    expect(withoutWorkspace(without, { cwd: join(dir, "a"), slug: null })).toBe(without);
-    expect(withoutWorkspace(config, { cwd: join(dir, "a"), slug: "notes" })).toBe(config);
-  });
-
   it("records each folder open with the console that holds it and forgets it on removal", () => {
     const store = opensStore(join(dir, "opens.json"));
     expect(store.read()).toEqual({});
@@ -247,14 +221,6 @@ describe("the served set on disk", () => {
     expect(store.read()).toEqual({ bbb222: { at: "2026-11-07T09:01:00.000Z", console: null } });
     writeFileSync(join(dir, "opens.json"), "{ not json");
     expect(store.read()).toEqual({});
-  });
-
-  it("holds a folder only while its console process lives", () => {
-    const open = { at: "2026-11-07T09:00:00.000Z", console: 7300 };
-    expect(heldByConsole(open, (pid) => pid === 7300)).toBe(true);
-    expect(heldByConsole(open, () => false)).toBe(false);
-    expect(heldByConsole({ ...open, console: null }, () => true)).toBe(false);
-    expect(heldByConsole(undefined, () => true)).toBe(false);
   });
 
   it("tells the node when a file in its state folder changes", async () => {

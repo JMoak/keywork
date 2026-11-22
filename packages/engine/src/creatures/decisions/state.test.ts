@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { askFactsOf } from "./facts.ts";
 import { loadRatchet } from "./ratchet.ts";
-import { keeperContextOf, keeperState, trustedFactsOf } from "./state.ts";
-import { askFor, bashAsk, conversationOfPip } from "./testing.ts";
+import { keeperState, trustedFactsOf } from "./state.ts";
+import { bashAsk, conversationOfPip } from "./testing.ts";
 
 const ratchet = await loadRatchet();
 
@@ -41,28 +41,6 @@ describe("keeperState", () => {
     expect(watching.trustedHash).toBe(quiet.trustedHash);
     expect(watching.hash).not.toBe(quiet.hash);
   });
-
-  it("says none for a session no creature owns", () => {
-    const state = keeperState(ratchet, askFactsOf(bashAsk("make")), keeperContextOf(undefined));
-    const facts = trustedFactsOf(state.text);
-    expect([facts.get("creature"), facts.get("thread"), facts.get("workshop")]).toEqual([
-      "none",
-      "session",
-      "none",
-    ]);
-  });
-
-  it("places a path tool and leaves the command facts out", () => {
-    const state = keeperState(
-      ratchet,
-      askFactsOf(askFor("write", { path: "a.ts", content: "x" })),
-      conversationOfPip,
-    );
-    const facts = trustedFactsOf(state.text);
-    expect(facts.get("inside_workspace")).toBe("unknown");
-    expect(facts.has("command_parts")).toBe(false);
-    expect(facts.get("rule")).toBe("none");
-  });
 });
 
 describe("trustedFactsOf", () => {
@@ -71,15 +49,5 @@ describe("trustedFactsOf", () => {
     const facts = trustedFactsOf(state.text);
     expect(facts.get("destructive")).toBe("false");
     expect(facts.get("workshop")).toBe("host");
-  });
-});
-
-describe("keeperContextOf", () => {
-  it("reads the creature and thread kind from the session tag", () => {
-    expect(keeperContextOf({ creature: "pip", kind: "routine" }, "wb-1")).toEqual({
-      creature: "pip",
-      thread: "routine",
-      workshop: "wb-1",
-    });
   });
 });

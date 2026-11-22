@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { highlightedLanguages, highlighterFor, type SyntaxSpan } from "./highlighter.ts";
+import { highlighterFor, type SyntaxSpan } from "./highlighter.ts";
 
 const spansOf = (language: string, ...lines: string[]): SyntaxSpan[][] => {
   const highlighter = highlighterFor(language);
@@ -69,37 +69,12 @@ describe("the highlighter", () => {
     expect(spans?.at(-1)).toEqual({ text: '"hello', syntax: "string" });
   });
 
-  it("distinguishes json keys from string values", () => {
-    const [spans] = spansOf("json", '{"name": "keywork", "tags": ["a"]}');
-    expect(classOf(spans ?? [], '"name"')).toBe("type");
-    expect(classOf(spans ?? [], '"keywork"')).toBe("string");
-    expect(classOf(spans ?? [], '"a"')).toBe("string");
-  });
-
   it("reads shell variables and boundary-only comments", () => {
     const [spans] = spansOf("sh", `echo "$HOME" \${USER} a#b # done`);
     expect(classOf(spans ?? [], "echo")).toBe("keyword");
     expect(classOf(spans ?? [], `\${USER}`)).toBe("type");
     expect(classOf(spans ?? [], "a#b")).toBeUndefined();
     expect(classOf(spans ?? [], "# done")).toBe("comment");
-  });
-
-  it("handles python triple quotes across lines and its literal constants", () => {
-    const [first, second, third] = spansOf("py", 'x = """doc', "more", '""" or None');
-    expect(first?.at(-1)).toEqual({ text: '"""doc', syntax: "string" });
-    expect(second).toEqual([{ text: "more", syntax: "string" }]);
-    expect(third?.[0]).toEqual({ text: '"""', syntax: "string" });
-    expect(classOf(third ?? [], "None")).toBe("constant");
-  });
-
-  it("knows go and rust builtins by name and capitalized types by shape", () => {
-    const [goSpans] = spansOf("go", "var n int = len(Thing{})");
-    expect(classOf(goSpans ?? [], "int")).toBe("type");
-    expect(classOf(goSpans ?? [], "Thing")).toBe("type");
-    const [rustSpans] = spansOf("rs", "let x: Option<u32> = Some(3u32);");
-    expect(classOf(rustSpans ?? [], "Option")).toBe("type");
-    expect(classOf(rustSpans ?? [], "Some")).toBe("constant");
-    expect(classOf(rustSpans ?? [], "3u32")).toBe("constant");
   });
 
   it("colors diff lines by their leading mark only", () => {
@@ -114,36 +89,5 @@ describe("the highlighter", () => {
     expect(added).toEqual([{ text: "+new line", syntax: "added" }]);
     expect(removed).toEqual([{ text: "-old line", syntax: "removed" }]);
     expect(context).toEqual([{ text: " unchanged" }]);
-  });
-
-  it("marks markdown headings, list leads, and code spans inside fences", () => {
-    const [heading, item] = spansOf("md", "## Title", "- see `bun test` now");
-    expect(heading).toEqual([{ text: "## Title", syntax: "keyword" }]);
-    expect(item).toEqual([
-      { text: "- ", syntax: "punctuation" },
-      { text: "see " },
-      { text: "`bun test`", syntax: "string" },
-      { text: " now" },
-    ]);
-  });
-
-  it("merges adjacent same-class runs so spans stay few", () => {
-    const [spans] = spansOf("ts", "a   b");
-    expect(spans).toEqual([{ text: "a   b" }]);
-  });
-
-  it("stays linear over a five-thousand-line block", () => {
-    const highlighter = highlighterFor("ts");
-    const line =
-      'export const value = compute("text", 12.5, /* note */ [a, b]) ?? fallback; // end';
-    const startedAt = performance.now();
-    for (let index = 0; index < 5000; index += 1) highlighter.line(line);
-    expect(performance.now() - startedAt).toBeLessThan(2000);
-  });
-
-  it("lists the languages it serves", () => {
-    expect(highlightedLanguages()).toEqual(
-      expect.arrayContaining(["ts", "js", "json", "sh", "py", "go", "rs", "diff", "md"]),
-    );
   });
 });

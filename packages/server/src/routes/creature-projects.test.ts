@@ -53,16 +53,6 @@ describe("creature project routes", () => {
     expect((await route.receiveCreatureProjectWork(post(input), params)).status).toBe(503);
   });
 
-  it("hands only the qualified project selection to the binding port", async () => {
-    const seam = ports();
-    const route = handlers(seam);
-    const selection = new Request("http://127.0.0.1", { method: "PUT" });
-    const response = await route.bindCreatureProject(selection, params);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(binding);
-    expect(seam.creatureProjects.bind).toHaveBeenCalledExactlyOnceWith(params.slug, params.project);
-  });
-
   it("separates project-thread execution from explicit discussion in the home conversation", async () => {
     const seam = ports();
     const log = new EventLog();

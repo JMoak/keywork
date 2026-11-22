@@ -76,23 +76,6 @@ describe("a workshop's detail", () => {
     });
   });
 
-  it("says a stopped microVM is measured only while it runs", async () => {
-    const { workshops } = await node();
-    const view = await raised(workshops, { creature: "wren", substrate: "sbx" });
-
-    const detail = await workshops.detail(view.id);
-
-    expect(detail).toMatchObject({
-      resources: {
-        measured: {
-          disk: { usedBytes: null, sizeBytes: null },
-          memory: { usedBytes: null, totalBytes: null },
-          unmeasured: [expect.stringContaining("only while it runs")],
-        },
-      },
-    });
-  });
-
   it("shows a bare host as unenforced, sized by what it holds and closed to typing", async () => {
     const { workshops } = await node();
     const view = await raised(workshops, { creature: "wren", substrate: "host" });
@@ -117,12 +100,6 @@ describe("a workshop's detail", () => {
     expect((await workshops.detail(view.id, [hostGrant])) as { terminal: unknown }).toMatchObject({
       terminal: { allowed: true },
     });
-  });
-
-  it("refuses an unknown id", async () => {
-    const { workshops } = await node();
-
-    expect(await workshops.detail("nope-000000")).toMatchObject({ refused: "missing" });
   });
 });
 

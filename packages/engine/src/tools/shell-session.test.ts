@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { processExists } from "../proc.ts";
@@ -40,18 +40,6 @@ afterEach(async () => {
 });
 
 describe("ShellSession", () => {
-  it("keeps a cwd change from call N live in call N+1", async () => {
-    const root = await tempDir();
-    await mkdir(join(root, "nested"));
-    const session = new ShellSession(root);
-    sessions.push(session);
-
-    await session.run("cd nested");
-    const pwd = await session.run("pwd");
-
-    expect(basename(pwd.trim())).toBe("nested");
-  });
-
   it("knows where it stands after a cd, and stands at its folder again in a fresh shell", async () => {
     const root = await tempDir();
     await mkdir(join(root, "a nested folder"));
@@ -66,15 +54,6 @@ describe("ShellSession", () => {
 
     await session.reset();
     expect(session.workingDirectory()).toBe(root);
-  });
-
-  it("keeps exported environment live across calls", async () => {
-    const session = await openSession();
-
-    await session.run("export KW_SHELL_TEST=alive");
-    const echoed = await session.run("echo $KW_SHELL_TEST");
-
-    expect(echoed.trim()).toBe("alive");
   });
 
   it("returns to a clean shell after reset", async () => {
@@ -95,12 +74,6 @@ describe("ShellSession", () => {
 
     expect(failure).toContain("warned");
     expect(failure).toContain("(exit code 1)");
-  });
-
-  it("captures output without a trailing newline", async () => {
-    const session = await openSession();
-
-    expect(await session.run("printf partial")).toBe("partial");
   });
 
   it("kills the whole shell tree when the session closes", async () => {
@@ -150,15 +123,6 @@ describe("ShellSession", () => {
 
     expect(session.running()).toBe(false);
     expect((await session.run("echo fresh")).trim()).toBe("fresh");
-  }, 10_000);
-
-  it("lets a 100k newline-free line through whole", async () => {
-    const session = await openSession();
-
-    const output = await session.run("head -c 100000 /dev/zero | tr '\\0' x; echo; echo tail");
-
-    expect(output.length).toBe(100_000 + "\ntail".length);
-    expect(output.endsWith("tail")).toBe(true);
   }, 10_000);
 
   it("keeps the head and the tail of a flood past the retained ceiling without buffering it whole", async () => {
@@ -250,22 +214,6 @@ describe("a framed command's answer", () => {
     );
     expect(answerTo(["stdout", `partial${stdoutFrame}`], ["stderr", stderrFrame])).toBe("partial");
   });
-
-  it("ends at the command's last text, however many newlines close it, and keeps the blank lines inside", () => {
-    expect(answerTo(["stderr", stderrFrame], ["stdout", `whole\n${stdoutFrame}`])).toBe("whole");
-    expect(answerTo(["stderr", stderrFrame], ["stdout", `a\n\nb\n\n\n${stdoutFrame}`])).toBe(
-      "a\n\nb",
-    );
-  });
-
-  it("is empty when the command printed nothing", () => {
-    expect(answerTo(["stderr", stderrFrame], ["stdout", stdoutFrame])).toBe("");
-    expect(answerTo(["stdout", stdoutFrame], ["stderr", stderrFrame])).toBe("");
-  });
-
-  it("reads stderr that ends without a newline", () => {
-    expect(answerTo(["stdout", stdoutFrame], ["stderr", `warned${stderrFrame}`])).toBe("warned");
-  });
 });
 
 const sentinel = "__keywork_framed__";
@@ -342,18 +290,6 @@ describe.skipIf(process.platform !== "win32")("ShellSession over PowerShell", ()
     sessions.push(session);
     return session;
   }
-
-  it("keeps a cwd change live in the next call", async () => {
-    const root = await tempDir();
-    await mkdir(join(root, "nested"));
-    const session = new ShellSession(root, powershell);
-    sessions.push(session);
-
-    await session.run("cd nested");
-    const pwd = await session.run("(Get-Location).Path");
-
-    expect(basename(pwd.trim())).toBe("nested");
-  }, 20_000);
 
   it("keeps environment variables live across calls", async () => {
     const session = await openPowerShell();

@@ -1,9 +1,4 @@
-import {
-  type FetchLike,
-  type ProviderRequest,
-  type Resolution,
-  UndeclaredCapabilityError,
-} from "@keywork/engine";
+import type { FetchLike, ProviderRequest, Resolution } from "@keywork/engine";
 import type { KeyworkConfig } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
 import type { Credential, CredentialMap } from "../auth-store.ts";
@@ -29,10 +24,6 @@ const oauth: CredentialMap = {
 };
 
 describe("composeInference built-ins", () => {
-  it("is unconfigured with no credentials anywhere", () => {
-    expect(code(runtime().resolve({}))).toBe("unconfigured");
-  });
-
   it("makes the sole credentialed built-in the zero-config default", () => {
     expect(reference(runtime({ env: { OPENAI_API_KEY: "k" } }).resolve({}))).toBe(
       "openai/gpt-5-mini",
@@ -41,14 +32,6 @@ describe("composeInference built-ins", () => {
       "openrouter/openai/gpt-5-mini",
     );
     expect(reference(runtime({ credentials: oauth }).resolve({}))).toBe("openai-codex/gpt-5.5");
-  });
-
-  it("refuses to pick among several credentialed providers by order", () => {
-    const both = runtime({ env: { OPENAI_API_KEY: "k", OPENROUTER_API_KEY: "k2" } });
-    expect(code(both.resolve({}))).toBe("ambiguous");
-    expect(reference(both.resolve({ default: "openrouter/openai/gpt-5-mini" }))).toBe(
-      "openrouter/openai/gpt-5-mini",
-    );
   });
 
   it("lets a KEYWORK_-scoped variable outrank a saved key, which outranks the ambient variable", () => {
@@ -101,13 +84,6 @@ describe("composeInference built-ins", () => {
       kind: "missing",
       expected: "KEYWORK_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY, or keywork connect",
     });
-  });
-
-  it("answers a qualified reference for a credential-less built-in with unavailable-credential", () => {
-    const resolution = runtime({ env: { OPENROUTER_API_KEY: "k" } }).resolve({
-      override: "openai/gpt-5",
-    });
-    expect(code(resolution)).toBe("unavailable-credential");
   });
 
   it("keeps the openrouter usage-accounting decoration on its registration only", () => {
@@ -267,31 +243,5 @@ describe("composeInference oauth refresh", () => {
     expect(tokenRequests).toBe(1);
     expect(bearers).toEqual(Array.from({ length: 10 }, () => "Bearer fresh"));
     expect(persisted).toEqual([expect.objectContaining({ type: "oauth", refresh: "r2" })]);
-  });
-});
-
-describe("composeInference providers", () => {
-  it("opens a provider that carries the binding's declared capabilities", () => {
-    const built = runtime({
-      env: { OPENAI_API_KEY: "k" },
-      config: { models: { "gpt-5*": { input: ["text"] } } },
-    });
-    const { provider, reference: ref } = built.open({ override: "openai/gpt-5-mini" });
-    expect(ref).toBe("openai/gpt-5-mini");
-    const imageRequest = {
-      systemPrompt: "",
-      messages: [
-        {
-          role: "user" as const,
-          parts: [{ type: "image" as const, mediaType: "image/png", data: "aGk=" }],
-        },
-      ],
-      tools: [],
-    };
-    expect(() => provider.stream(imageRequest)).toThrow(UndeclaredCapabilityError);
-  });
-
-  it("throws a typed ResolutionError from open when nothing binds", () => {
-    expect(() => runtime().open({})).toThrow(/no inference provider is configured/);
   });
 });

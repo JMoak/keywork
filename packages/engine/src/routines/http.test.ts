@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { minuteMs } from "./clock.ts";
 import { type RoutineOperationId, type RoutineReply, routineOperations } from "./http.ts";
-import { routineJsonSchema } from "./routine.ts";
 import { RoutineHarness, routineInput } from "./testing.ts";
 
 let harness: RoutineHarness;
@@ -101,13 +100,5 @@ describe("routine operations", () => {
     expect((await call("deleteRoutine", triage)).status).toBe(200);
     expect((await call("readRoutine", triage)).status).toBe(404);
     expect(harness.store.runs("wren", "triage", 10)).toHaveLength(1);
-  });
-
-  it("publishes the routine file as a JSON schema for the PUT body", () => {
-    expect(routineJsonSchema).toMatchObject({
-      type: "object",
-      required: expect.arrayContaining(["id", "title", "instructions", "trigger"]),
-      properties: { tools: { enum: ["read-only", "write", "act"] } },
-    });
   });
 });

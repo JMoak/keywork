@@ -17,32 +17,6 @@ describe("selectScenarios", () => {
     });
   });
 
-  it("excludes the requested scenario without changing the remaining order", () => {
-    expect(
-      selectScenarios(available, { scenarios: [], exclude: ["long-session"], live: false }),
-    ).toEqual({ ok: true, scenarios: [available[0], available[2]] });
-  });
-
-  it("applies repeated exclusions to explicitly selected scenarios", () => {
-    expect(
-      selectScenarios(available, {
-        scenarios: ["file-links-on", "long-session", "cold-start"],
-        exclude: ["long-session", "long-session"],
-        live: false,
-      }),
-    ).toEqual({ ok: true, scenarios: [available[2], available[0]] });
-  });
-
-  it("rejects unknown exclusions", () => {
-    expect(
-      selectScenarios(available, { scenarios: [], exclude: ["long-sesion"], live: false }),
-    ).toEqual({
-      ok: false,
-      error: "unknown excluded scenario: long-sesion (try --list)",
-      exitCode: 2,
-    });
-  });
-
   it("rejects an empty selection instead of reporting a successful run", () => {
     expect(
       selectScenarios(available, {

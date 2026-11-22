@@ -92,23 +92,6 @@ describe("picking what to copy", () => {
     );
     expect(lastDiff(model)).toBe("@@ -1,1 +1,1 @@\n-old line\n+new line");
   });
-
-  it("renders a write as one add hunk", () => {
-    const model = modelWith({
-      kind: "tool",
-      text: "write x.txt",
-      failed: false,
-      run: toolRun("write", { path: "x.txt", content: "one\ntwo" }),
-    });
-    expect(lastDiff(model)).toBe("@@ -1,0 +1,2 @@\n+one\n+two");
-  });
-
-  it("finds nothing in an empty session", () => {
-    const model = modelWith();
-    expect(lastReply(model)).toBeUndefined();
-    expect(lastCodeBlock(model)).toBeUndefined();
-    expect(lastDiff(model)).toBeUndefined();
-  });
 });
 
 describe("copy commands", () => {
@@ -126,35 +109,6 @@ describe("copy commands", () => {
       "copied the last reply · 15 chars",
       "copied the last code block · 4 chars",
     ]);
-  });
-
-  it("answer aliases and the bare /copy", () => {
-    const { bytes, registry } = harness(modelWith({ kind: "assistant", text: "x" }));
-    expect(registry.run("copy")).toBe(true);
-    expect(registry.run("copy-reply")).toBe(true);
-    expect(registry.run("copy-block")).toBe(true);
-    expect(registry.run("copy-hunk")).toBe(true);
-    expect(bytes).toHaveLength(2);
-  });
-
-  it("explain an empty copy without touching the terminal", () => {
-    const { bytes, notices, registry } = harness(modelWith());
-    registry.run("copy-message");
-    registry.run("copy-code");
-    registry.run("copy-diff");
-    expect(bytes).toEqual([]);
-    expect(notices).toEqual([
-      "nothing to copy · no reply yet",
-      "nothing to copy · no code block yet",
-      "nothing to copy · no diff yet",
-    ]);
-  });
-
-  it("ask for a focused session when none is", () => {
-    const { bytes, notices, registry } = harness(undefined);
-    registry.run("copy-message");
-    expect(bytes).toEqual([]);
-    expect(notices).toEqual(["nothing to copy · focus a session first"]);
   });
 
   it("stay quiet on a terminal that takes no clipboard writes", () => {

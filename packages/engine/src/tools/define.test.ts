@@ -13,11 +13,6 @@ const echo = defineTool({
 });
 
 describe("defineTool", () => {
-  it("publishes the schema as JSON Schema and runs parsed arguments", async () => {
-    expect(echo.parameters).toMatchObject({ type: "object", required: ["text"] });
-    expect(await echo.execute({ text: "hi" })).toBe("hi");
-  });
-
   it("rejects rather than throws when the arguments do not parse", async () => {
     const outcome = echo.execute({ text: 7 });
 

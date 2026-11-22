@@ -9,7 +9,6 @@ import {
   elisionMarker,
   removeSessionFiles,
   SpillStore,
-  spillDirFor,
 } from "./spill.ts";
 
 const tempDir = scratchDirs("keywork-spill-");
@@ -64,19 +63,6 @@ describe("boundToolOutput", () => {
 });
 
 describe("SpillStore", () => {
-  it("lives beside the session JSONL under a matching .spills directory", () => {
-    const dir = spillDirFor(join("sessions", "ws", "1725600000-0001-42.jsonl"));
-
-    expect(dir).toBe(join("sessions", "ws", "1725600000-0001-42.spills"));
-  });
-
-  it("returns small outputs as they are and writes nothing", async () => {
-    const store = SpillStore.beside(join(await tempDir(), "s.jsonl"));
-
-    expect(await store.keep("small")).toEqual({ output: "small" });
-    expect(existsSync(store.dir)).toBe(false);
-  });
-
   it("spills one file for an oversized output and hands back the bounded form", async () => {
     const store = SpillStore.beside(join(await tempDir(), "s.jsonl"));
     const full = "line\n".repeat(600_000);

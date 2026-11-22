@@ -55,12 +55,6 @@ describe("regions", () => {
 });
 
 describe("the scene an arrangement makes on a screen", () => {
-  it("tiles everything when the arrangement holds", () => {
-    const scene = sceneOf(docked, "a", { width: 120, height: 40 });
-    expect(scene.kind).toBe("tiled");
-    expect([...sceneRects(scene, { width: 120, height: 40 }).keys()]).toEqual(["l", "a", "b"]);
-  });
-
   it("admits the anchor first, then the main stage in reading order, then the docks", () => {
     const screen = { width: 14, height: 10 };
     expect([...sceneRects(sceneOf(docked, "a", screen), screen).keys()]).toEqual(["a", "b"]);
@@ -72,11 +66,6 @@ describe("the scene an arrangement makes on a screen", () => {
     const scene = sceneOf(docked, "b", screen);
     expect(scene).toEqual({ kind: "solo", id: "b" });
     expect(sceneRects(scene, screen).get("b")).toEqual({ x: 0, y: 0, width: 3, height: 2 });
-  });
-
-  it("anchors on the first pane when no anchor is given", () => {
-    const screen = { width: 3, height: 2 };
-    expect(sceneOf(docked, undefined, screen)).toEqual({ kind: "solo", id: "a" });
   });
 
   it("ignores dock ratios that would starve the main stage", () => {

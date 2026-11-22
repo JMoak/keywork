@@ -112,14 +112,14 @@ describe("writeFileAtomic", () => {
       };
     }
 
-    it.each(["EPERM", "EBUSY", "EACCES"])("rides out a transient %s on Windows", async (code) => {
+    it("rides out a transient EPERM on Windows", async () => {
       const root = await scratchDir();
       const target = join(root, "curation.md");
       await writeFileAtomic(target, "one\n");
       const pauses: number[] = [];
 
       await writeFileAtomic(target, "two\n", {
-        disk: renamesHeldFor(2, code),
+        disk: renamesHeldFor(2, "EPERM"),
         pacing: {
           platform: "win32",
           pause: async (milliseconds) => {

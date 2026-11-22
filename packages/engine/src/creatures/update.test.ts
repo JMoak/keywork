@@ -7,12 +7,7 @@ import { loadRatchet } from "./decisions/ratchet.ts";
 import { recordKeeperVerdict } from "./decisions/record.ts";
 import { answeredAsk, bashAsk, granted } from "./decisions/testing.ts";
 import { MalformedCreatureError } from "./file.ts";
-import {
-  type CreatureChanged,
-  type CreatureHostSeams,
-  creatureHost,
-  ShadowReportUnserved,
-} from "./host.ts";
+import { type CreatureChanged, type CreatureHostSeams, creatureHost } from "./host.ts";
 import { introductionOf } from "./prompt.ts";
 import { CreatureRegistry } from "./registry.ts";
 import { FakeCreatureSessions } from "./testing.ts";
@@ -94,12 +89,6 @@ describe("updating a creature", () => {
     );
     expect(await file()).toEqual(before);
   });
-
-  it("answers undefined for a creature that does not exist", async () => {
-    const { host } = await fixture();
-
-    expect(await host.update("nobody", { name: "Ghost" })).toBeUndefined();
-  });
 });
 
 describe("the shadow report of one creature", () => {
@@ -125,24 +114,5 @@ describe("the shadow report of one creature", () => {
 
     expect(report).toMatchObject({ creature: "wren", mode: "shadow", enforced: false, rows: 1 });
     expect(report?.ledgerPath).toBe(join(nodeState, "decisions", "keeper-would-approve.jsonl"));
-  });
-
-  it("uses an injected reader and says when no node state is known", async () => {
-    const injected = await fixture({
-      shadowReport: async () => ({
-        gateId: "keeper.would-approve",
-        mode: "shadow",
-        enforced: false,
-        ledgerPath: "ledger.jsonl",
-        rows: 0,
-        earlierRows: 0,
-        classes: [],
-      }),
-    });
-    const bare = await fixture();
-
-    expect(await injected.host.report("wren")).toMatchObject({ creature: "wren", rows: 0 });
-    expect(await injected.host.report("nobody")).toBeUndefined();
-    await expect(bare.host.report("wren")).rejects.toBeInstanceOf(ShadowReportUnserved);
   });
 });

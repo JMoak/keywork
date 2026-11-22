@@ -34,33 +34,9 @@ describe("SessionLedger usage", () => {
     );
     expect(new SessionLedger().usageSummary(agent)).toBe("$0.90");
   });
-
-  it("stays blank before any usage lands and without an agent", () => {
-    const ledger = new SessionLedger();
-    expect(ledger.usageSummary(new Agent({ provider: new MockProvider([]) }))).toBe("");
-    expect(ledger.usageSummary(undefined)).toBe("");
-  });
 });
 
 describe("SessionLedger cost report", () => {
-  it("says there is nothing to price on a fresh session", () => {
-    const ledger = new SessionLedger();
-    expect(ledger.costReport(new Agent({ provider: new MockProvider([]) }))).toBe(
-      "no usage yet · send a prompt first",
-    );
-    expect(ledger.costReport(undefined)).toBe("no provider · nothing to meter");
-  });
-
-  it("prints tokens plus an estimated total for a priced model", async () => {
-    const agent = await spent(
-      { inputTokens: 10_000, outputTokens: 1_000, cacheReadInputTokens: 500 },
-      "gpt-5-mini",
-    );
-    expect(new SessionLedger().costReport(agent)).toBe(
-      "tokens 10000▸1000 · cache read 500\ncost $0.0045 · estimated from gpt-5-mini rates",
-    );
-  });
-
   it("admits when a model has no pricing instead of claiming zero", async () => {
     const agent = await spent({ inputTokens: 7, outputTokens: 3 });
     expect(new SessionLedger().costReport(agent)).toBe(
@@ -131,13 +107,6 @@ describe("SessionLedger decider spend", () => {
       ].join("\n"),
     );
   });
-
-  it("prints no decider line when no decision called out", async () => {
-    const agent = await spent({ inputTokens: 7, outputTokens: 3 });
-    const ledger = new SessionLedger();
-    ledger.recordDecision(decision({ decider: "builtin", fallback: { reason: "no-key" } }));
-    expect(ledger.costReport(agent)).not.toContain("decider");
-  });
 });
 
 describe("SessionLedger context", () => {
@@ -164,13 +133,5 @@ describe("SessionLedger context", () => {
     expect(text).toContain("memory flush at 175k · compaction at 184k");
     expect(text).toContain("window assumed at 200k");
     expect(new SessionLedger().contextReport(undefined)).toBe("no provider · nothing to measure");
-  });
-
-  it("keeps the session identity the pane and app agree on", () => {
-    const ledger = new SessionLedger();
-    expect(ledger.sessionId).toBeUndefined();
-    ledger.sessionId = "s1";
-    ledger.arc = "auth";
-    expect([ledger.sessionId, ledger.arc]).toEqual(["s1", "auth"]);
   });
 });

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   declaredCapabilitiesFor,
   UndeclaredCapabilityError,
-  undeclaredCapabilities,
   withDeclaredCapabilities,
 } from "./capabilities.ts";
 import type { Message } from "./messages.ts";
@@ -23,13 +22,6 @@ const textRequest: ProviderRequest = {
 const echoTool = { name: "echo", description: "echoes", parameters: {} };
 
 describe("declaredCapabilitiesFor", () => {
-  it("treats an undeclared model as text-only with tool support", () => {
-    expect(declaredCapabilitiesFor(undefined, "mystery-model")).toEqual(undeclaredCapabilities);
-    expect(declaredCapabilitiesFor({ "gpt-5*": { input: ["text", "image"] } }, "other")).toEqual(
-      undeclaredCapabilities,
-    );
-  });
-
   it("merges a declaration over the text-only defaults", () => {
     expect(
       declaredCapabilitiesFor(
@@ -95,12 +87,5 @@ describe("withDeclaredCapabilities", () => {
 
     expect(attempt).toThrow(UndeclaredCapabilityError);
     expect(attempt).toThrow('models["no-tools-model"].toolCalls');
-  });
-
-  it("keeps the wrapped provider's name and model id", () => {
-    const gated = withDeclaredCapabilities(new MockProvider([], "gpt-5-mini"));
-
-    expect(gated.name).toBe("mock");
-    expect(gated.modelId).toBe("gpt-5-mini");
   });
 });

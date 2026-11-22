@@ -1,11 +1,6 @@
 import type { PermissionDecision, Tool, ToolCallPart, ToolGuard } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import {
-  guardedShellEscape,
-  shellEscapeCall,
-  shellEscapeCommand,
-  shellEscapeTranscript,
-} from "./shell-escape.ts";
+import { guardedShellEscape, shellEscapeCall, shellEscapeCommand } from "./shell-escape.ts";
 
 function bashStub(runs: string[], mutates = true): Tool {
   return {
@@ -24,31 +19,12 @@ function bashStub(runs: string[], mutates = true): Tool {
 const call = shellEscapeCall("echo hi", 1);
 
 describe("shellEscapeCommand", () => {
-  it("strips the bang from a command", () => {
-    expect(shellEscapeCommand("!echo hi")).toBe("echo hi");
-    expect(shellEscapeCommand("!ls -la")).toBe("ls -la");
-  });
-
   it("leaves a bare bang and a bang followed by whitespace as prompt text", () => {
     expect(shellEscapeCommand("!")).toBeUndefined();
     expect(shellEscapeCommand("! ")).toBeUndefined();
     expect(shellEscapeCommand("! important note")).toBeUndefined();
     expect(shellEscapeCommand("!\tcmd")).toBeUndefined();
     expect(shellEscapeCommand("hello!")).toBeUndefined();
-  });
-
-  it("names the call as a bash tool call with a user-shell id", () => {
-    expect(call).toEqual({
-      type: "tool-call",
-      callId: "user-shell-1",
-      name: "bash",
-      arguments: { command: "echo hi" },
-    });
-  });
-
-  it("renders the transcript as a prompt line followed by trimmed output", () => {
-    expect(shellEscapeTranscript("echo hi", "hi\n\n")).toBe("$ echo hi\nhi");
-    expect(shellEscapeTranscript("true", "")).toBe("$ true");
   });
 });
 

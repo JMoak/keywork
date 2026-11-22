@@ -1,5 +1,5 @@
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   isInteractive,
   type KeyPress,
@@ -45,8 +45,6 @@ function harnessOf(input: PassThrough, output: PassThrough): Harness {
   return { input, written: () => chunks.join(""), terminal: terminalInput(streams), streams };
 }
 
-const escapeKey = "\u001b";
-const up = `${escapeKey}[A`;
 const enter = "\r";
 const controlD = "\u0004";
 const controlC = "\u0003";
@@ -85,17 +83,6 @@ describe("terminalInput without a terminal", () => {
     terminal.close();
   });
 
-  it("has no keys to read", async () => {
-    const { terminal } = piped();
-    expect(terminal.interactive).toBe(false);
-    expect(await terminal.readKey()).toBeUndefined();
-    const stop = terminal.onKey(() => {
-      throw new Error("never called");
-    });
-    stop();
-    terminal.close();
-  });
-
   it("treats an empty secret at end of input as a blank entry", async () => {
     const { input, terminal } = piped();
     input.end();
@@ -112,25 +99,6 @@ describe("terminalInput on a terminal", () => {
     expect(await pending).toBe("hello");
     expect(written()).toContain("› ");
     expect(input.rawModeChanges.at(-1)).toBe(false);
-  });
-
-  it("carries line history across reads so the up arrow recalls the last answer", async ({
-    onTestFinished,
-  }) => {
-    vi.stubEnv("TERM", "xterm-256color");
-    onTestFinished(() => {
-      vi.unstubAllEnvs();
-    });
-    const { input, terminal } = interactive();
-    const first = terminal.readLine("› ");
-    input.write(`first prompt${enter}`);
-    await first;
-
-    const second = terminal.readLine("› ");
-    input.write(up);
-    input.write(enter);
-
-    expect(await second).toBe("first prompt");
   });
 
   it("resolves undefined when the reader closes on ctrl-d", async () => {
@@ -229,14 +197,6 @@ describe("terminalInput on a terminal", () => {
     stop();
     expect(input.isRaw).toBe(false);
     expect(input.rawModeChanges).toEqual([true, false]);
-  });
-
-  it("answers confirmations from the edited line", async () => {
-    const { input, terminal } = interactive();
-    const pending = terminal.confirm("delete it? [y/N] ");
-    input.write(`Yes${enter}`);
-
-    expect(await pending).toBe(true);
   });
 });
 

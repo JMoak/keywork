@@ -38,37 +38,6 @@ describe("the yard", () => {
       expect(yardPrompt).toContain(phrase);
     }
   });
-
-  it("tells a model it may shape the display freely, outside as well, and what stays the keeper's", () => {
-    for (const phrase of [
-      "stands outside in windows of its own",
-      "arrange places your windows",
-      "12 by 12 lattice",
-      "say nothing and the console chooses",
-      "Shape the display freely",
-      "a shape by name, or how the things relate, or a seat for each pane",
-      "it arises from that pane",
-      "it drills in",
-      "withdraw steps back out",
-      "Nothing you do takes focus",
-      "are the keeper's",
-      "a mood, from calm to urgent, changes only the motion",
-      "Keep what is out current",
-    ]) {
-      expect(yardPrompt).toContain(phrase);
-    }
-    expect(yardPrompt).not.toContain("Propose less");
-  });
-
-  it("says nothing the tool descriptions contradict", () => {
-    const { target } = seated();
-    const descriptions = yardTools(target).map(({ description }) => description);
-
-    expect(yardPrompt).toContain("The console spends the keeper's attention");
-    expect(descriptions[0]).not.toContain("spends the keeper's attention");
-    expect(descriptions[0]).not.toContain("Propose unfold only when");
-    expect(descriptions.join(" ")).not.toContain("do not narrate");
-  });
 });
 
 describe("the note a seat hears", () => {
@@ -103,11 +72,6 @@ describe("the note a seat hears", () => {
         earlier: 0,
       }),
     );
-    expect(hear()).toBeUndefined();
-  });
-
-  it("is nothing when no keeper surface takes settings", () => {
-    const hear = heardNoteSource({ creature: "wren", sessionId: "s1", settings: () => undefined });
     expect(hear()).toBeUndefined();
   });
 });

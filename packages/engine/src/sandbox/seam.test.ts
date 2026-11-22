@@ -51,11 +51,6 @@ function recordingSandbox(
 }
 
 describe("the sandbox seam", () => {
-  it("leaves a launch untouched when the sandbox is off", () => {
-    const launch: Launch = { file: "sh", args: ["-c", "true"], cwd: "/w", env: { A: "1" } };
-    expect(unconfined.confine(launch)).toBe(launch);
-  });
-
   it("spawns the bash command the sandbox hands back, not the one it asked for", async () => {
     const cwd = await tempDir();
     const sandbox = recordingSandbox((launch) => ({

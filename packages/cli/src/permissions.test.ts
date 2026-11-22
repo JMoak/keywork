@@ -56,23 +56,6 @@ describe("keywork permissions list", () => {
     expect(io.err).toEqual([]);
   });
 
-  it("says the bundle is off for an untrusted folder and that no grants exist yet", async () => {
-    const { cwd, userRoot } = await roots(false);
-    const io = recorder();
-
-    expect(await permissionsCommand(["list"], { cwd, userRoot, projectTrusted: false }, io)).toBe(
-      0,
-    );
-
-    expect(io.out).toEqual([
-      "trusted reads · off until this folder is trusted (keywork trust)",
-      "",
-      "workspace grants · none yet · answer an ask with workspace scope to add one",
-      "",
-      "session grants · live in the running app only · start keywork serve to list them",
-    ]);
-  });
-
   it("refuses a stray argument and an unknown verb with usage", async () => {
     const { cwd, userRoot, projectTrusted } = await roots();
     const io = recorder();

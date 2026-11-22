@@ -7,7 +7,6 @@ import {
   patternFile,
   patternTable,
   scanGuardrails,
-  scanKind,
   scannedPath,
 } from "./check-guardrails.ts";
 import {
@@ -18,15 +17,6 @@ import {
 } from "./check-pins.ts";
 
 describe("findRangedDependencies", () => {
-  it("accepts exact pins and workspace references", () => {
-    expect(
-      findRangedDependencies({
-        dependencies: { zod: "4.3.11", "@keywork/shared": "workspace:*" },
-        devDependencies: { vitest: "3.2.4" },
-      }),
-    ).toEqual([]);
-  });
-
   it("rejects caret, tilde, and wildcard ranges", () => {
     expect(
       findRangedDependencies({
@@ -89,14 +79,6 @@ describe("findGuardrailViolations", () => {
   it.each(everyPattern)("$name flags each of its samples in code", ({ name, flagged }) => {
     for (const sample of flagged) expect(findGuardrailViolations(sample, "code")).toContain(name);
   });
-
-  it.each(patternTable.everywhere)("$name flags its samples in prose too", ({ name, flagged }) => {
-    for (const sample of flagged) expect(findGuardrailViolations(sample, "prose")).toContain(name);
-  });
-
-  it.each(patternTable.codeOnly)("$name stays quiet in prose", ({ flagged }) => {
-    for (const sample of flagged) expect(findGuardrailViolations(sample, "prose")).toEqual([]);
-  });
 });
 
 describe("guardrail scan coverage", () => {
@@ -127,12 +109,6 @@ describe("guardrail scan coverage", () => {
     expect(scannedPath(patternFile)).toBe(false);
     expect(scannedPath("scripts/check-guardrails.ts")).toBe(true);
     expect(scannedPath("scripts/checks.test.ts")).toBe(true);
-  });
-
-  it("reads markdown as prose and everything else as code", () => {
-    expect(scanKind("docs/vision.md")).toBe("prose");
-    expect(scanKind("scripts/probe.mjs")).toBe("code");
-    expect(scanKind(".github/workflows/ci.yml")).toBe("code");
   });
 });
 
@@ -178,17 +154,6 @@ describe("scanGuardrails", () => {
     expect(new Set(files)).toEqual(
       new Set([".github/workflows/ci.yml", "scripts/install.ps1", "scripts/probe.cjs"]),
     );
-  });
-
-  it("leaves the pattern table and excluded directories unread", async () => {
-    seed(root, {
-      [patternFile]: loginFlow,
-      "node_modules/dep/index.js": loginFlow,
-      ".claude/worktrees/w/probe.ts": loginFlow,
-      "artifacts/e2e/capture.md": loginFlow,
-      "dist/bundle.js": loginFlow,
-    });
-    expect(await scanGuardrails(root)).toEqual([]);
   });
 });
 

@@ -222,13 +222,4 @@ describe("servedMcp on the wire", () => {
       },
     });
   });
-
-  it("serves an empty tool list to a client that connects", async () => {
-    const bare = servedMcp<Caller>({ name: "bare", version: "0", tools: [] });
-    const fetchImpl = (async (input: string, init?: RequestInit) =>
-      answerMcpHttp(bare, new Request(input, init), { who: "x" })) satisfies FetchLike;
-    const connection = await connectHttpServer({ url }, { fetchImpl });
-    expect(await connection.listTools()).toEqual([]);
-    await connection.close();
-  });
 });

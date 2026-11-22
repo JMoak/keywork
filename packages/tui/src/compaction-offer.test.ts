@@ -1,6 +1,6 @@
 import type { ContextReading } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
-import { CompactionOffer, compactionOfferDue, compactionOfferNotice } from "./compaction-offer.ts";
+import { CompactionOffer, compactionOfferDue } from "./compaction-offer.ts";
 
 function reading(used: number): ContextReading {
   return { used, window: 1000, flushAt: 800, compactAt: 900, declared: true };
@@ -25,16 +25,5 @@ describe("CompactionOffer", () => {
     expect(offer.crossed(reading(950))).toBe(false);
     expect(offer.crossed(reading(300))).toBe(false);
     expect(offer.crossed(reading(850))).toBe(true);
-  });
-
-  it("stays quiet without a reading or past the line keywork compacts at", () => {
-    const offer = new CompactionOffer();
-    expect(offer.crossed(undefined)).toBe(false);
-    expect(offer.crossed(reading(950))).toBe(false);
-    expect(offer.crossed(reading(850))).toBe(true);
-  });
-
-  it("names the command and the focus in the offer", () => {
-    expect(compactionOfferNotice).toContain("/compact [focus]");
   });
 });

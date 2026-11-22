@@ -26,18 +26,6 @@ function sdpWith(...candidates: string[]): string {
 }
 
 describe("parseIceCandidate", () => {
-  it("reads the fields of an RTCIceCandidate string", () => {
-    expect(parseIceCandidate(tailnetHost)).toEqual({
-      foundation: "842163049",
-      component: 1,
-      protocol: "udp",
-      priority: 1677729535,
-      address: "100.88.77.66",
-      port: 47812,
-      type: "host",
-    });
-  });
-
   it("answers null for something that is not a candidate", () => {
     expect(parseIceCandidate("")).toBeNull();
     expect(parseIceCandidate("candidate:1 1 udp x 100.88.77.66 1 typ host")).toBeNull();

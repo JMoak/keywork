@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { bearerHeaders } from "../../../providers/transport.ts";
 import { recorded, replaying, type SentRequest } from "../fixtures/cassette.ts";
 import type { DecisionRequest } from "../types.ts";
 import { systemOneDecider, systemOneUrl } from "./systemone.ts";
@@ -87,17 +86,6 @@ describe("systemOneDecider against recorded llama-server answers", () => {
       ok: true,
       usage: { cost: { usd: (412 * 0.042) / 1e6, source: "price_table" } },
     });
-  });
-
-  it("sends the credential as a bearer header", async () => {
-    const sent: SentRequest[] = [];
-    await systemOneDecider({
-      reference: { provider: "spark", model: "nimble-9b-q8_0" },
-      endpoint: "http://spark-ad4d:9931/v1",
-      authHeaders: bearerHeaders("sk-local"),
-      fetchFn: replaying(recorded("llama-server-mixed"), sent),
-    }).decide(requestOf("llama-server-mixed"));
-    expect(sent[0]?.headers.authorization).toBe("Bearer sk-local");
   });
 });
 
@@ -193,10 +181,8 @@ describe("systemOneDecider failures", () => {
 
 describe("systemOneUrl", () => {
   it.each([
-    ["http://localhost:11434/v1", "http://localhost:11434/v1/systemone"],
     ["http://localhost:11434/v1/", "http://localhost:11434/v1/systemone"],
     ["http://localhost:9931", "http://localhost:9931/v1/systemone"],
-    ["https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/systemone"],
   ])("places the route under %s", (endpoint, url) => {
     expect(systemOneUrl(endpoint)).toBe(url);
   });

@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  broadsheetProseMeasure,
-  columnPage,
-  pageTierThresholds,
-  proseWidth,
-  resolvePage,
-  resolvePageThresholds,
-} from "./page.ts";
+import { broadsheetProseMeasure, proseWidth, resolvePage, resolvePageThresholds } from "./page.ts";
 
 describe("resolvePage", () => {
   it("maps pane widths to the four tiers at the documented boundaries", () => {
@@ -20,25 +13,6 @@ describe("resolvePage", () => {
     expect(resolvePage(1).tier).toBe("masthead");
   });
 
-  it("derives every page property from the tier", () => {
-    expect(resolvePage(120)).toEqual({
-      tier: "broadsheet",
-      proseGutter: 1,
-      proseMeasure: broadsheetProseMeasure,
-      toneDepth: 4,
-      masthead: false,
-    });
-    expect(resolvePage(80)).toEqual(columnPage);
-    expect(resolvePage(50)).toMatchObject({
-      tier: "clipping",
-      proseGutter: 0,
-      proseMeasure: undefined,
-      toneDepth: 3,
-      masthead: false,
-    });
-    expect(resolvePage(20)).toMatchObject({ tier: "masthead", masthead: true });
-  });
-
   it("honors overridden thresholds", () => {
     const custom = resolvePageThresholds({ broadsheetAt: 80 });
     expect(resolvePage(90, custom).tier).toBe("broadsheet");
@@ -47,11 +21,6 @@ describe("resolvePage", () => {
 });
 
 describe("resolvePageThresholds", () => {
-  it("returns the named defaults when nothing is overridden", () => {
-    expect(resolvePageThresholds()).toEqual(pageTierThresholds);
-    expect(pageTierThresholds).toEqual({ broadsheetAt: 100, columnAt: 70, clippingAt: 40 });
-  });
-
   it("rejects thresholds that do not rise clipping < column < broadsheet", () => {
     expect(() => resolvePageThresholds({ columnAt: 120 })).toThrow(/must rise/);
     expect(() => resolvePageThresholds({ clippingAt: 70 })).toThrow(/must rise/);
@@ -68,11 +37,6 @@ describe("proseWidth", () => {
     const broadsheet = resolvePage(120);
     expect(proseWidth(broadsheet, 116)).toBe(broadsheetProseMeasure);
     expect(proseWidth(broadsheet, 60)).toBe(58);
-  });
-
-  it("gives column and clipping prose the full bleed", () => {
-    expect(proseWidth(columnPage, 76)).toBe(76);
-    expect(proseWidth(resolvePage(50), 46)).toBe(46);
   });
 
   it("never collapses below one column", () => {

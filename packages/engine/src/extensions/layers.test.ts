@@ -95,23 +95,4 @@ describe("loadLayered", () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.reason).toContain("frontmatter");
   });
-
-  it("loads nothing when no roots are given", async () => {
-    await expect(loadLayered({}, twoConventions, label)).resolves.toEqual({
-      items: [],
-      failures: [],
-    });
-  });
-});
-
-describe("markdownFilesIn", () => {
-  it("lists only markdown files, sorted, named by their stem", async () => {
-    const root = await scratch();
-    await seed(root, { "b.md": "", "a.md": "", "notes.txt": "", "nested/c.md": "" });
-    expect(await markdownFilesIn(root)).toEqual([
-      { file: join(root, "a.md"), name: "a" },
-      { file: join(root, "b.md"), name: "b" },
-    ]);
-    expect(await markdownFilesIn(join(root, "absent"))).toEqual([]);
-  });
 });

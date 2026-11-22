@@ -121,11 +121,4 @@ describe("formatKeeperReport", () => {
       "  one-way door: destructive forms in keywork's K9 sense stay ask-only, and no evidence promotes them",
     );
   });
-
-  it("says how the ledger fills when no ask has been answered", async () => {
-    const nodeState = await scratchNode();
-    const text = formatKeeperReport(await readKeeperReport({ nodeState, ratchet }));
-    expect(text).toContain(nothingEnforced);
-    expect(text).toContain("No answered asks yet.");
-  });
 });

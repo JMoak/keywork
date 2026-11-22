@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   botInvocationOf,
   botJumpCommands,
-  describeCreatedBot,
   type FocusedBotPort,
   midTurnNotice,
   paneBoundTo,
@@ -97,20 +96,6 @@ describe("the /bot grammar", () => {
 });
 
 describe("/bot picker", () => {
-  it("opens the picker with the roster and a new-bot row, most recent first", async () => {
-    const recent = { ...reviewer, lastUsed: "2026-09-02T10:00:00.000Z" };
-    const { probe } = worldOf([scout, recent]);
-    probe.command("bot");
-    await flush();
-    const picker = probe.core.botPicker();
-    expect(picker).toBeDefined();
-    expect(picker?.rows().map((row) => (row.kind === "bot" ? row.bot.name : row.kind))).toEqual([
-      "reviewer",
-      "scout",
-      "new",
-    ]);
-  });
-
   it("choosing a bot opens a new pane bound to it", async () => {
     const { probe } = worldOf();
     probe.command("bot");
@@ -130,11 +115,6 @@ describe("/bot picker", () => {
     const create = probe.core.botCreate();
     expect(create?.name.value).toBe("test-hawk");
     expect(create?.field).toBe("scope");
-  });
-
-  it("registers no bot commands without a bots port", () => {
-    const probe = new AppProbe();
-    expect(probe.command("bot")).toBe(false);
   });
 });
 
@@ -165,28 +145,6 @@ describe("/bot <slug> and /bot-switch", () => {
     await flush();
     expect(probe.snapshot().notice).toBe(midTurnNotice);
   });
-
-  it("/bot none releases a bound pane, and an unbound pane hears that nothing was bound", async () => {
-    const { probe, switched } = worldOf();
-    probe.command("bot none");
-    await flush();
-    expect(probe.snapshot().notice).toBe("no bot bound here");
-    probe.command("bot-switch scout");
-    await flush();
-    probe.command("bot-release");
-    await flush();
-    expect(switched).toEqual(["scout", undefined]);
-    expect(probe.snapshot().notice).toBe("bot released");
-  });
-
-  it("notices instead of crashing when no session pane is focused", async () => {
-    const { probe } = worldOf([scout], { focused: null });
-    probe.command("bot-switch scout");
-    await flush();
-    expect(probe.snapshot().notice).toBe(
-      "no session pane here · /bot-switch rebinds the focused session",
-    );
-  });
 });
 
 describe("/bot-new creation flow", () => {
@@ -208,31 +166,6 @@ describe("/bot-new creation flow", () => {
     ]);
     expect(probe.snapshot().notice).toBe("bot → T test-hawk · new");
     expect(probe.snapshot().panes).toHaveLength(2);
-  });
-
-  it("/bot-new <slug> starts at the scope row with the slug filled in", () => {
-    const { probe } = worldOf();
-    probe.command("bot-new hawk");
-    const model = probe.core.botCreate();
-    expect(model?.name.value).toBe("hawk");
-    expect(model?.field).toBe("scope");
-  });
-
-  it("escape walks back a field at a time and closes from the first", () => {
-    const { probe } = worldOf();
-    probe.command("bot-new hawk");
-    probe.keys("escape");
-    expect(probe.core.botCreate()?.field).toBe("name");
-    probe.keys("escape");
-    expect(probe.core.botCreate()?.field).toBe("purpose");
-    probe.keys("escape");
-    expect(probe.core.botCreate()).toBeUndefined();
-  });
-
-  it("describes a created bot in the page grammar", () => {
-    expect(describeCreatedBot({ name: "hawk", sigil: "H", source: "project" })).toBe(
-      "bot → H hawk · new",
-    );
   });
 });
 

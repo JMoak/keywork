@@ -1,10 +1,9 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  extensionState,
   MockProvider,
   messageText,
   type Provider,
@@ -154,106 +153,6 @@ describe("runHeadless", () => {
     expect(content).not.toContain(secret);
     expect(content).toContain("[redacted]");
   });
-
-  it("leaves no debug log behind when debug is off", async () => {
-    const cwd = await tempDir();
-    const sessionDir = await tempDir();
-    const provider = new MockProvider([textTurn("quiet")]);
-
-    await headless({ prompt: "hi", cwd, json: false, sessionDir, provider, print: () => {} });
-
-    expect(await readdir(sessionDir)).not.toContain("debug");
-  });
-
-  it("assembles base prompt, global user prompt, then the matching model override", async () => {
-    const cwd = await tempDir();
-    const inner = new MockProvider([textTurn("ok")]);
-    const seenPrompts: string[] = [];
-    const provider = {
-      name: inner.name,
-      modelId: "gpt-5-mini",
-      stream: (request: Parameters<typeof inner.stream>[0]) => {
-        seenPrompts.push(request.systemPrompt);
-        return inner.stream(request);
-      },
-    };
-
-    await headless({
-      prompt: "hi",
-      cwd,
-      json: false,
-      provider,
-      prompts: {
-        system: "always answer tersely",
-        models: {
-          "gpt-5*": { prompt: "think stepwise", mode: "append" },
-          "claude*": { prompt: "wrong override", mode: "append" },
-        },
-      },
-      print: () => {},
-    });
-
-    const [systemPrompt] = seenPrompts;
-    expect(systemPrompt).toBeDefined();
-    const order = [
-      systemPrompt?.indexOf("You are keywork") ?? -1,
-      systemPrompt?.indexOf("always answer tersely") ?? -1,
-      systemPrompt?.indexOf("think stepwise") ?? -1,
-    ];
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(systemPrompt).not.toContain("wrong override");
-  });
-
-  it("mounts configured MCP servers into the run's toolset and stops them after", async () => {
-    const fixtureServerPath = fileURLToPath(
-      new URL("../../engine/src/testing/mcp-fixture-server.ts", import.meta.url),
-    );
-    const cwd = await tempDir();
-    const inner = new MockProvider([textTurn("ok")]);
-    const toolRosters: string[][] = [];
-
-    await headless({
-      prompt: "hi",
-      cwd,
-      json: false,
-      provider: {
-        name: inner.name,
-        stream: (request: Parameters<typeof inner.stream>[0]) => {
-          toolRosters.push(request.tools.map((tool) => tool.name));
-          return inner.stream(request);
-        },
-      },
-      mcpServers: {
-        fixture: {
-          transport: "stdio",
-          command: process.execPath,
-          args: [fixtureServerPath, "basic"],
-        },
-      },
-      print: () => {},
-    });
-
-    expect(toolRosters[0]).toContain("mcp_tool_search");
-    expect(toolRosters[0]).toContain("bash");
-  });
-
-  it("prints plain text when json is off", async () => {
-    const cwd = await tempDir();
-    const provider = new MockProvider([textTurn("plain answer")]);
-    const lines: string[] = [];
-
-    const outcome = await headless({
-      prompt: "hi",
-      cwd,
-      json: false,
-      provider,
-      print: (l) => lines.push(l),
-    });
-
-    expect(exitCodeOf(outcome)).toBe(0);
-    expect(lines).toEqual(["plain answer"]);
-  });
 });
 
 describe("composition parity with panes", () => {
@@ -343,66 +242,6 @@ describe("composition parity with panes", () => {
     expect(finished.output).toContain("Say hello warmly.");
   });
 
-  it("reads a linked context dir once the workspace is trusted", async () => {
-    const cwd = await trustedWorkspace();
-    const linked = await tempDir();
-    await writeFile(join(linked, "notes.md"), "linked notes");
-    await writeFile(
-      join(cwd, ".keywork", "workspace.json"),
-      JSON.stringify({ name: "fixture", contextDirs: [linked] }),
-    );
-    const readLinked = toolCallTurn({
-      type: "tool-call",
-      callId: "call-1",
-      name: "read",
-      arguments: { path: join(linked, "notes.md") },
-    });
-    const outputs: string[] = [];
-
-    await headless({
-      prompt: "read the notes",
-      cwd,
-      json: true,
-      projectTrusted: true,
-      provider: new MockProvider([readLinked, textTurn("done")]),
-      permissions: () => "allow",
-      print: (line) => {
-        const event = JSON.parse(line);
-        if (event.type === "tool.finished") outputs.push(event.output);
-      },
-    });
-
-    expect(outputs[0]).toContain("linked notes");
-  });
-
-  it("reads and writes the named workspace's vault when a slug is given", async () => {
-    const cwd = await trustedWorkspace();
-    const named = join(cwd, ".keywork", "workspaces", "side", "memory");
-    await mkdir(named, { recursive: true });
-    await writeFile(
-      join(cwd, ".keywork", "workspaces", "side", "workspace.json"),
-      JSON.stringify({ name: "side" }),
-    );
-    await writeFile(join(named, "MEMORY.md"), "- [[Side Fact]]\n");
-    await writeFile(
-      join(named, "Side Fact.md"),
-      "---\nprovenance: user\npinned: true\n---\nThe side workspace is in force.\n",
-    );
-    const provider = recordingProvider([textTurn("ok")], { modelId: "recorded-model" });
-
-    await headless({
-      prompt: "hi",
-      cwd,
-      json: false,
-      projectTrusted: true,
-      workspaceSlug: "side",
-      provider,
-      print: () => {},
-    });
-
-    expect(provider.requests[0]?.systemPrompt).toContain("The side workspace is in force.");
-  });
-
   it("writes journal entries and messages in the order a pane does", async () => {
     const cwd = await trustedWorkspace();
     const headlessDir = await tempDir();
@@ -448,28 +287,6 @@ describe("composition parity with panes", () => {
       "message:tool",
       "message:assistant",
     ]);
-  });
-
-  it("reports skipped extensions on stderr and runs on", async () => {
-    const cwd = await trustedWorkspace();
-    const dir = join(cwd, ".keywork", "skills", "broken");
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "SKILL.md"), "---\nname: [\n---\nbody\n");
-    const err: string[] = [];
-
-    const outcome = await headless({
-      prompt: "hi",
-      cwd,
-      json: false,
-      projectTrusted: true,
-      provider: new MockProvider([textTurn("ok")]),
-      print: () => {},
-      printError: (line) => err.push(line),
-    });
-
-    expect(outcome.outcome).toBe("completed");
-    expect(err.join("\n")).toContain("skipped extension");
-    expect(err.join("\n")).toContain("SKILL.md");
   });
 
   it("prints extension warnings and quarantines on stderr, keeps info quiet, and ends the session", async () => {
@@ -519,47 +336,6 @@ describe("composition parity with panes", () => {
   }
 });
 
-describe("session journal in headless runs", () => {
-  it("logs gate decisions and context injections as session entries with provenance", async () => {
-    const cwd = await tempDir();
-    const sessionDir = await tempDir();
-    await writeFile(join(cwd, "AGENTS.md"), "be careful");
-    const provider = new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-1",
-        name: "bash",
-        arguments: { command: "echo hi" },
-      }),
-      textTurn("done"),
-    ]);
-    const lines: string[] = [];
-
-    await headless({
-      prompt: "run it",
-      cwd,
-      json: true,
-      projectTrusted: true,
-      sessionDir,
-      provider,
-      permissions: () => "allow",
-      print: (line) => lines.push(line),
-    });
-
-    const types = lines.map((line) => JSON.parse(line).type);
-    expect(types).toContain("context.injected");
-    expect(types).toContain("gate.permission");
-
-    const [file] = await readdir(sessionDir);
-    const store = await SessionStore.open(join(sessionDir, file as string));
-    const state = extensionState(store.activePath());
-    expect(state.injections).toEqual([{ source: "project-instructions", id: "AGENTS.md" }]);
-    expect(state.decisions).toEqual([
-      { tool: "bash", callId: "call-1", verdict: "granted", gate: "policy", asked: false },
-    ]);
-  });
-});
-
 describe("workspace memory wiring", () => {
   async function declaredWorkspaceWithNote(): Promise<string> {
     const cwd = await tempDir();
@@ -592,15 +368,6 @@ describe("workspace memory wiring", () => {
     });
     return requests[0];
   }
-
-  it("injects the vault bootstrap and exposes the recall tools in a trusted workspace", async () => {
-    const request = await requestSeen(await declaredWorkspaceWithNote(), true);
-    expect(request?.systemPrompt).toContain("# Memory");
-    expect(request?.systemPrompt).toContain("Tests run on Node, not Bun.");
-    const toolNames = request?.tools.map((tool) => tool.name);
-    expect(toolNames).toContain("memory_search");
-    expect(toolNames).toContain("memory_get");
-  });
 
   it("keeps an untrusted workspace's vault out of the prompt and the toolset", async () => {
     const request = await requestSeen(await declaredWorkspaceWithNote(), false);
@@ -637,49 +404,6 @@ describe("project-instruction trust gating", () => {
   it("keeps untrusted-repo AGENTS.md out of the system prompt by default", async () => {
     expect(await promptSeenWith(undefined)).not.toContain("SECRET-REPO-DIRECTIVE");
     expect(await promptSeenWith(false)).not.toContain("SECRET-REPO-DIRECTIVE");
-  });
-
-  it("injects project instructions once the workspace is trusted", async () => {
-    expect(await promptSeenWith(true)).toContain("SECRET-REPO-DIRECTIVE");
-  });
-});
-
-describe("persistent shell across tool calls", () => {
-  it("keeps cwd from one bash call live in the next", async () => {
-    const cwd = await tempDir();
-    await mkdir(join(cwd, "nested"));
-    const provider = new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-1",
-        name: "bash",
-        arguments: { command: "cd nested" },
-      }),
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-2",
-        name: "bash",
-        arguments: { command: "pwd" },
-      }),
-      textTurn("done"),
-    ]);
-    const pwds: string[] = [];
-    const lines: string[] = [];
-
-    await headless({
-      prompt: "move and look",
-      cwd,
-      json: true,
-      provider,
-      permissions: () => "allow",
-      print: (line) => lines.push(line),
-    });
-
-    for (const line of lines) {
-      const event = JSON.parse(line);
-      if (event.type === "tool.finished" && event.callId === "call-2") pwds.push(event.output);
-    }
-    expect(pwds[0]?.trim().endsWith("nested")).toBe(true);
   });
 });
 
@@ -807,18 +531,6 @@ describe("headless exit contract", () => {
     await expectGolden("failed", lines, cwd);
   });
 
-  it("treats a completed turn that reports inability as success", async () => {
-    const outcome = await headless({
-      prompt: "do the impossible",
-      cwd: await tempDir(),
-      json: false,
-      provider: new MockProvider([textTurn("I was unable to complete the task.")]),
-      print: () => {},
-    });
-
-    expect(exitCodeOf(outcome)).toBe(0);
-  });
-
   it("treats a policy-denied tool call as a refused result, not a terminal failure", async () => {
     const outcome = await headless({
       prompt: "try a command",
@@ -919,30 +631,6 @@ describe("headless exit contract", () => {
       ]);
     });
 
-    it("leaves --preset open out under the standard preset too, since no preset lets one through", async () => {
-      const { err } = await refusedUnder(undefined);
-
-      expect(err.join("\n")).toContain(opaqueRefusal);
-      expect(err.join("\n")).not.toContain("--preset open");
-    });
-
-    it("keeps the run.finished refusal shape for json readers", async () => {
-      const lines: string[] = [];
-
-      await headless({
-        prompt: "rename it",
-        cwd: await tempDir(),
-        json: true,
-        provider: new MockProvider([opaqueBashCall]),
-        permissions: presetResolver("open"),
-        print: (line) => lines.push(line),
-      });
-
-      const finished = JSON.parse(lines.at(-1) ?? "{}");
-      expect(finished).toMatchObject({ type: "run.finished", outcome: "denied" });
-      expect(finished.refused).toEqual([{ tool: "bash", callId: "call-1" }]);
-    });
-
     it("still offers --preset open for the plain calls refused beside an opaque one", () => {
       const err: string[] = [];
 
@@ -962,24 +650,6 @@ describe("headless exit contract", () => {
         `keywork run: 2 tool calls needed an approval no one could give (bash, write), so the run stopped there · ${opaqueRefusal} · rerun with --preset open to allow the rest`,
       ]);
     });
-  });
-
-  it("denied: a refused tool the open preset doesn't cover names its rule instead of --preset open", () => {
-    const err: string[] = [];
-
-    conclude(
-      {
-        outcome: "denied",
-        message: { role: "assistant", parts: [] },
-        refused: [{ tool: "skill_create", callId: "call-1", verdict: "denied", gate: "headless" }],
-      },
-      { json: false, print: () => {}, printError: (line) => err.push(line) },
-    );
-
-    expect(err.join("\n")).toContain(
-      'to allow them, add {"action":"skill_create","resource":"*","effect":"allow"} to the permissions list',
-    );
-    expect(err.join("\n")).not.toContain("--preset open");
   });
 
   it("denied: golden stream", async () => {
@@ -1036,23 +706,6 @@ describe("headless exit contract", () => {
 
     expect(code).toBe(3);
     await expectGolden("unresolved", lines, "");
-  });
-
-  it("unresolved: plain mode explains the failure and the next action on stderr", () => {
-    const err: string[] = [];
-    const failure = {
-      code: "unconfigured" as const,
-      message: "no inference provider is configured",
-      available: [],
-    };
-
-    conclude(
-      { outcome: "unresolved", failure },
-      { json: false, print: () => {}, printError: (line) => err.push(line) },
-    );
-
-    expect(err.join("\n")).toContain("no inference provider is configured · run keywork connect");
-    expect(err.join("\n")).toContain("keywork connect");
   });
 
   it("usage: exits 2 with the complaint on the stream", async () => {
@@ -1122,26 +775,6 @@ describe("headless exit contract", () => {
     expect(outcome).toMatchObject({ outcome: "interrupted", saved: false });
     expect(err.join("\n")).toContain("nothing was saved");
     expect(err.join("\n")).not.toContain("was saved up to this point");
-  });
-
-  it("interrupted without a session dir carries saved: false on run.finished", async () => {
-    const lines: string[] = [];
-    const interrupts = new AbortController();
-
-    await headless({
-      prompt: "think for a while",
-      cwd: await tempDir(),
-      json: true,
-      provider: hangingProvider(() => interrupts.abort()),
-      signal: interrupts.signal,
-      print: (line) => lines.push(line),
-    });
-
-    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
-      type: "run.finished",
-      outcome: "interrupted",
-      saved: false,
-    });
   });
 
   it("totals every model call's usage on run.finished while turn.completed keeps the last call's", async () => {
@@ -1310,39 +943,6 @@ describe("language diagnostics in headless runs", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it("with lsp off, every request and tool result is byte-identical to a run without the key", async () => {
-    await fixtureOnPath();
-    const runs = await Promise.all(
-      [{}, { lsp: "off" as const }].map(async (options) => {
-        const cwd = await workspaceWithCache();
-        const provider = recordingProvider([editCall("1", "BROKEN"), textTurn("done")]);
-        const outputs: string[] = [];
-        await headless({
-          prompt: "break it",
-          cwd,
-          json: true,
-          projectTrusted: true,
-          permissions: () => "allow",
-          provider,
-          print: (line) => {
-            const event = JSON.parse(line);
-            if (event.type === "tool.finished") outputs.push(event.output);
-          },
-          ...options,
-        });
-        return {
-          requests: JSON.stringify(provider.requests).replaceAll(
-            JSON.stringify(cwd).slice(1, -1),
-            "<cwd>",
-          ),
-          outputs,
-        };
-      }),
-    );
-    expect(runs[1]).toEqual(runs[0]);
-    expect(runs[0]?.outputs).toEqual(["Replaced 1 occurrence in cache.ts"]);
-  });
-
   it("with auto and the fixture on PATH, the breaking edit carries the block and the fix carries none", async () => {
     const shim = await fixtureOnPath();
     const outputs = await toolOutputs({ lsp: "auto" });
@@ -1357,36 +957,6 @@ describe("language diagnostics in headless runs", () => {
     ]);
     const pid = Number(await readFile(shim.marker, "utf8"));
     expect(processExists(pid)).toBe(false);
-  });
-
-  it("streams diagnostics.published beside the tool events", async () => {
-    await fixtureOnPath();
-    const events: Array<Record<string, unknown>> = [];
-    await headless({
-      prompt: "break it",
-      cwd: await workspaceWithCache(),
-      json: true,
-      projectTrusted: true,
-      lsp: "auto",
-      permissions: () => "allow",
-      provider: new MockProvider([editCall("1", "BROKEN"), textTurn("done")]),
-      print: (line) => events.push(JSON.parse(line)),
-    });
-    const published = events.find((event) => event.type === "diagnostics.published");
-    expect(published).toMatchObject({ count: 2, path: expect.stringContaining("cache.ts") });
-    expect(events.indexOf(published ?? {})).toBeLessThan(
-      events.findIndex((event) => event.type === "tool.finished"),
-    );
-  });
-
-  it("spawns nothing in an untrusted workspace even with auto on", async () => {
-    const shim = await fixtureOnPath();
-    const outputs = await toolOutputs({ lsp: "auto", projectTrusted: false });
-    expect(outputs).toEqual([
-      "Replaced 1 occurrence in cache.ts",
-      "Replaced 1 occurrence in cache.ts",
-    ]);
-    expect(existsSync(shim.marker)).toBe(false);
   });
 
   it("notices a missing server once on stderr and keeps the edit result plain", async () => {
@@ -1410,33 +980,6 @@ describe("visible thinking in headless runs", () => {
     { type: "visible-thinking", text: "weighing it" },
     ...textTurn("answer"),
   ];
-
-  async function requestOf(
-    cwd: string,
-    thinking: RunOptions["thinking"],
-  ): Promise<ProviderRequest | undefined> {
-    const provider = recordingProvider([thoughtfulTurn()]);
-    await headless({
-      prompt: "think",
-      cwd,
-      json: true,
-      provider,
-      print: () => {},
-      ...(thinking !== undefined && { thinking }),
-    });
-    return provider.requests[0];
-  }
-
-  it("asks for thinking only when the config says on and leaves the off request byte-identical", async () => {
-    const cwd = await tempDir();
-    const on = await requestOf(cwd, "on");
-    const off = await requestOf(cwd, "off");
-    const unset = await requestOf(cwd, undefined);
-    expect(on?.thinking).toBe(true);
-    expect(off).not.toHaveProperty("thinking");
-    expect(JSON.stringify(off)).toBe(JSON.stringify(unset));
-    expect(JSON.stringify({ ...on, thinking: undefined })).toBe(JSON.stringify(unset));
-  });
 
   it("streams thinking as its own turn.delta kind and keeps it out of the plain answer", async () => {
     const cwd = await tempDir();

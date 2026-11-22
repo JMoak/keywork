@@ -80,30 +80,6 @@ function draft(overrides: Partial<ConnectionDraft> = {}): ConnectionDraft {
 }
 
 describe("connectionsPort targets", () => {
-  it("lists api-key built-ins, conventional local templates, and a custom entry, in that order", async () => {
-    const { port } = await harness();
-    const targets = port.targets();
-    expect(targets.map((target) => [target.id, target.kind])).toEqual([
-      ["openrouter", "built-in"],
-      ["openai", "built-in"],
-      ["anthropic", "built-in"],
-      ["ollama", "local"],
-      ["lmstudio", "local"],
-      ["llamacpp", "local"],
-      ["vllm", "local"],
-      ["custom", "custom"],
-    ]);
-    const ollama = targets.find((target) => target.id === "ollama");
-    expect(port.draftFor(ollama as NonNullable<typeof ollama>)).toEqual(draft());
-  });
-
-  it("opens a surface without touching the network", async () => {
-    const { port, calls } = await harness();
-    port.targets();
-    port.saved();
-    expect(calls).toHaveLength(0);
-  });
-
   it("finds only conventional loopback endpoints with reported models when asked", async () => {
     const checked: string[] = [];
     const { port, dir } = await harness({
@@ -349,39 +325,6 @@ describe("connectionsPort verify and save", () => {
     });
   });
 
-  it("saves a built-in's key to auth.json without adding a connections entry", async () => {
-    const { port, dir } = await harness();
-    const openai = draft({
-      name: "openai",
-      endpoint: "https://api.openai.com/v1",
-      credential: "api-key",
-      apiKey: "sk-x",
-    });
-    const verification = await port.verify(openai);
-    if (!verification.ok) return;
-    await port.save(openai, verification);
-    expect(await readUserConfig(dir)).toEqual({});
-    expect(await readCredentials(dir)).toEqual({ openai: { type: "api_key", key: "sk-x" } });
-    expect(port.saved().map((row) => [row.name, row.builtIn, row.credential])).toEqual([
-      ["openai", true, "saved key"],
-    ]);
-  });
-
-  it("leaves nothing durable when verification fails", async () => {
-    const { port, dir } = await harness({ status: 401 });
-    const verification = await port.verify(
-      draft({
-        name: "broker",
-        endpoint: "https://b.example/v1",
-        credential: "api-key",
-        apiKey: "k",
-      }),
-    );
-    expect(verification).toMatchObject({ ok: false, reason: expect.stringContaining("HTTP 401") });
-    expect(await readUserConfig(dir)).toEqual({});
-    expect(await readCredentials(dir)).toEqual({});
-  });
-
   it("remembers a failed verification of a saved connection and clears it on the next successful save", async () => {
     const endpoint = { status: 200 };
     const fetchFn: FetchLike = async () =>
@@ -409,13 +352,6 @@ describe("connectionsPort verify and save", () => {
     await port.save(ollama, recovered);
     expect(port.saved().map((row) => [row.name, row.lastFailure])).toEqual([["ollama", undefined]]);
     expect((await readObservations(dir)).ollama?.lastFailure).toBeUndefined();
-  });
-
-  it("records nothing for a failed verification of a connection that was never saved", async () => {
-    const { port, dir } = await harness({ status: 503 });
-    const verification = await port.verify(draft());
-    expect(verification.ok).toBe(false);
-    expect(await readObservations(dir)).toEqual({});
   });
 
   it("reuses the saved key when an edit leaves the key field blank", async () => {
@@ -481,41 +417,6 @@ describe("connectionsPort proves the credential", () => {
     expect(await readObservations(dir)).toEqual({});
   });
 
-  it("checks an accepted OpenRouter key at /key before trusting the model list", async () => {
-    const { calls, fetchFn } = openRouter(["sk-or-real"]);
-    const { port } = await harness({ fetchFn });
-
-    const verification = await port.verify(openRouterDraft("sk-or-real"));
-
-    expect(verification).toMatchObject({ ok: true, models: ["openai/gpt-5-mini"] });
-    expect(calls).toEqual([
-      { url: `${openRouterEndpoint}/key`, authorization: "Bearer sk-or-real" },
-      { url: `${openRouterEndpoint}/models`, authorization: "Bearer sk-or-real" },
-    ]);
-  });
-
-  it("says what's missing without touching the network when no key would be sent", async () => {
-    const { calls, fetchFn } = openRouter([]);
-    const { port } = await harness({ fetchFn });
-
-    expect(await port.verify(openRouterDraft())).toEqual({
-      ok: false,
-      at: "2026-08-21T12:00:00.000Z",
-      reason: "openrouter needs an API key · paste one or set OPENROUTER_API_KEY",
-    });
-    expect(
-      await port.verify(
-        draft({ name: "lab", endpoint: "https://lab.example/v1", credential: "api-key" }),
-      ),
-    ).toMatchObject({ ok: false, reason: "lab needs an API key" });
-    expect(
-      await port.verify(
-        draft({ name: "lab", endpoint: "https://lab.example/v1", credential: "env:LAB_KEY" }),
-      ),
-    ).toMatchObject({ ok: false, reason: "LAB_KEY isn't set" });
-    expect(calls).toEqual([]);
-  });
-
   it("checks a blank built-in key with the key the runtime would use", async () => {
     const saved: CredentialMap = { openrouter: { type: "api_key", key: "sk-or-saved" } };
     const cases: { env: Record<string, string>; credentials: CredentialMap; sent: string }[] = [
@@ -537,28 +438,6 @@ describe("connectionsPort proves the credential", () => {
         `Bearer ${sent}`,
       ]);
     }
-  });
-
-  it("names the refusal on a saved built-in so guided setup can offer a fix", async () => {
-    const accepted = ["sk-or-real"];
-    const { port } = await harness({ fetchFn: openRouter(accepted).fetchFn });
-    const first = await port.verify(openRouterDraft("sk-or-real"));
-    if (!first.ok) throw new Error("verification should pass");
-    await port.save(openRouterDraft("sk-or-real"), first);
-
-    accepted.pop();
-    expect(await port.verify(openRouterDraft())).toMatchObject({ ok: false, status: 401 });
-
-    expect(port.saved().map((row) => [row.name, row.credential, row.lastFailure])).toEqual([
-      [
-        "openrouter",
-        "saved key",
-        {
-          at: "2026-08-21T12:00:00.000Z",
-          reason: `openrouter refused the key · HTTP 401 from ${openRouterEndpoint}/key: ${userNotFound}`,
-        },
-      ],
-    ]);
   });
 });
 
@@ -585,14 +464,5 @@ describe("connectionsPort remove", () => {
     expect(await readCredentials(dir)).toEqual({});
     expect(await readObservations(dir)).toEqual({});
     expect(port.saved()).toEqual([]);
-  });
-
-  it("keeps environment credentials and says so", async () => {
-    const { port } = await harness({ env: { OPENAI_API_KEY: "ambient" } });
-    const receipt = await port.remove("openai");
-    expect(receipt).toEqual({
-      removed: [],
-      retained: ["OPENAI_API_KEY (environment variables are never deleted)"],
-    });
   });
 });

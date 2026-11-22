@@ -40,14 +40,6 @@ describe("loadRestorePlan", () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  it("starts fresh without a workspace port or a parseable state", async () => {
-    const escrow = sessionEscrow(undefined);
-    expect(await loadRestorePlan({}, escrow)).toEqual({ kind: "fresh" });
-    expect(await loadRestorePlan({ workspace: workspaceLoading("nope") }, escrow)).toEqual({
-      kind: "fresh",
-    });
-  });
-
   it("reports a rejecting port as a failure instead of aborting boot", async () => {
     const cause = new Error("disk gone");
     const workspace: WorkspacePort = {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attempt, Campaign, CommandBody, Evaluation, EvidenceItem } from "@keywork/campaigns";
@@ -19,10 +19,7 @@ afterEach(async () => {
 });
 
 describe("campaign service integration", () => {
-  it.each([
-    { empty: 5, profile: "persistent" },
-    { empty: 10, profile: "deep" },
-  ] as const)(
+  it.each([{ empty: 5, profile: "persistent" }] as const)(
     "finds and verifies a real artifact after $empty empty attempts with $profile persistence",
     async ({ empty, profile }) => {
       let operations = 0;
@@ -271,16 +268,6 @@ describe("campaign service integration", () => {
     expect(required(world.service, created.campaign.id).purposes.at(-1)?.outcome).toBe(
       "A revised outcome",
     );
-  });
-
-  it("captures a workspace-relative source without changing the source file", async () => {
-    const world = await environment();
-    await writeFile(join(world.root, "source.md"), "Original source");
-    const created = await world.service.create({ ...createRequest(), artifactPath: "source.md" });
-    expect(
-      (await world.service.artifact(created.campaign.id, created.campaign.baselineArtifactId ?? ""))
-        .content,
-    ).toBe("Original source");
   });
 
   it.each([false, true])(

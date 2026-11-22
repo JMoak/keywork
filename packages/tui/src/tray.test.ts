@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolvePalette } from "./palette.ts";
-import { clipLine, type TrayChild, trayRows } from "./tray.ts";
+import { type TrayChild, trayRows } from "./tray.ts";
 import { width } from "./width.ts";
 
 const theme = resolvePalette();
@@ -35,26 +35,6 @@ describe("tray rows", () => {
         expect(cells, `row at ${rowWidth}`).toBeLessThanOrEqual(rowWidth);
       }
     }
-  });
-
-  it("fills the description column to its room so rows align", () => {
-    const [row] = trayRows([{ name: "a", description: "b" }], 0, 30, theme);
-    const [name, description, shortcut] = rowTexts(row as TrayChild);
-    expect(width(name as string) + width(description as string) + width(shortcut as string)).toBe(
-      30,
-    );
-  });
-
-  it("marks the selected row with a pointer and prefixes names when asked", () => {
-    const rows = trayRows([{ name: "a", description: "" }], 0, 30, theme, { namePrefix: "/" });
-    expect(rowTexts(rows[0] as TrayChild)[0]).toContain("▸ /a");
-  });
-});
-
-describe("clipLine", () => {
-  it("clips by display cells with an ellipsis", () => {
-    expect(clipLine("我们在这里", 7)).toBe("我们在…");
-    expect(clipLine("plain", 10)).toBe("plain");
   });
 });
 

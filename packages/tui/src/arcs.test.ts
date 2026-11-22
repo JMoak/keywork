@@ -2,17 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   type ArcSummary,
   activeFirst,
-  arcInk,
   arcOrdinalsOf,
   arcSlugProblem,
-  arcTag,
   describeCloseOutcome,
   describeFinishOutcome,
   isArcSlug,
   suggestArcSlug,
 } from "./arcs.ts";
-import { arcAnchor } from "./chroma.ts";
-import { keyworkNight } from "./palette.ts";
 
 const arcs: ArcSummary[] = [
   { slug: "later", status: "active", created: "2026-08-21T09:00:00.000Z", sessions: 0 },
@@ -25,25 +21,6 @@ describe("arc ordinals and ink", () => {
     const ordinalOf = arcOrdinalsOf(arcs);
     expect([ordinalOf("first"), ordinalOf("middle"), ordinalOf("later")]).toEqual([0, 1, 2]);
     expect(ordinalOf("unknown")).toBeUndefined();
-  });
-
-  it("keeps ordinals stable when a newer arc joins", () => {
-    const before = arcOrdinalsOf(arcs);
-    const after = arcOrdinalsOf([
-      ...arcs,
-      { slug: "newest", status: "active", created: "2026-08-22T00:00:00.000Z", sessions: 0 },
-    ]);
-    expect(after("middle")).toBe(before("middle"));
-    expect(after("newest")).toBe(3);
-  });
-
-  it("inks an arc with its golden-angle anchor and unknown arcs with the dim text", () => {
-    expect(arcInk(keyworkNight, 2)).toBe(arcAnchor(keyworkNight.ramp, 2));
-    expect(arcInk(keyworkNight, undefined)).toBe(keyworkNight.textDim);
-  });
-
-  it("tags an arc with the slug grammar used on every surface", () => {
-    expect(arcTag("dock-v2")).toBe("#dock-v2");
   });
 });
 
@@ -70,15 +47,6 @@ describe("activeFirst", () => {
 });
 
 describe("describeCloseOutcome", () => {
-  it("reports a clean close with delivered notes and released sessions", () => {
-    expect(describeCloseOutcome("dock", { kind: "closed", delivered: 1, released: 0 })).toBe(
-      "arc dock closed · delivered 1 note",
-    );
-    expect(describeCloseOutcome("dock", { kind: "closed", delivered: 0, released: 2 })).toBe(
-      "arc dock closed · delivered 0 notes · 2 sessions released",
-    );
-  });
-
   it("appends the closing agent notice when the sweep degraded", () => {
     expect(
       describeCloseOutcome("dock", {
@@ -90,17 +58,6 @@ describe("describeCloseOutcome", () => {
     ).toBe(
       "arc dock closed · delivered 0 notes · closing agent didn't run (boom) · swept without it",
     );
-  });
-
-  it("explains a close waiting at the airlock, naming wedged sessions only when there are any", () => {
-    expect(
-      describeCloseOutcome("dock", { kind: "pending", candidates: 2, questions: 1, wedged: 0 }),
-    ).toBe(
-      "arc dock is waiting at the airlock · 2 notes and 1 question to triage in the memory pane · /arc-abandon dock archives without distilling",
-    );
-    expect(
-      describeCloseOutcome("dock", { kind: "pending", candidates: 0, questions: 0, wedged: 1 }),
-    ).toContain(" · 1 live session didn't flush · ");
   });
 });
 

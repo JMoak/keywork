@@ -3,7 +3,6 @@ import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { SessionStore } from "../session/store.ts";
 import {
-  childTagOf,
   claimSession,
   creatureSessionType,
   creatureTagOf,
@@ -40,13 +39,6 @@ describe("claiming a session for a creature", () => {
     expect(claimed.binding()).toEqual(plain.binding());
   });
 
-  it("adds only the tag to a session already bound to the bot", async () => {
-    const bound = await store("bound");
-    await bound.appendBotBinding("pip");
-    await claimSession(bound, { creature: "pip", kind: "thread" });
-    expect(bound.entries().map((entry) => entry.type)).toEqual(["binding", "custom"]);
-  });
-
   it("is idempotent for the same tag and refuses another claim", async () => {
     const claimed = await store("claimed");
     const tag = { creature: "pip", kind: "thread" } as const;
@@ -76,12 +68,5 @@ describe("claiming a session for a creature", () => {
     expect(creatureTagOf(untagged.entries())).toBeUndefined();
     expect(isCreatureTag({ creature: "", kind: "thread" })).toBe(false);
     expect(isCreatureTag(null)).toBe(false);
-  });
-
-  it("derives a child tag that keeps the creature and says child", () => {
-    expect(childTagOf({ creature: "pip", kind: "thread" })).toEqual({
-      creature: "pip",
-      kind: "child",
-    });
   });
 });

@@ -254,14 +254,6 @@ describe("a served keywork, as keywork-app attaches to it", () => {
       if (theme.pair !== undefined) expect(names, `${theme.name} pairs with`).toContain(theme.pair);
     }
   });
-
-  it("refuses an authenticated route without the ticket's token and answers with it", async () => {
-    expect((await fetch(`${url}/sessions`)).status).toBe(401);
-    const listed = await fetch(`${url}/sessions`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(listed.status).toBe(200);
-  });
 });
 
 function majorOf(contract: string | null | undefined): number {

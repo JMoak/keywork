@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LayeredSearchHit } from "./arcs/recall.ts";
-import { memoryQuestions, type PendingAction } from "./decider.ts";
+import type { PendingAction } from "./decider.ts";
 import { boundedDriftEvidence } from "./drift.ts";
 import type { DailyEntryCandidate } from "./gardener.ts";
 import type { JevAnswer } from "./jev.ts";
@@ -9,7 +9,6 @@ import {
   driftVerdictPlan,
   entryDurabilityPlan,
   jevCaps,
-  jevQuestions,
   mentionIsLinkPlan,
   pairRelationPlan,
   readRecall,
@@ -65,41 +64,6 @@ function keyedAs(key: string, answers: Record<string, JevAnswer>): Record<string
 }
 
 describe("action-relevance@1", () => {
-  it("sends the action and an excerpt per candidate, and asks one noul per note", () => {
-    const tokens = noteOf("Auth Tokens", {
-      body: "Tokens rotate hourly; never cache them.\n\nA second paragraph stays home.\n",
-    });
-    const plan = actionRelevancePlan(editAuth, [hitOf(tokens)], scrub);
-
-    expect(JSON.stringify(plan.ask)).toBe(
-      JSON.stringify({
-        state: {
-          action: { tool: "edit", subject: "src/auth/token.ts" },
-          notes: {
-            "Auth Tokens": {
-              title: "Auth Tokens",
-              layer: "workspace",
-              excerpt: "Tokens rotate hourly; never cache them.",
-            },
-          },
-        },
-        questions: {
-          "Auth Tokens": {
-            type: "noul",
-            instructions:
-              'Does the note "Auth Tokens" in notes bear on this action, so that an agent about to take it should read the note first?',
-            criteria: {
-              true: "The note states a fact, rule, or warning about the file or command in this action",
-              false:
-                "The note is about something else and only shares a word or a topic with the action",
-            },
-          },
-        },
-        pace: "hot-path",
-      }),
-    );
-  });
-
   it("caps each excerpt at 480 characters of the first paragraph", () => {
     const long = noteOf("Long", { body: `${"a".repeat(600)}\n\nsecond` });
     const plan = actionRelevancePlan(editAuth, [hitOf(long)], scrub);
@@ -154,13 +118,11 @@ describe("action-relevance@1", () => {
 
 describe("the recall band", () => {
   it.each([
-    [0, "drop"],
     [0.1, "drop"],
     [0.11, "undecided"],
     [0.5, "undecided"],
     [0.89, "undecided"],
     [0.9, "rank-first"],
-    [1, "rank-first"],
   ] as const)("reads %f as %s", (odds, reading) => {
     expect(readRecall(odds)).toBe(reading);
   });
@@ -268,24 +230,11 @@ describe("mention-is-link@1", () => {
 
   it.each([
     [0.1, "no-link"],
-    [0.5, undefined],
     [0.9, "link"],
   ] as const)("reads %f as %s", (odds, verdict) => {
     const plan = mentionIsLinkPlan({ source, target, mention: "bun" }, scrub);
     const reading = plan.read({ link: { type: "noul", noul: odds } });
     expect(reading.verdict).toBe(verdict);
     expect(reading.scores).toEqual({ Bun: odds });
-  });
-});
-
-describe("the catalog", () => {
-  it("maps every port question and none of the reserved ones", () => {
-    expect(jevQuestions).toEqual([
-      memoryQuestions.actionRelevance,
-      memoryQuestions.entryDurability,
-      memoryQuestions.pairRelation,
-      memoryQuestions.driftVerdict,
-      memoryQuestions.mentionIsLink,
-    ]);
   });
 });

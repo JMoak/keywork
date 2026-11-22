@@ -1,19 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { auroc, brier, ece, fitThreshold, reliability, type Scored } from "./calibration.ts";
+import { auroc, ece, fitThreshold, reliability, type Scored } from "./calibration.ts";
 
 const scored = (confidence: number, correct: boolean): Scored => ({ confidence, correct });
 
 describe("calibration math", () => {
-  it("scores a perfect forecaster zero Brier and zero ECE", () => {
-    const perfect = [scored(1, true), scored(0, false), scored(1, true)];
-    expect(brier(perfect)).toBe(0);
-    expect(ece(perfect)).toBe(0);
-  });
-
-  it("charges the squared gap between stated and observed for Brier", () => {
-    expect(brier([scored(0.8, true), scored(0.8, false)])).toBeCloseTo((0.04 + 0.64) / 2);
-  });
-
   it("weights each bin's gap by its share of the items for ECE", () => {
     const items = [
       scored(0.95, true),

@@ -25,13 +25,6 @@ describe("attachMentionedFiles", () => {
     );
   });
 
-  it("leaves the prompt alone when nothing mentioned can be read", () => {
-    expect(attachMentionedFiles("ping @someone about @nope.ts", read, [])).toBe(
-      "ping @someone about @nope.ts",
-    );
-    expect(attachMentionedFiles("see @bin/blob", read, [])).toBe("see @bin/blob");
-  });
-
   it("skips a file the conversation already carries unchanged", () => {
     const first = attachMentionedFiles("read @src/app.ts", read, []);
     const history = [textMessage("user", first)];

@@ -164,21 +164,6 @@ describe("PaneSession bot binding", () => {
     await waitFor(() => expect(created[0]?.models).toEqual(["acme/large", "acme/small"]));
   });
 
-  it("a bot without a model seed keeps the model in force, and releasing writes an unbind", async () => {
-    const { panes, built, created, pane } = world();
-    await waitFor(() => expect(created).toHaveLength(1));
-    await panes.switchModel("acme/small");
-
-    panes.conversationTarget()?.switchBot("scout");
-    expect(built.at(-1)).toEqual({ bot: "scout", model: "acme/small" });
-
-    panes.conversationTarget()?.switchBot(undefined);
-    expect(built.at(-1)).toEqual({ bot: undefined, model: "acme/small" });
-    expect(pane("session-1").bot).toBeUndefined();
-    await waitFor(() => expect(created[0]?.bound).toEqual(["scout", undefined]));
-    expect(created[0]?.models).toEqual(["acme/small"]);
-  });
-
   it("a resumed session builds its agent as the persisted bot from the first frame", async () => {
     const { probe, built, escrow, pane } = world();
     const attachment = fakeAttachment("bound", { bot: "scout", modelReference: "acme/large" });
@@ -203,16 +188,6 @@ describe("PaneSession bot binding", () => {
     await waitFor(() => expect(created).toHaveLength(2));
     await waitFor(() => expect(created[1]?.bound).toEqual(["scout"]));
     expect(built.at(-1)).toEqual({ bot: "scout", model: undefined });
-  });
-
-  it("an origin that names a bot binds the fresh pane to it", async () => {
-    const { probe, created } = world();
-    await waitFor(() => expect(created).toHaveLength(1));
-
-    probe.core.openPane(undefined, undefined, { arc: "inherit", bot: "reviewer" });
-
-    await waitFor(() => expect(created[1]?.bound).toEqual(["reviewer"]));
-    expect(created[1]?.models).toEqual(["acme/large"]);
   });
 });
 

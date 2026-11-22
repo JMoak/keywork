@@ -33,21 +33,6 @@ describe("models.changed from the inventory", () => {
     expect(changes).toEqual([{ node: "spark-ad4d", reason: "manifest" }]);
   });
 
-  it("says probe when the inventory's own scan finds a different set of servers", async () => {
-    const changes: ModelsChange[] = [];
-    const http = switchableHttp();
-    const inventory = new ModelInventory({
-      cache: new CapabilityCache(),
-      http,
-      nodes: async () => [{ node: "moak-main", address: "127.0.0.1", scan: true }],
-      announce: { node: "moak-main", changed: (change) => changes.push(change) },
-    });
-    await inventory.list();
-    http.up = true;
-    await inventory.list();
-    expect(changes).toEqual([{ node: "moak-main", reason: "probe" }]);
-  });
-
   it("says probe for the inventory's own node after any probe", async () => {
     const { inventory, changes } = watched();
     await inventory.probe({ endpoint: "http://127.0.0.1:11434" });

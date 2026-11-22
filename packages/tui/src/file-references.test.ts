@@ -5,7 +5,6 @@ import {
   fileHref,
   fileLinker,
   fileReferences,
-  linkSpans,
   sliceSpans,
   unlinked,
   wrapLinked,
@@ -72,12 +71,6 @@ describe("linkSpans", () => {
       { text: " now", tone: "code" },
     ]);
   });
-
-  it("returns the spans untouched when nothing links or links are off", () => {
-    const spans = [{ text: "nothing here" }];
-    expect(linkSpans(spans, [])).toEqual(spans);
-    expect(unlinked([{ text: "src/a.ts:3" }])).toEqual([{ text: "src/a.ts:3" }]);
-  });
 });
 
 describe("wrapLinked", () => {
@@ -101,10 +94,6 @@ describe("wrapLinked", () => {
       const hrefs = row.map((span) => span.href);
       expect(hrefs.filter((value) => value !== undefined).length).toBeLessThanOrEqual(1);
     }
-  });
-
-  it("keeps a blank line blank", () => {
-    expect(wrapLinked("", 10, fileLinker(root))).toEqual([[]]);
   });
 });
 

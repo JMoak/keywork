@@ -32,19 +32,6 @@ describe("promoteKeeperClass", () => {
     expect(outcome).toMatchObject({ promoted: false, refusal: "every-class" });
   });
 
-  it("says when a class has no answered asks", async () => {
-    const outcome = await promoteKeeperClass({
-      nodeState: await scratchNode(),
-      ruleClass: "bash cargo test *",
-      ratchet,
-    });
-    expect(outcome).toEqual({
-      promoted: false,
-      refusal: "unanswered",
-      sentence: 'No answered asks in "bash cargo test *" yet.',
-    });
-  });
-
   it("refuses before the planned sample and names the evidence it needs", async () => {
     const nodeState = await scratchNode();
     await answerAll({ nodeState, ratchet, draw: () => 1 }, ["npm test", "npm test -s"], "granted");

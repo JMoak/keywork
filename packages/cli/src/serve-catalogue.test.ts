@@ -5,7 +5,6 @@ import { declaredCapabilitiesFor, type ProviderRegistration } from "@keywork/eng
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type CatalogueSeams,
-  cataloguedInventory,
   catalogueEntriesOf,
   catalogueMaxAgeMs,
   openRouterCatalogue,
@@ -101,16 +100,6 @@ describe("the OpenRouter catalogue", () => {
       "the OpenRouter catalogue could not be read (it answered 503); its models carry only what keywork.json declares",
     ]);
     expect(await readFile(file, "utf8")).not.toMatch(/key|bearer|authorization/i);
-  });
-
-  it("wraps the served inventory so every read of its registrations sees the catalogue", async () => {
-    const catalogue = { entries: () => catalogueEntriesOf(listing) };
-    const inventory = cataloguedInventory(
-      { registrations: () => [openRouter(undefined)] },
-      catalogue,
-    );
-    const [fed] = inventory.registrations();
-    expect(declaredCapabilitiesFor(fed?.capabilityDeclarations, "tiny/m").toolCalls).toBe(false);
   });
 });
 

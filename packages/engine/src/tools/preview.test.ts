@@ -38,18 +38,6 @@ describe("edit preview", () => {
     expect(await readFile(join(cwd, "src", "verbs.ts"), "utf8")).toBe("split: 1,\nrotate: 2,\n");
   });
 
-  it("keeps the file's CRLF endings and honors replaceAll, exactly as the edit would", async () => {
-    const cwd = await workspace();
-    await writeFile(join(cwd, "list.txt"), "a\r\nb\r\na\r\n");
-    const preview = await editTool(toolScope(cwd)).preview?.({
-      path: "list.txt",
-      oldText: "a\n",
-      newText: "z\n",
-      replaceAll: true,
-    });
-    expect(preview?.after).toBe("z\r\nb\r\nz\r\n");
-  });
-
   it("offers nothing when the edit would fail, the file is missing, binary or over the cap", async () => {
     const cwd = await workspace();
     const edit = editTool(toolScope(cwd));

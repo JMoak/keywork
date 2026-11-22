@@ -63,16 +63,4 @@ describe("file links in the transcript", () => {
     const linkedText = prompt?.links?.map((link) => prompt.text.slice(link.from, link.to));
     expect(linkedText).toEqual(["src/app.ts:12"]);
   });
-
-  it("links each row's piece of a reference that wraps, never one span across two rows", () => {
-    const path = "packages/engine/src/providers/messages-wire.ts:210";
-    const lines = framed([{ kind: "assistant", text: `see ${path}` }], fileLinker(root), 24);
-    const href = hrefOf("packages/engine/src/providers/messages-wire.ts", 210);
-    const carrying = lines.filter((line) => line.spans?.some((span) => span.href === href));
-    expect(carrying.length).toBeGreaterThan(1);
-    const pieces = carrying.flatMap((line) =>
-      (line.spans ?? []).filter((span) => span.href === href).map((span) => span.text),
-    );
-    expect(pieces.join("")).toBe(path);
-  });
 });

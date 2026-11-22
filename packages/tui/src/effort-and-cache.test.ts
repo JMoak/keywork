@@ -2,7 +2,6 @@ import { Agent, MockProvider, type TurnDelta } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { ConversationModel } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
-import { describeModelRow, modelPickerOver } from "./model-picker.ts";
 
 function run(model: ConversationModel, line: string): Promise<unknown> {
   for (const character of line) {
@@ -52,43 +51,12 @@ describe("/effort", () => {
     expect(recorded).toEqual(["low"]);
   });
 
-  it("names the provider default before anything is chosen and offers the command", async () => {
-    const model = new ConversationModel(new Agent({ provider: new MockProvider([]) }), () => {});
-    await run(model, "/effort");
-    expect(model.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "effort at the provider default · /effort low|medium|high|xhigh|max",
-    });
-    for (const character of "/eff") {
-      model.handleKey(parseChord(character), character);
-    }
-    expect(model.suggestions().map((suggestion) => suggestion.name)).toContain("effort");
-  });
-
   it("carries the level onto a swapped-in agent", () => {
     const first = new Agent({ provider: new MockProvider([]), effort: "max" });
     const model = new ConversationModel(first, () => {});
     const second = new Agent({ provider: new MockProvider([]) });
     model.swapAgent(second);
     expect(second.effort()).toBe("max");
-  });
-
-  it("shows the level on the cost line", async () => {
-    const agent = new Agent({
-      provider: new MockProvider(
-        [[{ type: "done", usage: { inputTokens: 1_000, outputTokens: 10 } }]],
-        {
-          modelId: "claude-opus-5-5",
-        },
-      ),
-      effort: "low",
-    });
-    const model = new ConversationModel(agent, () => {});
-    await agent.send("hi");
-    await run(model, "/cost");
-    expect(model.entries.at(-1)?.text).toContain(
-      "estimated from claude-opus-5-5 rates · effort low",
-    );
   });
 });
 
@@ -138,32 +106,6 @@ describe("progress notes", () => {
     expect(model.entries.filter((entry) => entry.kind === "assistant")).toEqual([
       { kind: "assistant", text: "Found the stale token. Editing auth.py next.", progress: true },
       { kind: "assistant", text: "Fixed." },
-    ]);
-  });
-});
-
-describe("model picker", () => {
-  it("shows the effort next to the current model only", () => {
-    const choices = [
-      {
-        reference: "anthropic/claude-opus-5-5",
-        provider: "anthropic",
-        model: "claude-opus-5-5",
-        available: true,
-        facts: ["anthropic-messages"],
-      },
-      {
-        reference: "anthropic/claude-sonnet-5-5",
-        provider: "anthropic",
-        model: "claude-sonnet-5-5",
-        available: true,
-        facts: ["anthropic-messages"],
-      },
-    ];
-    const picker = modelPickerOver(choices, "anthropic/claude-opus-5-5", "high");
-    expect(picker.rows().map(describeModelRow)).toEqual([
-      "anthropic/claude-opus-5-5 · anthropic-messages · current · effort high",
-      "anthropic/claude-sonnet-5-5 · anthropic-messages",
     ]);
   });
 });

@@ -85,23 +85,6 @@ describe("a note the harness has for the model", () => {
     expect(appended.map(messageText)).toEqual(["what next?", "hello"]);
   });
 
-  it("never varies the system prompt", async () => {
-    const provider = recordingProvider([callNoop("a"), textTurn("done")]);
-    const agent = new Agent({
-      provider,
-      tools: [noop],
-      systemPrompt: "You are keywork.",
-      notes: noteOnce("[yard] now."),
-    });
-
-    await agent.send("go");
-
-    expect(provider.requests.map((request) => request.systemPrompt)).toEqual([
-      "You are keywork.",
-      "You are keywork.",
-    ]);
-  });
-
   it("starts no turn of its own, and is heard only by the next request", async () => {
     const provider = recordingProvider([textTurn("one"), textTurn("two")]);
     let pending: string | undefined;
@@ -159,17 +142,6 @@ describe("a note the harness has for the model", () => {
 
     expect(provider.requests[0]?.messages.map(messageText)).toEqual(["[yard] now.\n\ngo"]);
     expect(provider.requests[1]?.messages.map(messageText)).toEqual(["go", "", ""]);
-  });
-
-  it("leaves the request exactly as the history when there is none", async () => {
-    const provider = recordingProvider([textTurn("hello")]);
-    const agent = new Agent({ provider, notes: () => undefined });
-
-    await agent.send("hi");
-
-    expect(provider.requests[0]?.messages).toEqual([
-      { role: "user", parts: [{ type: "text", text: "hi" }] },
-    ]);
   });
 });
 

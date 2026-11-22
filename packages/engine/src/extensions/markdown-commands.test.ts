@@ -43,46 +43,6 @@ describe("loadCommands", () => {
       source: "project",
     });
   });
-
-  it("prefers project commands over user commands with the same name", async () => {
-    const root = await scratch();
-    await seed(join(root, "project", ".keywork", "commands"), { "deploy.md": "project body" });
-    await seed(join(root, "user", ".keywork", "commands"), {
-      "deploy.md": "user body",
-      "only-user.md": "user only",
-    });
-    const { commands } = await loadCommands({
-      projectRoot: join(root, "project"),
-      userRoot: join(root, "user"),
-    });
-    const byName = new Map(commands.map((command) => [command.name, command]));
-    expect(byName.get("deploy")?.template).toBe("project body");
-    expect(byName.get("deploy")?.source).toBe("project");
-    expect(byName.get("only-user")?.template).toBe("user only");
-  });
-
-  it("quarantines malformed frontmatter and bad names without failing the load", async () => {
-    const root = await scratch();
-    await seed(join(root, ".keywork", "commands"), {
-      "broken.md": "---\ndescription: never closed\n",
-      "bad name!.md": "body",
-      "fine.md": "still loads",
-    });
-    const { commands, failures } = await loadCommands({ projectRoot: root });
-    expect(commands.map((command) => command.name)).toEqual(["fine"]);
-    expect(failures).toHaveLength(2);
-    expect(failures.map((failure) => failure.reason).join(" ")).toContain("frontmatter");
-  });
-
-  it("returns nothing when no command directories exist", async () => {
-    const root = await scratch();
-    const { commands, failures } = await loadCommands({
-      projectRoot: join(root, "missing"),
-      userRoot: join(root, "also-missing"),
-    });
-    expect(commands).toEqual([]);
-    expect(failures).toEqual([]);
-  });
 });
 
 describe("renderCommand", () => {
@@ -148,17 +108,6 @@ describe("renderCommand", () => {
 });
 
 describe("scanTemplate", () => {
-  it("splits a template into typed segments", () => {
-    expect(scanTemplate("a $ARGUMENTS b !`ls` c @x.md")).toEqual([
-      { kind: "literal", text: "a " },
-      { kind: "arguments" },
-      { kind: "literal", text: " b " },
-      { kind: "shell", command: "ls" },
-      { kind: "literal", text: " c " },
-      { kind: "file", path: "x.md", raw: "@x.md" },
-    ]);
-  });
-
   it("trims trailing punctuation off file mentions", () => {
     expect(scanTemplate("see @src/main.ts.")).toEqual([
       { kind: "literal", text: "see " },

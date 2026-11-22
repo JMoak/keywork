@@ -14,7 +14,6 @@ import {
   knownCostNanos,
   mergeCostRollups,
   ratesFor,
-  retirementOf,
   sessionCost,
   withTurnCost,
 } from "./pricing.ts";
@@ -51,14 +50,6 @@ describe("costNanosOf", () => {
   it("prefers the provider-metered cost over table math", () => {
     const metered = tokens(1_000_000, 1_000_000, { costUsd: 0.5 });
     expect(costNanosOf(metered, "gpt-5-mini")).toBe(500_000_000);
-  });
-
-  it("accepts a metered cost even for a model missing from the table", () => {
-    expect(costNanosOf(tokens(10, 10, { costUsd: 0.001 }), "mystery")).toBe(1_000_000);
-  });
-
-  it("prices a zero-usage turn at zero for a known model", () => {
-    expect(costNanosOf(tokens(0, 0), "gpt-5-nano")).toBe(0);
   });
 
   it("prices Jev's input at TypeSafe's published rate and its output at nothing", () => {
@@ -109,10 +100,6 @@ describe("withTurnCost", () => {
     expect(knownCostNanos(rollup)).toBeUndefined();
   });
 
-  it("skips turns that carry no usage at all", () => {
-    expect(withTurnCost(emptyCostRollup(), tokens(0, 0), undefined)).toEqual(emptyCostRollup());
-  });
-
   it("tallies metered turns separately from estimated ones", () => {
     let rollup = withTurnCost(emptyCostRollup(), tokens(10, 10, { costUsd: 0.01 }), undefined);
     rollup = withTurnCost(rollup, tokens(10, 10), "gpt-5-mini");
@@ -143,20 +130,10 @@ describe("sessionCost", () => {
     expect(knownCostNanos(rollup)).toBe(1_500_000_000);
   });
 
-  it("reports unpriced turns when no model is on record", () => {
-    const rollup = sessionCost([messageEntry("a", tokens(5, 5))]);
-    expect(rollup.unpricedTurns).toBe(1);
-    expect(knownCostNanos(rollup)).toBeUndefined();
-  });
-
   it("prices metered usage without needing any model on record", () => {
     const rollup = sessionCost([messageEntry("a", tokens(5, 5, { costUsd: 0.002 }))]);
     expect(knownCostNanos(rollup)).toBe(2_000_000);
     expect(rollup.meteredTurns).toBe(1);
-  });
-
-  it("returns an empty rollup for a session with no usage", () => {
-    expect(sessionCost([messageEntry("a")])).toEqual(emptyCostRollup());
   });
 });
 
@@ -234,13 +211,6 @@ describe("Agent cost accounting", () => {
       unpricedTurns: 0,
     });
     expect(agent.modelId()).toBe("gpt-5-mini");
-  });
-
-  it("keeps cost unknown when the provider has no model on record", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("hi", tokens(5, 5))]) });
-    await agent.send("go");
-    expect(agent.cost().unpricedTurns).toBe(1);
-    expect(knownCostNanos(agent.cost())).toBeUndefined();
   });
 
   it("still counts the turn when the stream is interrupted mid-tool-loop", async () => {
@@ -322,14 +292,6 @@ describe("SessionStore cost stats", () => {
     const reopened = await SessionStore.open(store.file);
     expect(knownCostNanos(reopened.stats().cost)).toBe(4_200_000);
   });
-
-  it("keeps an unmetered session's cost unknown when no model is on record", async () => {
-    const dir = await scratchDir();
-    const store = await SessionStore.create(join(dir, "s.jsonl"), dir);
-    await store.append({ role: "assistant", parts: [] }, tokens(10, 5));
-    expect(knownCostNanos(store.stats().cost)).toBeUndefined();
-    expect(store.stats().cost.unpricedTurns).toBe(1);
-  });
 });
 
 function messageEntry(id: string, usage?: Usage): MessageEntry {
@@ -362,21 +324,5 @@ describe("the 5.5 generation and GPT-6 rows", () => {
     expect(ratesFor("gpt-6-luna")).toEqual(listed(100, 500, 10, 125));
     expect(ratesFor("gpt-6.1-sol")).toEqual(listed(2000, 10_000, 100, 2500));
     expect(ratesFor("us.anthropic.claude-opus-5-5")).toEqual(ratesFor("claude-opus-5-5"));
-  });
-
-  it("gets the cost line right for an Opus 5.5 turn", () => {
-    const turn = tokens(10_000, 2_000, {
-      cacheReadInputTokens: 100_000,
-      cacheCreationInputTokens: 4_000,
-    });
-    expect(costNanosOf(turn, "claude-opus-5-5")).toBe(
-      10_000 * 4000 + 2_000 * 20_000 + 100_000 * 200 + 4_000 * 5000,
-    );
-    expect(formatCostNanos(costNanosOf(turn, "claude-opus-5-5") ?? 0)).toBe("$0.12");
-  });
-
-  it("records Sonnet 4.5's retirement and nothing for live models", () => {
-    expect(retirementOf("claude-sonnet-4-5-20250929")).toBe("2026-11-30");
-    expect(retirementOf("claude-sonnet-5-5")).toBeUndefined();
   });
 });

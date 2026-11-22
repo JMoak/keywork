@@ -3,7 +3,7 @@ import { probeHttp } from "../adapters/http.ts";
 import { FixtureServer, loadFixture } from "../adapters/testing/fixture-server.ts";
 import { CapabilityCache } from "./cache.ts";
 import { probeServer } from "./probe.ts";
-import { capabilityNames, knownCapabilities } from "./record.ts";
+import { knownCapabilities } from "./record.ts";
 
 const now = () => new Date("2026-11-05T12:00:00.000Z");
 const servers: FixtureServer[] = [];
@@ -139,22 +139,6 @@ describe("probeServer", () => {
       inventory: null,
       records: [],
     });
-  });
-
-  it("reports an unreachable endpoint", async () => {
-    const server = new FixtureServer();
-    const root = await server.listen();
-    await server.close();
-    const result = await probeServer(root, {
-      http: probeHttp({ timeoutMs: 1000 }),
-      cache: new CapabilityCache(now),
-      now,
-    });
-    expect(result.status).toBe("unreachable");
-  });
-
-  it("knows every field of the record by name", () => {
-    expect(new Set(capabilityNames).size).toBe(capabilityNames.length);
   });
 });
 

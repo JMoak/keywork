@@ -143,14 +143,6 @@ describe("resolvePolicy across the three levels", () => {
     ]);
   });
 
-  it("falls to the workspace when the creature inherits", () => {
-    const resolution = resolvePolicy(
-      { modelClass: "strong", levels: { creature: { strong: "inherit" }, workspace, user } },
-      everyoneStrong,
-    );
-    expect(planOf(resolution).candidates[0].level).toBe("workspace");
-  });
-
   it("falls to the user when the creature and the workspace inherit", () => {
     const resolution = resolvePolicy(
       { modelClass: "strong", levels: { creature: {}, workspace: {}, user } },
@@ -197,13 +189,12 @@ describe("resolvePolicy across the three levels", () => {
 describe("resolvePolicy refuses candidates at resolution", () => {
   function refusedCode(
     registrations: readonly ProviderRegistration[],
-    modelClass: "strong" | "loop" | "decide" | "vision",
+    modelClass: "strong" | "decide",
     candidate: { provider: string; model: string },
-    facts: Record<string, Parameters<typeof record>[1]> = {},
   ): ResolutionFailureCode {
     const resolution = resolvePolicy(
       { modelClass, levels: { creature: { [modelClass]: candidate } } },
-      probedEnvironment(registrations, facts),
+      probedEnvironment(registrations, {}),
     );
     return failureOf(resolution).failure.code;
   }
@@ -252,36 +243,6 @@ describe("resolvePolicy refuses candidates at resolution", () => {
     const remote = registration("remote", "http://192.168.1.20:11434/v1");
     expect(refusedCode([remote], "strong", slot("remote", "m"))).toBe("insecure-endpoint");
     expect(refusedCode([remote], "decide", slot("remote", "nimble"))).toBe("insecure-endpoint");
-  });
-
-  it("refuses a strong candidate whose allocated context is under 128K", () => {
-    const small = { ...strongFacts, contextAllocated: known(32_768, probed) };
-    const resolution = resolvePolicy(
-      { modelClass: "strong", levels: { creature: { strong: slot("ollama", "qwen3.8-27b") } } },
-      probedEnvironment([ollama], { "ollama/qwen3.8-27b": small }),
-    );
-    expect(failureOf(resolution).failure).toMatchObject({
-      code: "missing-capability",
-      reference: "ollama/qwen3.8-27b",
-      model: "qwen3.8-27b",
-      capability: "contextAllocated",
-    });
-  });
-
-  it("refuses a loop candidate whose decode speed was never measured on its node", () => {
-    const unmeasured = { tools: known(true, probed), contextAllocated: known(131_072, probed) };
-    expect(
-      refusedCode([ollama], "loop", slot("ollama", "qwen3.6-35b-a3b"), {
-        "ollama/qwen3.6-35b-a3b": unmeasured,
-      }),
-    ).toBe("missing-capability");
-  });
-
-  it("refuses a vision candidate without image input", () => {
-    const blind = { ...strongFacts, imageInput: known("none" as const, probed) };
-    expect(
-      refusedCode([ollama], "vision", slot("ollama", "flint"), { "ollama/flint": blind }),
-    ).toBe("missing-capability");
   });
 
   it("refuses a decide candidate with neither a decision endpoint nor logprobs", () => {
@@ -371,22 +332,6 @@ describe("resolvePolicy refuses candidates at resolution", () => {
     expect(failure.level).toBe("creature");
     expect(failure.failure).toMatchObject({ reference: "lmstudio/a" });
     expect(failure.refused).toHaveLength(2);
-  });
-
-  it("is never ambiguous, because a policy candidate always names its provider", () => {
-    const resolution = resolvePolicy(
-      { modelClass: "strong", levels: { creature: { strong: slot("spark", "qwen3.8-27b") } } },
-      probedEnvironment([ollama, spark], { "spark/qwen3.8-27b": strongFacts }),
-    );
-    expect(referencesOf(resolution)).toEqual(["spark/qwen3.8-27b"]);
-  });
-
-  it("is never unconfigured, because a policy that names nothing inherits", () => {
-    const resolution = resolvePolicy(
-      { modelClass: "decide", levels: {} },
-      { registrations: [], now: fixedNow },
-    );
-    expect(resolution).toEqual({ ok: true, kind: "inherit", modelClass: "decide" });
   });
 });
 

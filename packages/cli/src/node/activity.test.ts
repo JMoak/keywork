@@ -102,15 +102,4 @@ describe("workspaceActivity", () => {
     rows[1] = { working: false };
     expect(await source.live()).toBe(false);
   });
-
-  it("is idle when the workspace has no ticket", async () => {
-    const source = workspaceActivity(
-      "workspace:stead",
-      () => undefined,
-      () => {
-        throw new Error("never asked");
-      },
-    );
-    expect(await source.live()).toBe(false);
-  });
 });

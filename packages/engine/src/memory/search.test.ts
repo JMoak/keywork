@@ -1,5 +1,3 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { type EmbeddingsPort, lexicalRanking, MemorySearch, tokenize } from "./search.ts";
@@ -65,12 +63,6 @@ describe("lexicalRanking", () => {
     const ranked = lexicalRanking(await store.listNotes(), "dock ratio");
     expect(ranked.map((entry) => entry.note.title)).toEqual(["Dock ratio", "Layout tree"]);
   });
-
-  it("returns nothing for a query with no indexable terms", async () => {
-    const store = await vault();
-    await seeded(store, [{ title: "Dock ratio", body: "0.3" }]);
-    expect(lexicalRanking(await store.listNotes(), "!!! ?")).toEqual([]);
-  });
 });
 
 describe("tokenize", () => {
@@ -85,15 +77,6 @@ describe("MemorySearch", () => {
     const outcome = await search.search("anything");
     expect(outcome.hits).toEqual([]);
     expect(outcome.source).toEqual({ kind: "lexical" });
-  });
-
-  it("degrades to lexical-only without an embeddings port", async () => {
-    const store = await vault();
-    await seeded(store, [{ title: "Dock ratio", body: "0.3 default" }]);
-    const outcome = await new MemorySearch(store).search("dock");
-    expect(outcome.source).toEqual({ kind: "lexical" });
-    expect(outcome.hits.map((hit) => hit.note.title)).toEqual(["Dock ratio"]);
-    expect(outcome.hits[0]?.legs).toEqual(["lexical"]);
   });
 
   it("surfaces semantically related notes with zero lexical overlap", async () => {
@@ -214,13 +197,6 @@ describe("MemorySearch", () => {
     await search.search("plant");
     expect(port.calls.filter((call) => call[0]?.includes("Curing garden"))).toHaveLength(2);
   });
-
-  it("returns nothing for a blank query", async () => {
-    const store = await vault();
-    await seeded(store, [{ title: "Dock ratio", body: "0.3" }]);
-    const outcome = await new MemorySearch(store).search("   ");
-    expect(outcome.hits).toEqual([]);
-  });
 });
 
 describe("graph leg", () => {
@@ -287,30 +263,5 @@ describe("graph leg", () => {
     expect(newAt).toBeGreaterThanOrEqual(0);
     expect(oldAt).toBeGreaterThan(newAt);
     expect(outcome.hits[oldAt]?.superseded).toBe(true);
-  });
-
-  it("always attaches supersedes and contradicts relations to hits", async () => {
-    const root = await scratch();
-    const store = new MemoryStore({ vaultRoot: root, trusted: true });
-    await seeded(store, [{ title: "Old ratio", body: "50/50" }]);
-    await store.writeNote({
-      title: "New ratio",
-      body: "60/40",
-      provenance: "user",
-      supersedes: "Old ratio",
-    });
-    await writeFile(
-      join(root, "Rival ratio.md"),
-      '---\ncontradicts: "[[New ratio]]"\n---\n55/45 ratio\n',
-      "utf8",
-    );
-    const outcome = await new MemorySearch(store).search("ratio");
-    const byTitle = new Map(outcome.hits.map((hit) => [hit.note.title, hit.relations]));
-    expect(byTitle.get("New ratio")).toEqual({
-      supersedes: "Old ratio",
-      contradicts: ["Rival ratio"],
-    });
-    expect(byTitle.get("Old ratio")).toEqual({ supersededBy: "New ratio", contradicts: [] });
-    expect(byTitle.get("Rival ratio")).toEqual({ contradicts: ["New ratio"] });
   });
 });

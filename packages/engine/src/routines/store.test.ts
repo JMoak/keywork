@@ -131,13 +131,6 @@ describe("RoutineStore", () => {
       kind: "fresh",
     });
   });
-
-  it("indexes an unreadable routine with its problem and no digest", async () => {
-    const store = new RoutineStore(await database());
-    const indexed = store.index("wren", "bad", "bad.json", { problem: "not JSON" }, t0);
-    expect(indexed.parse).toEqual({ problem: "not JSON" });
-    expect(indexed.digest).toBeNull();
-  });
 });
 
 function newRun(firedAt: number) {

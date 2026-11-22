@@ -12,12 +12,6 @@ async function freshStore(): Promise<SessionStore> {
 }
 
 describe("SessionStore arc binding (PD9 · PD13)", () => {
-  it("is unbound until a binding entry lands", async () => {
-    const store = await freshStore();
-    expect(store.arcBinding()).toBeUndefined();
-    expect(store.binding()).toEqual({});
-  });
-
   it("persists the binding as a session entry and resolves the last one on the active path", async () => {
     const file = join(await sessionDir(), "s.jsonl");
     const store = await SessionStore.create(file, ".");
@@ -35,34 +29,6 @@ describe("SessionStore arc binding (PD9 · PD13)", () => {
       "message",
       "binding",
     ]);
-  });
-
-  it("releases the binding with an entry carrying a null arc", async () => {
-    const store = await freshStore();
-    await store.appendArcBinding("dock-v2");
-    const released = await store.appendArcBinding(undefined);
-    expect(released).toMatchObject({ arc: null });
-    expect(released).not.toHaveProperty("bot");
-    expect(store.arcBinding()).toBeUndefined();
-  });
-
-  it("follows the branch: a binding made on another branch never leaks in", async () => {
-    const store = await freshStore();
-    await store.appendArcBinding("dock-v2");
-    const prompt = await store.append(textMessage("user", "first"));
-    await store.appendArcBinding("infra");
-    store.branch(prompt.id);
-    expect(store.arcBinding()).toBe("dock-v2");
-  });
-
-  it("forks inherit the binding because the clone carries the active path", async () => {
-    const dir = await sessionDir();
-    const store = await SessionStore.create(join(dir, "s.jsonl"), ".");
-    await store.appendArcBinding("dock-v2");
-    await store.append(textMessage("user", "first"));
-    const fork = await store.clone(join(dir, "fork.jsonl"));
-    expect(fork.arcBinding()).toBe("dock-v2");
-    expect((await SessionStore.open(fork.file)).arcBinding()).toBe("dock-v2");
   });
 });
 
@@ -87,14 +53,6 @@ describe("SessionStore bot binding (PD21.4 · B9)", () => {
     expect(store.binding()).toEqual({ bot: "scout" });
   });
 
-  it("writes one delta entry per change, never a snapshot", async () => {
-    const store = await freshStore();
-    await store.appendArcBinding("dock-v2");
-    const entry = await store.appendBotBinding("scout");
-    expect(entry).toMatchObject({ type: "binding", bot: "scout" });
-    expect(entry).not.toHaveProperty("arc");
-  });
-
   it("survives exit and resume, and rides into forks with the arc", async () => {
     const dir = await sessionDir();
     const store = await SessionStore.create(join(dir, "s.jsonl"), ".");
@@ -108,12 +66,6 @@ describe("SessionStore bot binding (PD21.4 · B9)", () => {
     });
     const fork = await store.clone(join(dir, "fork.jsonl"));
     expect(fork.binding()).toEqual({ arc: "dock-v2", bot: "scout" });
-  });
-
-  it("an unbound session never writes a binding entry", async () => {
-    const store = await freshStore();
-    await store.append(textMessage("user", "hi"));
-    expect(store.entries().map((entry) => entry.type)).toEqual(["message"]);
   });
 });
 

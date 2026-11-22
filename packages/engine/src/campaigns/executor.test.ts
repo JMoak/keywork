@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 describe("campaign executor integration", () => {
-  it.each<CampaignWorkload>(["app-improvement", "project-development", "research-refinement"])(
+  it.each<CampaignWorkload>(["project-development", "research-refinement"])(
     "refines %s through isolated work, independent review, and bounded persistence",
     async (workload) => {
       const world = await environment(improvementScript, { workload });

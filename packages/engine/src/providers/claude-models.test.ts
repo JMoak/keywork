@@ -28,24 +28,9 @@ describe("claudeGeneration", () => {
   it("never mistakes a snapshot date for a minor version", () => {
     expect(claudeGeneration("claude-opus-5-20260724")).toEqual({ family: "opus", version: 500 });
   });
-
-  it("leaves ids it cannot place unparsed", () => {
-    expect(claudeGeneration("claude-test")).toBeUndefined();
-    expect(claudeGeneration("gpt-6-sol")).toBeUndefined();
-  });
 });
 
 describe("claudeSupports", () => {
-  it("puts the 5.5 generation on every new wire feature", () => {
-    for (const model of ["claude-opus-5-5", "claude-sonnet-5-5"]) {
-      expect(claudeSupports(model, "effort")).toBe(true);
-      expect(claudeSupports(model, "per-message-effort")).toBe(true);
-      expect(claudeSupports(model, "mid-conversation-tools")).toBe(true);
-      expect(claudeSupports(model, "progress-updates")).toBe(true);
-      expect(claudeSupports(model, "wide-output")).toBe(true);
-    }
-  });
-
   it("follows each family's own first version", () => {
     expect(claudeSupports("claude-opus-5", "per-message-effort")).toBe(true);
     expect(claudeSupports("claude-opus-5", "progress-updates")).toBe(false);

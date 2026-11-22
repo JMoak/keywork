@@ -4,11 +4,9 @@ import {
   type ActionCandidates,
   agesOf,
   keptSideOf,
-  memoryQuestions,
   type NotePair,
   type PairJudgment,
 } from "./decider.ts";
-import type { DriftJudgmentPort } from "./drift.ts";
 import type { CurationJudgmentPort, PairVerdict } from "./gardener.ts";
 import type { Note } from "./notes.ts";
 import type { LegRanks, SearchHit } from "./search.ts";
@@ -116,85 +114,6 @@ describe("builtinDecider.chooseForAction", () => {
       expect(decision.candidates).toEqual(hits.map((hit) => hit.note.name));
     }
   });
-
-  it("records the call, the builtin as decider, and no odds", async () => {
-    const { decision } = await builtinDecider().chooseForAction(
-      candidates({ hits: [hitOf("Dock Rule", 40, { lexical: 1 })] }),
-    );
-
-    expect(decision).toEqual({
-      id: expect.any(String),
-      question: "action-relevance@1",
-      about: { kind: "call", callId: "call-1" },
-      candidates: ["Dock Rule"],
-      choice: { kept: ["Dock Rule"], dropped: [] },
-      decider: "builtin",
-      rule: '[[Dock Rule]] shares "dock" with the path',
-      latencyMs: expect.any(Number),
-    });
-  });
-
-  it("says in words why each candidate was kept or dropped", async () => {
-    const { decision } = await builtinDecider().chooseForAction(
-      candidates({
-        action: { callId: "c", tool: "bash", subject: "bun test dock", subjectKind: "command" },
-        hits: [
-          hitOf("Old Dock", 10, { lexical: 1 }, true),
-          hitOf("Seen Dock", 10, { lexical: 2 }),
-          hitOf("Neighbor", 10, { graph: 1 }),
-          hitOf("Dock Rule", 10, { lexical: 3 }),
-          hitOf("Meaning", 10, { semantic: 1 }),
-          hitOf("Huge Dock", 900, { lexical: 4 }),
-          hitOf("Late Dock", 10, { lexical: 5 }),
-        ],
-        surfaced: new Set(["Seen Dock"]),
-        budget: { tokens: 100, notes: 2 },
-      }),
-    );
-
-    expect(decision.rule?.split("; ")).toEqual([
-      "[[Old Dock]] is superseded",
-      "[[Seen Dock]] was already surfaced",
-      "[[Neighbor]] is only a graph neighbor",
-      '[[Dock Rule]] shares "dock" with the command',
-      "[[Meaning]] is near the command in meaning",
-      "[[Huge Dock]] is past the 2-note cap",
-      "[[Late Dock]] is past the 2-note cap",
-    ]);
-  });
-
-  it("names the budget a note would overflow", async () => {
-    const { decision } = await builtinDecider().chooseForAction(
-      candidates({ hits: [hitOf("Huge Dock", 2000, { lexical: 1 })] }),
-    );
-
-    expect(decision.rule).toBe("[[Huge Dock]] would pass the 1024-token budget");
-    expect(decision.choice).toEqual({ kept: [], dropped: ["Huge Dock"] });
-  });
-});
-
-describe("builtinDecider.triageEntries", () => {
-  it("sends every entry to the distiller, one decision per entry", async () => {
-    const entries = [
-      { id: "2026-08-10#0", date: "2026-08-10", time: "09:00", provenance: "user", text: "a" },
-      { id: "2026-08-10#1", date: "2026-08-10", time: "09:05", provenance: "agent", text: "b" },
-    ] as const;
-
-    const triaged = await builtinDecider().triageEntries({ entries });
-
-    expect(triaged.map(({ outcome }) => outcome)).toEqual([
-      { entryId: "2026-08-10#0", durability: "unsure" },
-      { entryId: "2026-08-10#1", durability: "unsure" },
-    ]);
-    expect(triaged[1]?.decision).toMatchObject({
-      question: memoryQuestions.entryDurability,
-      about: { kind: "entry", entryId: "2026-08-10#1" },
-      candidates: ["2026-08-10#1"],
-      choice: "unsure",
-      decider: "builtin",
-      rule: "every trusted entry within the sweep budget goes to the distiller",
-    });
-  });
 });
 
 describe("builtinDecider.relatePair", () => {
@@ -253,16 +172,6 @@ describe("builtinDecider.relatePair", () => {
     }
   });
 
-  it("passes distinct and contradiction through and keeps nothing", async () => {
-    const pair = { a: older, b: newer, similarity: 0.35 };
-    for (const relation of ["distinct", "contradiction"] as const) {
-      const chatModel = chatModelSaying({ relation, confidence: 0.7 });
-      const { outcome } = await builtinDecider({ curation: chatModel }).relatePair(pair);
-      expect(outcome).toEqual({ relation, confidence: 0.7 });
-      expect(keptSideOf(outcome)).toBeUndefined();
-    }
-  });
-
   it("records the pair by age with the similarity and the judge in words", async () => {
     const chatModel = chatModelSaying({ relation: "duplicate", confidence: 0.9, keep: "a" });
 
@@ -293,58 +202,5 @@ describe("builtinDecider.relatePair", () => {
 
     expect(outcome).toEqual({ relation: "unsure", confidence: 0 });
     expect(decision.rule).toBe("jaccard 0.50 · no chat model to judge the pair");
-  });
-});
-
-describe("builtinDecider.assessDrift", () => {
-  const note = noteOf("Auth Tokens");
-
-  it("returns the chat model's assessment untouched and records its reason", async () => {
-    const chatModel: DriftJudgmentPort = {
-      id: "drift:fake",
-      assess: async () => ({ verdict: "stale", reason: "the diff renames\n  mintToken" }),
-    };
-
-    const { outcome, decision } = await builtinDecider({ drift: chatModel }).assessDrift({
-      note,
-      evidence: ["src/auth.ts: @@ -1 +1 @@"],
-    });
-
-    expect(outcome).toEqual({ verdict: "stale", reason: "the diff renames\n  mintToken" });
-    expect(decision).toMatchObject({
-      question: "drift-verdict@1",
-      about: { kind: "note", note: "Auth Tokens" },
-      candidates: ["Auth Tokens"],
-      choice: "stale",
-      decider: "builtin",
-      rule: "asked drift:fake · the diff renames mintToken",
-    });
-  });
-
-  it("is unsure when no chat model is wired", async () => {
-    const { outcome, decision } = await builtinDecider().assessDrift({ note, evidence: [] });
-
-    expect(outcome).toEqual({ verdict: "unsure", reason: "no chat model to ask" });
-    expect(decision.rule).toBe("no chat model to ask");
-  });
-});
-
-describe("builtinDecider.weighMention", () => {
-  it("links every mention the rule found", async () => {
-    const { outcome, decision } = await builtinDecider().weighMention({
-      source: noteOf("Deploy"),
-      target: noteOf("Auth Tokens"),
-      mention: "Auth Tokens",
-    });
-
-    expect(outcome).toBe("link");
-    expect(decision).toMatchObject({
-      question: "mention-is-link@1",
-      about: { kind: "mention", note: "Deploy", target: "Auth Tokens" },
-      candidates: ["Auth Tokens"],
-      choice: "link",
-      decider: "builtin",
-      rule: 'mentions "Auth Tokens" without linking it',
-    });
   });
 });

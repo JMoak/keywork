@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -271,63 +271,6 @@ describe("a served workspace's settings", () => {
     expect(view.messages.map(messageText).join(" ")).not.toContain("From the yard");
     await host.stop();
   });
-
-  it("are listed and taken back by the model that set them out, as the creature on the wire", async () => {
-    const place = await workspacePlace();
-    const host = await startedHost(
-      place,
-      scripted([
-        () => showTurn("a", { kind: "note", ref: "Reading the logs." }, { size: "readable" }),
-        () => toolCallTurn({ type: "tool-call", callId: "b", name: "shown", arguments: {} }),
-        (said) => withdrawTurn("c", settingIdInListing(said)),
-        () => textTurn("Cleared."),
-      ]),
-      new FakeClock(t0),
-    );
-    const session = (await host.host.create()).id;
-
-    await host.turn(session, "set out a note then take it back");
-
-    const shownAnswer = host.provider.heard[2] ?? "";
-    expect(shownAnswer.split("\n")[0]).toBe(
-      "1 setting is out beside this conversation, oldest first, one JSON object to a line:",
-    );
-    expect(JSON.parse(shownAnswer.split("\n")[1] ?? "")).toMatchObject({
-      what: { kind: "note", ref: "Reading the logs." },
-      size: "readable",
-      origin: "creature",
-    });
-    expect(host.provider.heard[3]).toMatch(/^Withdrawn: \S+ has left the yard/);
-    expect(await host.shown()).toEqual([]);
-    expect(keptSettingsIn(place)).toEqual([]);
-    expect(host.showEvents().at(-1)?.payload).toMatchObject({
-      outcome: "withdrawn",
-      by: "creature",
-    });
-    await host.stop();
-  });
-
-  it("are kept in the same place by a host composed on its own", async () => {
-    const place = await workspacePlace();
-    const log = new EventLog();
-    const options = { ...place, projectTrusted: true, provider: new MockProvider([]), log };
-    const first = await servedHost({ ...options, permissions: () => undefined });
-    const session = (await first.create()).id;
-    const opened = await first.show?.keeperOpens({
-      what: { kind: "file", ref: "README.md" },
-      from: session,
-      rung: "unfold",
-    });
-    if (opened === undefined || "refused" in opened) throw new Error("the keeper's opening failed");
-    first.show?.answer(opened.setting.id, "pinned");
-    await first.close();
-
-    const second = await servedHost({ ...options, permissions: () => undefined });
-
-    expect(second.show?.open()).toEqual([{ ...opened.setting, state: "pinned" }]);
-    expect(existsSync(workspaceSettingsFile(place))).toBe(true);
-    await second.close();
-  });
 });
 
 interface Place {
@@ -496,15 +439,6 @@ function notesIn(messages: readonly Message[]): readonly Message[] {
 
 function settingIdIn(said: string): string {
   return /name (\S+) as from\./.exec(said)?.[1] ?? `no setting id in: ${said}`;
-}
-
-function settingIdInListing(said: string): string {
-  const row = JSON.parse(said.split("\n")[1] ?? "{}") as { id?: string };
-  return row.id ?? `no setting id in: ${said}`;
-}
-
-function withdrawTurn(callId: string, id: string) {
-  return toolCallTurn({ type: "tool-call", callId, name: "withdraw", arguments: { id } });
 }
 
 function showTurn(

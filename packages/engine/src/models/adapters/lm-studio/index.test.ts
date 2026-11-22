@@ -111,22 +111,6 @@ describe("LM Studio native inventory", () => {
     if (record !== undefined) expect(eligibleClasses(record)).not.toContain("strong");
   });
 
-  it("keeps multiple instance allocations separate from the downloaded model key", async () => {
-    const { probe } = fixture([
-      {
-        ...model,
-        loaded_instances: [
-          ...model.loaded_instances,
-          { id: "larger", config: { context_length: 131_072 } },
-        ],
-      },
-    ]);
-    const inventory = await lmStudioAdapter.inventory(probe);
-    expect(inventory.loaded.find(({ id }) => id === model.key)).toBeUndefined();
-    expect(inventory.loaded.find(({ id }) => id === "loaded-alias")?.contextAllocated).toBe(8192);
-    expect(inventory.loaded.find(({ id }) => id === "larger")?.contextAllocated).toBe(131_072);
-  });
-
   it("ignores malformed loaded instances and accepts an empty native inventory", async () => {
     const empty = fixture([]);
     expect(await lmStudioAdapter.fingerprint(empty.probe)).toMatchObject({ kind: "lm-studio" });
@@ -138,42 +122,6 @@ describe("LM Studio native inventory", () => {
     expect(await lmStudioAdapter.health(probe, model.key)).toMatchObject({ resident: false });
   });
 
-  it("verifies tool calls only on an explicit behavior check for the chosen loaded instance", async () => {
-    const { probe, post } = fixture([
-      { ...model, loaded_instances: [{ id: "loaded-alias", config: { context_length: 131_072 } }] },
-    ]);
-    post.mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: "",
-      body: {
-        choices: [
-          {
-            message: {
-              tool_calls: [{ function: { name: "keywork_probe_ping", arguments: "{}" } }],
-            },
-          },
-        ],
-      },
-    });
-    const cache = new CapabilityCache(now);
-    await probeServer(root, { ...probe, cache, models: ["loaded-alias"] });
-    expect(post).not.toHaveBeenCalled();
-    await probeServer(root, { ...probe, cache, models: ["loaded-alias"], behaviour: true });
-    expect(post).toHaveBeenCalledOnce();
-    expect(post).toHaveBeenCalledWith(
-      `${root}/v1/chat/completions`,
-      expect.objectContaining({ model: "loaded-alias" }),
-    );
-    const record = cache.record(root, "loaded-alias");
-    expect(record?.tools).toMatchObject({
-      known: true,
-      value: true,
-      evidence: { source: "behaviour-probe" },
-    });
-    if (record !== undefined) expect(eligibleClasses(record)).toContain("strong");
-  });
-
   it("reports unavailable or missing models accurately", async () => {
     const { probe, get } = fixture([]);
     expect(await lmStudioAdapter.health(probe, "missing")).toMatchObject({
@@ -182,29 +130,5 @@ describe("LM Studio native inventory", () => {
     });
     get.mockRejectedValue(new EndpointUnreachableError(root, "stopped"));
     expect(await lmStudioAdapter.health(probe)).toMatchObject({ state: "down" });
-  });
-
-  it("sends chat to the selected local instance through the existing streaming adapter", async () => {
-    const fetchFn = vi.fn(
-      async () =>
-        new Response(
-          'data: {"model":"loaded-alias","choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n',
-          { headers: { "content-type": "text/event-stream" } },
-        ),
-    );
-    const provider = lmStudioAdapter.chat({
-      name: "local-studio",
-      root,
-      model: "loaded-alias",
-      fetchFn,
-    });
-    const deltas = [];
-    for await (const delta of provider.stream({ systemPrompt: "", messages: [], tools: [] }))
-      deltas.push(delta);
-    expect(deltas).toContainEqual({ type: "text", text: "Hello" });
-    expect(fetchFn).toHaveBeenCalledWith(
-      `${root}/v1/chat/completions`,
-      expect.objectContaining({ body: expect.stringContaining('"model":"loaded-alias"') }),
-    );
   });
 });

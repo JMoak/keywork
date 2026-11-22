@@ -133,15 +133,6 @@ describe("Pi session format compatibility", () => {
     expect(store.entries()).toEqual(piFixtureLines.slice(1));
   });
 
-  it("resolves the tree with the branch point at e4", async () => {
-    const store = await SessionStore.open(await writeFixture());
-
-    const tree = store.tree();
-    const e4 = findNode(tree, "e4");
-    expect(e4?.children.map((child) => child.entry.id).sort()).toEqual(["e5", "e6"]);
-    expect(e4?.label).toBe("parser-done");
-  });
-
   it("builds context from the latest compaction: summary plus kept tail", async () => {
     const store = await SessionStore.open(await writeFixture());
 
@@ -171,18 +162,3 @@ describe("Pi session format compatibility", () => {
     });
   });
 });
-
-interface NodeLike {
-  entry: { id: string };
-  children: NodeLike[];
-  label?: string;
-}
-
-function findNode(nodes: NodeLike[], id: string): NodeLike | undefined {
-  for (const node of nodes) {
-    if (node.entry.id === id) return node;
-    const found = findNode(node.children, id);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-}

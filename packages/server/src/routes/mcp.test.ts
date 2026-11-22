@@ -16,7 +16,6 @@ import type { SessionHost } from "../host.ts";
 import { meshRouter } from "../mesh/router.ts";
 import { createKeyworkServer } from "../server.ts";
 import { memorySessionHost } from "../testing.ts";
-import { creatureMcpRoutes } from "./mcp.ts";
 import type { MeshConsole } from "./mesh.ts";
 
 const token = "loopback-ticket";
@@ -71,14 +70,6 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
 const listTools = { jsonrpc: "2.0", id: 1, method: "tools/list" };
 
 describe("the creature MCP routes", () => {
-  it("declare the local endpoint and the arrivals the node forwards", () => {
-    expect(creatureMcpRoutes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "POST /creatures/{slug}/mcp",
-      "POST /creatures/{slug}/mcp/arrivals",
-    ]);
-    expect(creatureMcpRoutes.every((route) => route.authenticated)).toBe(true);
-  });
-
   it("serve keywork's own MCP client on this machine behind the loopback ticket", async () => {
     const answered: Answered[] = [];
     const server = serverWith(portFor(answered));

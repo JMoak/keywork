@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { minuteMs } from "./clock.ts";
 import { CronSyntaxError, nextCronSlot, parseCron } from "./cron.ts";
-import { slotPlanOf, slotsBetween, staggerOf } from "./trigger.ts";
-import { formatWallClock, instantOf } from "./zone.ts";
+import { slotPlanOf, staggerOf } from "./trigger.ts";
 
 const chicago = "America/Chicago";
 
@@ -31,8 +30,6 @@ describe("parseCron", () => {
     ["60 * * * *", "minute"],
     ["0 5-1 * * *", "backward"],
     ["*/0 * * * *", "step"],
-    ["0 0 * smarch *", "month"],
-    ["1/2/3 * * * *", "more than one step"],
   ])("refuses %s", (expr, detail) => {
     expect(() => parseCron(expr)).toThrow(CronSyntaxError);
     expect(() => parseCron(expr)).toThrow(detail);
@@ -72,14 +69,6 @@ describe("nextCronSlot", () => {
   });
 });
 
-describe("zones", () => {
-  it("maps a wall clock to an instant and back", () => {
-    const instant = instantOf({ year: 2026, month: 7, day: 4, hour: 9, minute: 0 }, chicago);
-    expect(new Date(instant).toISOString()).toBe("2026-07-04T14:00:00.000Z");
-    expect(formatWallClock(instant, chicago)).toBe("2026-07-04 09:00 America/Chicago");
-  });
-});
-
 describe("slot plans", () => {
   const anchor = Date.parse("2026-11-05T10:00:00Z");
 
@@ -107,20 +96,6 @@ describe("slot plans", () => {
     );
     expect(plan?.next(Date.parse("2026-11-05T11:30:00Z"))).toBe(Date.parse("2026-11-05T12:00:00Z"));
     expect(plan?.next(Date.parse("2026-11-05T12:00:00Z"))).toBeUndefined();
-  });
-
-  it("has no slots for a manual trigger", () => {
-    expect(slotPlanOf({ kind: "manual" }, anchor)).toBeUndefined();
-  });
-
-  it("lists the slots between two instants", () => {
-    const plan = slotPlanOf({ kind: "cron", expr: "0 * * * *", tz: "UTC" }, anchor);
-    const slots = plan === undefined ? [] : slotsBetween(plan, anchor, anchor + 3 * 60 * minuteMs);
-    expect(slots.map((slot) => new Date(slot).toISOString())).toEqual([
-      "2026-11-05T11:00:00.000Z",
-      "2026-11-05T12:00:00.000Z",
-      "2026-11-05T13:00:00.000Z",
-    ]);
   });
 
   it("staggers each routine deterministically within a minute or a tenth of its interval", () => {

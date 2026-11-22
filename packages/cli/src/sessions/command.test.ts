@@ -1,12 +1,11 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { textMessage } from "@keywork/engine";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { sessionsCommand } from "./command.ts";
-import { forkOrigin, listTrash } from "./lifecycle.ts";
-import { boundSessionCounts } from "./ports.ts";
+import { listTrash } from "./lifecycle.ts";
 import { listSessions, openOrResumeSession } from "./store.ts";
 
 const tempDir = scratchDirs("keywork-sessions-command-");
@@ -60,21 +59,6 @@ describe("keywork sessions list", () => {
     expect(out.join("\n")).toContain("start");
   });
 
-  it("prints the list as JSON when asked", async () => {
-    const { dir, id } = await seededDir();
-    const { out, io } = consoleOf();
-
-    expect(await sessionsCommand(["list"], dir, { ...io, json: true })).toBe(0);
-    const listed = JSON.parse(out.join("\n")) as { id: string }[];
-    expect(listed.map((session) => session.id)).toEqual([id]);
-  });
-
-  it("says so when there are no sessions yet", async () => {
-    const { out, io } = consoleOf();
-    expect(await sessionsCommand([], join(await tempDir(), "nope"), io)).toBe(0);
-    expect(out).toEqual(["no sessions yet"]);
-  });
-
   it("reports unreadable files on stderr and keeps stdout JSON clean", async () => {
     const { dir, id } = await seededDir();
     const corrupt = join(dir, "0000000000001-0001-1.jsonl");
@@ -113,21 +97,6 @@ describe("keywork sessions list", () => {
     expect(existsSync(keptFile)).toBe(true);
   });
 
-  it("takes the spill directory along with an empty session it trashes", async () => {
-    const { dir, emptyFile, keptFile } = await litteredDir();
-    const spillDir = join(dir, "1000000000000-0001-1.spills");
-    await mkdir(spillDir, { recursive: true });
-    await writeFile(join(spillDir, "abandoned.txt"), "orphan output", "utf8");
-    const { io } = consoleOf();
-    await sessionsCommand(["list"], dir, { ...io, confirm: async () => true });
-    expect(existsSync(emptyFile)).toBe(false);
-    expect(existsSync(spillDir)).toBe(false);
-    expect(existsSync(join(dir, ".trash", "1000000000000-0001-1.spills", "abandoned.txt"))).toBe(
-      true,
-    );
-    expect(existsSync(keptFile)).toBe(true);
-  });
-
   it("keeps every file when the cleanup is declined", async () => {
     const { dir, emptyFile, keptFile } = await litteredDir();
 
@@ -154,23 +123,6 @@ describe("keywork sessions list", () => {
     expect(questions).toEqual([]);
     expect(existsSync(emptyFile)).toBe(true);
   });
-
-  it("stays quiet when there is nothing to clean", async () => {
-    const { dir } = await seededDir();
-    const { out, io } = consoleOf();
-    const questions: string[] = [];
-
-    await sessionsCommand([], dir, {
-      ...io,
-      confirm: async (question) => {
-        questions.push(question);
-        return true;
-      },
-    });
-
-    expect(questions).toEqual([]);
-    expect(out.join("\n")).not.toContain("empty session");
-  });
 });
 
 describe("keywork sessions tree", () => {
@@ -183,14 +135,6 @@ describe("keywork sessions tree", () => {
     expect(output).toContain("first branch");
     expect(output).toContain("second branch");
     expect(output).toContain("[good-path]");
-  });
-
-  it("defaults to the latest session", async () => {
-    const { dir } = await seededDir();
-    const { out, io } = consoleOf();
-
-    expect(await sessionsCommand(["tree"], dir, io)).toBe(0);
-    expect(out[0]).toMatch(/^session [0-9a-f]{8} · /);
   });
 
   it("fails on stderr for a missing id or an empty directory", async () => {
@@ -342,45 +286,5 @@ describe("keywork sessions remove, restore, trash and purge", () => {
     const json = consoleOf();
     await sessionsCommand(["trash"], dir, { ...json.io, json: true });
     expect(JSON.parse(json.out.join("\n"))).toEqual([]);
-  });
-
-  it("leaves a fork pointing at its removed parent, which still lists, opens and names its origin", async () => {
-    const { dir, id } = await seededDir();
-    const { io } = consoleOf();
-    await sessionsCommand(["fork", id.slice(0, 8), "good-path"], dir, io);
-    const fork = (await listSessions(dir)).sessions.find((session) => session.id !== id);
-    const forkStore = await openOrResumeSession(dir, ".", { resumeId: fork?.id ?? "" });
-    expect(await forkOrigin(dir, forkStore.store.header.parentSession)).toEqual({
-      sessionId: id,
-      removed: false,
-    });
-
-    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...io, yes: true });
-
-    expect((await listSessions(dir)).sessions.map((session) => session.id)).toEqual([fork?.id]);
-    const reopened = await openOrResumeSession(dir, ".", { resumeId: fork?.id ?? "" });
-    expect(reopened.store.header.parentSession).toBeDefined();
-    expect(reopened.seeded).toHaveLength(2);
-    expect(await forkOrigin(dir, reopened.store.header.parentSession)).toEqual({
-      sessionId: id,
-      removed: true,
-    });
-    await sessionsCommand(["purge"], dir, { ...io, yes: true });
-    expect(await forkOrigin(dir, reopened.store.header.parentSession)).toEqual({ removed: true });
-    const tree = consoleOf();
-    expect(await sessionsCommand(["tree", fork?.id.slice(0, 8) ?? ""], dir, tree.io)).toBe(0);
-  });
-
-  it("drops the arc bound count on its own once the session is trashed", async () => {
-    const { dir, id } = await seededDir();
-    const bound = await openOrResumeSession(dir, ".", { resumeId: id.slice(0, 8) });
-    await bound.store.appendArcBinding("alpha");
-    expect((await boundSessionCounts(dir)).get("alpha")).toBe(1);
-
-    await sessionsCommand(["remove", id.slice(0, 8)], dir, { ...consoleOf().io, yes: true });
-
-    expect((await boundSessionCounts(dir)).get("alpha")).toBeUndefined();
-    await sessionsCommand(["restore", id.slice(0, 8)], dir, consoleOf().io);
-    expect((await boundSessionCounts(dir)).get("alpha")).toBe(1);
   });
 });

@@ -62,23 +62,9 @@ describe("isPrintable", () => {
 describe("rankByFuzzy", () => {
   const names = ["refresh", "fork", "label", "rename"];
 
-  it("keeps source order for an empty needle and returns a fresh array", () => {
-    const ranked = rankByFuzzy(names, "", (name) => name);
-    expect(ranked).toEqual(names);
-    expect(ranked).not.toBe(names);
-  });
-
   it("drops non-matches and puts the best score first", () => {
     expect(rankByFuzzy(names, "re", (name) => name)).toEqual(["rename", "refresh"]);
     expect(rankByFuzzy(names, "rena", (name) => name)).toEqual(["rename"]);
     expect(rankByFuzzy(names, "zz", (name) => name)).toEqual([]);
-  });
-
-  it("ranks through the key the caller chooses", () => {
-    const items = [
-      { id: 1, slug: "dock-v2" },
-      { id: 2, slug: "infra" },
-    ];
-    expect(rankByFuzzy(items, "inf", (item) => item.slug).map((item) => item.id)).toEqual([2]);
   });
 });

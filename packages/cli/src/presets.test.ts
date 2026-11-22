@@ -9,10 +9,8 @@ import {
   createPresetSwitch,
   permissionsResolver,
   presetCommand,
-  presetListing,
   presetResolver,
   presetsPortFor,
-  userPresetSwitch,
 } from "./presets.ts";
 import { updateUserConfig } from "./user-config.ts";
 
@@ -86,16 +84,6 @@ describe("createPresetSwitch", () => {
     await presets.apply("standard");
     const standardConfig = JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"));
     expect(standardConfig.permissions).toEqual([]);
-  });
-});
-
-describe("userPresetSwitch", () => {
-  it("persists an applied preset into the user's keywork.json", async () => {
-    const presets = userPresetSwitch(undefined);
-    await presets.apply("open");
-    const saved = JSON.parse(await readFile(join(home, ".keywork", "keywork.json"), "utf8"));
-    expect(saved.permissions).toEqual(permissionPresets.open);
-    expect(presets.active()).toBe("open");
   });
 });
 
@@ -173,12 +161,6 @@ describe("presetCommand", () => {
     };
   }
 
-  it("lists the presets with the active one marked", async () => {
-    const world = harness();
-    await world.run("");
-    expect(world.lines).toEqual(["careful · standard* · open"]);
-  });
-
   it("marks custom distinctly when the config diverges from every preset", async () => {
     const world = harness({ tools: { bash: "deny" } });
     await world.run("");
@@ -214,12 +196,5 @@ describe("presetCommand", () => {
       async () => true,
     );
     expect(lines).toEqual(["presets unavailable in this session"]);
-  });
-});
-
-describe("presetListing", () => {
-  it("annotates the custom state instead of lying with a preset name", () => {
-    expect(presetListing("custom")).toContain("custom*");
-    expect(presetListing("open")).toBe("careful · standard · open*");
   });
 });

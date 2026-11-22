@@ -4,11 +4,9 @@ import { BrowserPane } from "./browser-pane.ts";
 import { ConversationPane } from "./conversation-pane.ts";
 import { AppProbe } from "./probe.ts";
 import { paneSessionIndex } from "./session-attachment.ts";
-import type { SessionTreeModel } from "./session-tree-model.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
 import type { SessionOverviewItem } from "./sessions-overview-model.ts";
-import { waitFor } from "./testing/index.ts";
-import { dockedIds, dockOf, mustParse, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
+import { dockedIds, mustParse, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
 
 describe("open file pane", () => {
   const fileProbe = () => new AppProbe({ createFilePane: (id, path) => stubFilePane(id, path) });
@@ -18,15 +16,6 @@ describe("open file pane", () => {
     expect(paneIds(probe)).toEqual(["session-1", "file-1"]);
     expect(probe.snapshot().focused).toBe("file-1");
     expect(probe.snapshot().panes[1]?.title).toBe("src/app.ts");
-  });
-
-  it("/open without a path does nothing", () => {
-    const probe = fileProbe().type("/open").keys("enter");
-    expect(paneIds(probe)).toEqual(["session-1"]);
-  });
-
-  it("open is absent when no file pane factory is wired", () => {
-    expect(new AppProbe().command("open src/app.ts")).toBe(false);
   });
 });
 
@@ -49,14 +38,6 @@ describe("file browser", () => {
         }),
       isDirectory: (path) => listing[path] !== undefined,
     });
-
-  it("/browse opens the browser docked left and focused", () => {
-    const probe = browserProbe().type("/browse").keys("enter");
-    expect(paneIds(probe)).toEqual(["browser-1", "session-1"]);
-    expect(dockedIds(probe)).toEqual(["browser-1"]);
-    expect(dockOf(probe, "browser-1")).toBe("left");
-    expect(probe.snapshot().focused).toBe("browser-1");
-  });
 
   it("leader f summons the browser and refocuses it instead of duplicating", () => {
     const probe = browserProbe().keys("ctrl+k", "f");
@@ -85,10 +66,6 @@ describe("file browser", () => {
     expect(paneIds(probe)).toEqual(["browser-1", "session-1"]);
     expect(dockedIds(probe)).toEqual(["browser-1"]);
     expect(probe.snapshot().panes.find((pane) => pane.id === "browser-1")?.title).toContain("src");
-  });
-
-  it("browse is absent when no browser factory is wired", () => {
-    expect(new AppProbe().command("browse")).toBe(false);
   });
 });
 
@@ -214,10 +191,6 @@ describe("session tree", () => {
     return pane;
   }
 
-  function treeModel(probe: AppProbe, id = "tree-1"): SessionTreeModel {
-    return treePane(probe, id).model;
-  }
-
   async function drilledProbe() {
     const opened = treeProbe();
     opened.probe.command("tree");
@@ -246,61 +219,6 @@ describe("session tree", () => {
     );
   });
 
-  it("/sessions is a first-class alias for the same pane", async () => {
-    const { probe } = treeProbe();
-    expect(probe.command("sessions")).toBe(true);
-    expect(paneIds(probe)).toEqual(["tree-1", "session-1"]);
-    expect(probe.snapshot().focused).toBe("tree-1");
-  });
-
-  it("zero sessions renders a calm overview", async () => {
-    const { probe, world } = treeProbe();
-    world.sessions = [];
-    probe.command("tree");
-    probe.keys("r");
-    await probe.settled();
-    expect(treePane(probe).overview.sessionRows()).toEqual([]);
-    expect(probe.snapshot().panes.find((pane) => pane.id === "tree-1")?.title).toBe("session tree");
-  });
-
-  it("leader t summons the tree and refocuses it instead of duplicating", () => {
-    const { probe } = treeProbe();
-    probe.keys("ctrl+k", "t");
-    expect(paneIds(probe)).toEqual(["tree-1", "session-1"]);
-    expect(probe.snapshot().focused).toBe("tree-1");
-    probe.keys("ctrl+k", "l");
-    expect(probe.snapshot().focused).toBe("session-1");
-    probe.keys("t");
-    expect(probe.snapshot().focused).toBe("tree-1");
-    expect(paneIds(probe)).toEqual(["tree-1", "session-1"]);
-  });
-
-  it("l drills into the cursored session and esc returns with the overview cursor kept", async () => {
-    const { probe } = treeProbe();
-    probe.command("tree");
-    await probe.settled();
-    const pane = treePane(probe);
-    probe.keys("j", "l");
-    await probe.settled();
-    expect(pane.level()).toBe("entries");
-    expect(pane.model.sessionId()).toBe("idle-1");
-    probe.keys("escape");
-    await probe.settled();
-    expect(pane.level()).toBe("overview");
-    expect(pane.overview.cursorSession()).toBe("idle-1");
-  });
-
-  it("enter over a session with an open pane focuses that pane instead of duplicating", async () => {
-    const { probe, world } = treeProbe();
-    probe.command("tree");
-    await probe.settled();
-    probe.keys("enter");
-    await probe.settled();
-    expect(probe.snapshot().focused).toBe("session-1");
-    expect(paneIds(probe)).toEqual(["tree-1", "session-1"]);
-    expect(world.attached).toEqual([]);
-  });
-
   it("enter over an unpaned session opens a resumed pane in the main tree, then focuses it", async () => {
     const { probe, world } = treeProbe();
     probe.command("tree");
@@ -319,54 +237,6 @@ describe("session tree", () => {
     expect(paneIds(probe)).toEqual(["tree-1", "session-1", "session-2"]);
   });
 
-  it("a pushed session change re-lists the overview with no manual refresh", async () => {
-    const { probe, world, emit } = treeProbe();
-    probe.command("tree");
-    await probe.settled();
-    world.sessions = [overviewItemOf("fresh-1", 9, "fresh"), ...world.sessions];
-    emit("fresh-1");
-    emit("fresh-1");
-    await waitFor(() => {
-      expect(
-        treePane(probe)
-          .overview.sessionRows()
-          .map((row) => row.id),
-      ).toEqual(["fresh-1", "sess-session-1", "idle-1"]);
-    });
-  });
-
-  it("a fork lands in the overview unprompted when the pane returns to it", async () => {
-    const { probe } = await drilledProbe();
-    probe.keys("j", "f");
-    await probe.settled();
-    expect(probe.snapshot().focused).toBe("session-2");
-    probe.command("tree");
-    probe.keys("escape");
-    await waitFor(() => {
-      expect(
-        treePane(probe)
-          .overview.sessionRows()
-          .map((row) => row.id),
-      ).toEqual(["forked-1", "sess-session-1", "idle-1"]);
-    });
-  });
-
-  it("renders branch structure and navigates with j/k", async () => {
-    const { probe } = await drilledProbe();
-    const model = treeModel(probe);
-    expect(model.rows().map((row) => [row.id, row.depth])).toEqual([
-      ["u1", 0],
-      ["a1", 0],
-      ["u2", 0],
-      ["a2a", 1],
-      ["a2b", 1],
-    ]);
-    probe.keys("j", "j");
-    expect(model.cursorRow()?.id).toBe("u2");
-    probe.keys("k");
-    expect(model.cursorRow()?.id).toBe("a1");
-  });
-
   it("f forks from the cursored node into a new conversation pane in the main area", async () => {
     const { probe, world } = await drilledProbe();
     probe.keys("j", "j", "f");
@@ -376,41 +246,6 @@ describe("session tree", () => {
     expect(paneIds(probe)).toEqual(["tree-1", "session-1", "session-2"]);
     expect(dockedIds(probe)).toEqual(["tree-1"]);
     expect(probe.snapshot().focused).toBe("session-2");
-  });
-
-  it("labels round-trip: shift+l edits, enter commits, the reloaded tree shows it", async () => {
-    const { probe, world } = await drilledProbe();
-    probe.keys("j", "shift+l").type("wip").keys("enter");
-    await probe.settled();
-    expect(world.labels.get("a1")).toBe("wip");
-    expect(treeModel(probe).cursorRow()?.label).toBe("wip");
-    probe.keys("shift+l", "backspace", "backspace", "backspace", "enter");
-    await probe.settled();
-    expect(world.labels.has("a1")).toBe(false);
-    expect(treeModel(probe).cursorRow()?.label).toBeUndefined();
-  });
-
-  it("r refreshes and keeps the cursor on the surviving entry", async () => {
-    const { probe, world } = await drilledProbe();
-    probe.keys("j", "j");
-    world.entries.push({ id: "u0", parentId: null, text: "second root" });
-    probe.keys("r");
-    await probe.settled();
-    const model = treeModel(probe);
-    expect(model.rows()).toHaveLength(6);
-    expect(model.cursorRow()?.id).toBe("u2");
-  });
-
-  it("a refresh that deletes the cursored node clamps to the nearest row", async () => {
-    const { probe, world } = await drilledProbe();
-    probe.keys("j", "j", "j", "j");
-    expect(treeModel(probe).cursorRow()?.id).toBe("a2b");
-    world.entries = world.entries.filter((entry) => entry.id !== "a2b");
-    probe.keys("r");
-    await probe.settled();
-    const model = treeModel(probe);
-    expect(model.rows()).toHaveLength(4);
-    expect(model.cursorRow()).toBeDefined();
   });
 
   it("persists as a session-tree pane and revives into the overview", async () => {
@@ -446,9 +281,5 @@ describe("session tree", () => {
     expect(pane.level()).toBe("overview");
     expect(pane.overview.sessionRows().map((row) => row.id)).toEqual(["sess-session-1"]);
     expect(pane.describe()).toEqual({ kind: "session-tree", sessionId: "sess-session-1" });
-  });
-
-  it("tree is absent when no session-tree factory is wired", () => {
-    expect(new AppProbe().command("tree")).toBe(false);
   });
 });

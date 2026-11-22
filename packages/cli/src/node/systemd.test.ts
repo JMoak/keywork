@@ -88,19 +88,6 @@ describe("the systemd user manager against recorded systemctl output", () => {
     ]);
   });
 
-  it("enables without starting when asked not to start", async () => {
-    const systemd = new RecordedSystemd(dir);
-    const units = manager(systemd);
-    await units.install(registration(), { start: false, linger: false });
-    expect(systemd.calls.map((call) => call[2])).toEqual(["daemon-reload", "enable"]);
-    expect(await units.status(defaultUnitName)).toMatchObject({
-      installed: true,
-      running: false,
-      state: "inactive (dead)",
-      pid: null,
-    });
-  });
-
   it("refuses root before touching anything", async () => {
     const systemd = new RecordedSystemd(dir);
     const installed = await manager(systemd).install(

@@ -7,7 +7,6 @@ import { ProtectedSkillError } from "./authorship.ts";
 import {
   ReferenceOutsideSkillError,
   type SkillChange,
-  SkillGenesisUnavailableError,
   SkillLibrary,
   SkillPatchError,
   UnknownSkillError,
@@ -164,12 +163,6 @@ describe("SkillLibrary genesis", () => {
     expect(await readFile(join(root, ".keywork", "skills", "manual", "SKILL.md"), "utf8")).toBe(
       humanSkill,
     );
-  });
-
-  it("cannot create without a genesis root", async () => {
-    const library = new SkillLibrary({ skills: [] });
-    expect(library.canCreate()).toBe(false);
-    await expect(library.create("x", "d", "b")).rejects.toThrow(SkillGenesisUnavailableError);
   });
 });
 

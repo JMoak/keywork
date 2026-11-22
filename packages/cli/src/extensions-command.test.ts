@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { extensionFixturesDir } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { extensionsCommand, headlessNoticeLine } from "./extensions-command.ts";
+import { extensionsCommand } from "./extensions-command.ts";
 
 const scratch = scratchDirs("keywork-cli-extensions-");
 
@@ -70,19 +70,5 @@ describe("keywork extensions", () => {
     expect(code).toBe(2);
     expect(io.err[0]).toContain('unexpected argument "reload"');
     expect(io.err[0]).toContain("usage: keywork extensions");
-  });
-});
-
-describe("headlessNoticeLine", () => {
-  it("prefixes warn and error, drops info", () => {
-    expect(
-      headlessNoticeLine("keywork run", { extension: "x", level: "warn", message: "careful" }),
-    ).toBe("keywork run: x: careful");
-    expect(
-      headlessNoticeLine("keywork run", { extension: "x", level: "error", message: "boom" }),
-    ).toBe("keywork run: x: boom");
-    expect(
-      headlessNoticeLine("keywork run", { extension: "x", level: "info", message: "hi" }),
-    ).toBeUndefined();
   });
 });

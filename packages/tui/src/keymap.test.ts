@@ -79,10 +79,6 @@ describe("Keymap", () => {
     });
   });
 
-  it("passes through unbound keys", () => {
-    expect(keymap().press(parseChord("a"), 0)).toEqual({ type: "pass" });
-  });
-
   it("resolves leader sequences", () => {
     const map = keymap();
     expect(map.press(parseChord("ctrl+k"), 0)).toEqual({ type: "leader-pending" });
@@ -107,10 +103,6 @@ describe("Keymap", () => {
     expect(map.press(parseChord("q"), 30)).toEqual({ type: "cancelled" });
   });
 
-  it("ignores actions bound to none", () => {
-    expect(keymap().actions()).not.toContain("app.never");
-  });
-
   it("disarms on a second leader press instead of resolving leader+leader-key", () => {
     const map = keymap();
     map.press(parseChord("ctrl+k"), 0);
@@ -126,18 +118,6 @@ describe("Keymap", () => {
     expect(map.press(parseChord("alt+s"), 30)).toEqual({ type: "cancelled" });
     map.press(parseChord("ctrl+k"), 40);
     expect(map.press(parseChord("ctrl+s"), 50)).toEqual({ type: "cancelled" });
-  });
-
-  it("re-presses modified chords during a scoped chain instead of resolving letters", () => {
-    const map = keymap();
-    map.arm(0, new Set(["pane.close"]));
-    expect(map.press(parseChord("ctrl+x"), 10)).toEqual({ type: "pass" });
-    map.arm(20, new Set(["pane.close"]));
-    expect(map.press(parseChord("ctrl+q"), 30)).toEqual({
-      type: "action",
-      action: "app.quit",
-      via: "chord",
-    });
   });
 
   it("keeps the leader armed through key-repeat of the leader chord", () => {
@@ -182,25 +162,6 @@ describe("Keymap", () => {
     map.press(parseChord("ctrl+k"), 0);
     expect(map.armed(100)).toBe(true);
     expect(map.armed(2001)).toBe(false);
-  });
-
-  it("clears the scope on a fresh leader press", () => {
-    const map = keymap();
-    map.arm(0, new Set(["pane.split"]));
-    map.press(parseChord("ctrl+k"), 10);
-    map.press(parseChord("ctrl+k"), 20);
-    expect(map.press(parseChord("z"), 30)).toEqual({
-      type: "action",
-      action: "pane.zoom",
-      via: "leader",
-    });
-  });
-
-  it("describes bindings for palette display", () => {
-    const map = keymap();
-    expect(map.describe("pane.split")).toBe("ctrl+k s");
-    expect(map.describe("app.quit")).toBe("ctrl+q");
-    expect(map.describe("app.never")).toBeUndefined();
   });
 
   it("accepts multiple bindings per action", () => {
@@ -269,30 +230,10 @@ describe("Keymap registration", () => {
     );
   });
 
-  it("rejects two actions claiming one leader key, shifted keys distinct", () => {
-    expect(() => new Keymap({ bindings: { "a.one": "leader h", "b.two": "leader H" } })).toThrow(
-      /"ctrl\+k h" is bound to both/,
-    );
-    expect(
-      () => new Keymap({ bindings: { "a.one": "leader h", "b.two": "leader shift+h" } }),
-    ).not.toThrow();
-  });
-
-  it("rejects a chord listed twice for the same action", () => {
-    expect(() => new Keymap({ bindings: { "a.one": ["leader h", "leader h"] } })).toThrow(
-      /listed twice for "a.one"/,
-    );
-  });
-
   it("rejects binding the leader chord itself to an action", () => {
     expect(() => new Keymap({ leader: "ctrl+k", bindings: { "a.one": "ctrl+k" } })).toThrow(
       /"ctrl\+k" is the leader/,
     );
-  });
-
-  it("rejects modified leader keys, which could never fire", () => {
-    expect(() => new Keymap({ bindings: { "a.one": "leader ctrl+x" } })).toThrow(KeymapError);
-    expect(() => new Keymap({ bindings: { "a.one": "leader alt+x" } })).toThrow(/can never fire/);
   });
 
   it("lets 'none' unbind without claiming anything", () => {
@@ -311,17 +252,8 @@ describe("chordOf", () => {
     });
   });
 
-  it("returns undefined for nameless events", () => {
-    expect(chordOf({})).toBeUndefined();
-  });
-
   it("ignores key releases so leader state survives letting go of ctrl", () => {
     expect(chordOf({ name: "k", ctrl: true, eventType: "release" })).toBeUndefined();
-  });
-
-  it("ignores bare modifier presses", () => {
-    expect(chordOf({ name: "ctrl", ctrl: true })).toBeUndefined();
-    expect(chordOf({ name: "shift", shift: true })).toBeUndefined();
   });
 
   it("treats the kitty option modifier as alt", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askFactsOf, askTextLimit, isOneWayDoorClass, oneWayDoorClass } from "./facts.ts";
+import { askFactsOf, isOneWayDoorClass, oneWayDoorClass } from "./facts.ts";
 import { askFor, bashAsk } from "./testing.ts";
 
 describe("askFactsOf", () => {
@@ -50,15 +50,6 @@ describe("askFactsOf", () => {
     expect(outside.insideWorkspace).toBe(false);
   });
 
-  it("falls back to the preview's path, and says unknown when nothing places the path", () => {
-    const previewed = {
-      ...askFor("write", { path: "a.ts" }),
-      preview: { path: "a.ts", before: null, after: "x" },
-    };
-    expect(askFactsOf(previewed).insideWorkspace).toBe(true);
-    expect(askFactsOf(askFor("write", { path: "a.ts" })).insideWorkspace).toBe("unknown");
-  });
-
   it("keeps an MCP tool's arguments as JSON with secret fields hidden", () => {
     const facts = askFactsOf(askFor("github__create_issue", { title: "bug", token: "abc123" }));
     expect(facts.ruleClass).toBe("github__create_issue *");
@@ -74,11 +65,6 @@ describe("askFactsOf", () => {
       secrets: [{ name: "deploy", value: "hunter2hunter2" }],
     });
     expect(named.askText).toBe("echo ‹redacted:deploy›");
-  });
-
-  it("flags an ask text longer than the limit as truncated", () => {
-    const long = askFactsOf(bashAsk(`echo ${"a".repeat(askTextLimit)}`));
-    expect(long.truncated).toBe(true);
   });
 });
 

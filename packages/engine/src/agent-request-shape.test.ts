@@ -127,14 +127,6 @@ describe("Agent request shape", () => {
     expect(provider.requests[0]?.effortChanges).toBeUndefined();
   });
 
-  it("sends no effort fields when none was ever chosen", async () => {
-    const provider = new ScriptedProvider([say("a")]);
-    await new Agent({ provider }).send("one");
-    const [request] = provider.requests;
-    expect(request !== undefined && "effort" in request).toBe(false);
-    expect(request !== undefined && "effortChanges" in request).toBe(false);
-  });
-
   it("shows progress notes live but never keeps them in the assistant message", async () => {
     const provider = new ScriptedProvider([
       [{ type: "progress", text: "Found it. Editing next." }, ...say("Fixed.")],

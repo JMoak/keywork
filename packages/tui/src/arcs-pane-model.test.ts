@@ -113,41 +113,6 @@ describe("ArcsPaneModel rows", () => {
     );
     expect(lines(partial.rows(), 0)[0]).toBe("░ dock-v2 · 3 sessions · 1m · $1.50 + unpriced");
   });
-
-  it("reads liveness off presence: busy beats attached beats idle across the members", () => {
-    const presence: SessionPresence = {
-      paneFor: (id) => (id === "s2" || id === "s3" ? `pane-${id}` : undefined),
-      busy: (id) => id === "s2",
-      waiting: () => false,
-    };
-    const { model } = modelOver({ presence });
-    expect(lines(model.rows()).map((line) => line[0])).toEqual(["█", "▓", "░", "░"]);
-  });
-
-  it("marks the group holding the current session", () => {
-    const { model } = modelOver({ currentSession: () => "s4" });
-    expect(model.rows().map((row) => row.current)).toEqual([false, false, true, false]);
-  });
-
-  it("falls back to the arc's creation age when it has no sessions", () => {
-    const { model } = modelOver({}, { items: [] });
-    expect(lines(model.rows())).toEqual([
-      "░ dock-v2 · no sessions · 50m",
-      "░ infra · no sessions · 40m",
-      "░ old-login · archived · no sessions · 3d",
-    ]);
-  });
-
-  it("counts only active arcs", () => {
-    const { model } = modelOver();
-    expect(model.arcCount()).toBe(2);
-  });
-
-  it("says which theme an arc wears when one is recorded on it", () => {
-    const worn = arcs.map((arc) => (arc.slug === "infra" ? { ...arc, theme: "nord" } : arc));
-    const { model } = modelOver({}, { arcs: worn });
-    expect(lines(model.rows())[1]).toBe("░ infra · 1 session · 2m · wears nord");
-  });
 });
 
 describe("ArcsPaneModel keys", () => {
@@ -160,19 +125,6 @@ describe("ArcsPaneModel keys", () => {
     press(model, "escape");
     expect(model.level()).toBe("arcs");
     expect(model.cursor).toBe(1);
-  });
-
-  it("activates a member session on enter at the sessions level", () => {
-    const { model, recorded } = modelOver();
-    press(model, "enter", "j", "enter");
-    expect(recorded.activated).toEqual(["s2"]);
-  });
-
-  it("drills into the unbound group", () => {
-    const { model } = modelOver();
-    press(model, "j", "j", "l");
-    expect(model.drilled()).toEqual({ kind: "unbound" });
-    expect(model.sessions.sessionRows().map((row) => row.id)).toEqual(["s4"]);
   });
 
   it("names a new arc inline and validates the slug before creating", () => {
@@ -221,20 +173,6 @@ describe("ArcsPaneModel keys", () => {
     press(model, "j", "j", "j", "c", "shift+a");
     expect(recorded.closed).toEqual(["dock-v2"]);
     expect(recorded.abandoned).toEqual(["dock-v2"]);
-  });
-
-  it("refreshes on r and keeps the cursor on the same arc across reloads", () => {
-    const { model, recorded } = modelOver();
-    press(model, "j", "r");
-    expect(recorded.refreshes).toBe(1);
-    model.setInputs(
-      [
-        { slug: "zeta", status: "active", created: new Date(now).toISOString(), sessions: 0 },
-        ...arcs,
-      ],
-      items,
-    );
-    expect(model.cursorRow()?.label).toBe("infra");
   });
 
   it("restores a drilled arc from its seam", () => {

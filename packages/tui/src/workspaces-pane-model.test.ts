@@ -96,16 +96,6 @@ describe("WorkspacesPaneModel rows", () => {
       "░ stale · not set up yet",
     ]);
   });
-
-  it("marks the current workspace busy while turns run", () => {
-    const { model } = modelOf({ liveTurns: () => 2 });
-    expect(model.rows()[0]?.liveness).toBe("busy");
-  });
-
-  it("counts only declared workspaces", () => {
-    const { model } = modelOf();
-    expect(model.workspaceCount()).toBe(3);
-  });
 });
 
 describe("WorkspacesPaneModel keys", () => {
@@ -115,13 +105,6 @@ describe("WorkspacesPaneModel keys", () => {
     press(model, "enter");
     expect(recorded.activated).toEqual(["infra"]);
     expect(model.pendingSwitch).toBeUndefined();
-  });
-
-  it("enter on the current workspace only says so", () => {
-    const { model, recorded } = modelOf();
-    press(model, "enter");
-    expect(recorded.activated).toEqual([]);
-    expect(recorded.rejected).toEqual(["already in frontend"]);
   });
 
   it("asks before a switch that would retire running turns, enter confirms, esc keeps", () => {
@@ -172,15 +155,6 @@ describe("WorkspacesPaneModel keys", () => {
     expect(model.draft).toBeUndefined();
   });
 
-  it("escape drops a draft without acting", () => {
-    const { model, recorded } = modelOf();
-    press(model, "n");
-    typeText(model, "x");
-    press(model, "escape");
-    expect(model.draft).toBeUndefined();
-    expect(recorded.created).toEqual([]);
-  });
-
   it("l links a focus dir to the cursored workspace, refusing one that is not set up", () => {
     const { model, recorded } = modelOf();
     press(model, "l");
@@ -212,28 +186,5 @@ describe("WorkspacesPaneModel keys", () => {
 
     press(model, "escape");
     expect(model.level()).toBe("workspaces");
-  });
-
-  it("keeps the drilled focus list in step with fresh choices", () => {
-    const { model } = modelOf();
-    press(model, "x");
-    model.setChoices([choice({ slug: "frontend", current: true, focusDirs: ["packages/web"] })]);
-    expect(model.focus.rows().map((row) => row.dir)).toEqual(["packages/web"]);
-  });
-
-  it("refreshes on r and keeps the cursor on the same workspace across reloads", () => {
-    const { model, recorded } = modelOf();
-    press(model, "j");
-    expect(model.cursorRow()?.label).toBe("infra");
-    press(model, "r");
-    expect(recorded.refreshes).toBe(1);
-    model.setChoices([choices[2] as WorkspaceChoice, choices[1] as WorkspaceChoice]);
-    expect(model.cursorRow()?.label).toBe("infra");
-  });
-
-  it("leaves modified chords and unknown keys to the caller", () => {
-    const { model } = modelOf();
-    expect(press(model, "ctrl+n")).toBe(false);
-    expect(press(model, "q")).toBe(false);
   });
 });

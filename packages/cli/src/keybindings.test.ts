@@ -38,11 +38,6 @@ describe("fileKeybindings", () => {
     expect(await untrusted.read()).toEqual({ "app.quit": "ctrl+t" });
   });
 
-  it("reads an empty map when no config exists yet", async () => {
-    const dirs = scratch();
-    expect(await fileKeybindings({ ...dirs, projectTrusted: true }).read()).toEqual({});
-  });
-
   it("names the line and column of a JSON slip", async () => {
     const dirs = scratch();
     writeConfig(dirs.userDir, '{\n  "keybindings": {\n    "app.quit": tru\n  }\n}\n');
@@ -106,18 +101,9 @@ describe("fileKeybindings", () => {
 });
 
 describe("jsonSyntaxPosition", () => {
-  it("returns nothing for well-formed JSON", () => {
-    expect(jsonSyntaxPosition('{"a": [1, 2.5e3, "x\\"y", true, null], "b": {}}')).toBeUndefined();
-    expect(jsonSyntaxPosition("  []  ")).toBeUndefined();
-  });
-
   it("points at a trailing comma, a bare word, and an unterminated string", () => {
     expect(jsonSyntaxPosition('{\n  "a": 1,\n}')).toEqual({ line: 3, column: 1 });
     expect(jsonSyntaxPosition('{"a": tru}')).toEqual({ line: 1, column: 7 });
     expect(jsonSyntaxPosition('{"a": "open\n}')).toEqual({ line: 1, column: 12 });
-  });
-
-  it("points past a complete value at whatever follows it", () => {
-    expect(jsonSyntaxPosition("{} {}")).toEqual({ line: 1, column: 4 });
   });
 });

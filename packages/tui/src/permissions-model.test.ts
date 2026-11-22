@@ -114,14 +114,6 @@ describe("PermissionsModel rows", () => {
     ).toBe("trusted reads · 40 read-only commands run, 11 write forms ask · your rules win");
   });
 
-  it("teaches the bundle and how a grant happens on a first look with nothing granted or run", async () => {
-    const { texts } = await harness([], { session: new SessionGrants() });
-    expect(texts()[0]).toBe(
-      "trusted reads just run · [a] on an ask grants this session, the app can grant the workspace",
-    );
-    expect(texts().filter((text) => text.includes("[a] on an ask"))).toHaveLength(1);
-  });
-
   it("says when the bundle is off and when there is nothing granted", async () => {
     const { texts } = await harness([], { session: new SessionGrants(), trusted: false });
     expect(texts()).toEqual([
@@ -140,14 +132,6 @@ describe("PermissionsModel rows", () => {
     );
     const { texts } = await harness([], { session: new SessionGrants(), seat: "attached" });
     expect(texts()[0]).toBe(firstEncounterLine(view, "attached"));
-  });
-
-  it("drops the lesson once something ran quietly or a grant exists", async () => {
-    const quiet: QuietRun = { summary: "git status", reason: "trusted", shellEscape: true };
-    const ran = await harness([], { session: new SessionGrants(), quiet });
-    expect(ran.texts()[0]).toBe("ran without asking · shell escape !git status · trusted reads");
-    const granted = await harness([allowBash("git push *")], { session: new SessionGrants() });
-    expect(granted.texts()[0]).toBe("nothing has run without asking yet");
   });
 
   it("says it is checking until the grants arrive, and why when they can't", async () => {

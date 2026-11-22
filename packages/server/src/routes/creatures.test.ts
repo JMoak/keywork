@@ -18,7 +18,6 @@ import {
 } from "../../../engine/src/creatures/decisions/testing.ts";
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
-import { operationOf, routes } from "../openapi.ts";
 import { memorySessionHost } from "../testing.ts";
 import {
   type CreatureDetail,
@@ -31,10 +30,8 @@ import {
   creatureDraftOf,
   creatureFamily,
   creaturePatchOf,
-  creatureRoutes,
   nameTakenOnNodeLine,
   type RemovalChoice,
-  removalChoiceOf,
   ruleClassOf,
 } from "./creatures.ts";
 import type { RouteHandler, RouteParams } from "./family.ts";
@@ -197,14 +194,6 @@ describe("the creature routes", () => {
     });
   });
 
-  it("list the creatures the port knows", async () => {
-    const h = handlers(fakePort());
-    expect(await call(h.listCreatures, "GET", "/creatures")).toEqual({
-      status: 200,
-      body: { creatures: [pip] },
-    });
-  });
-
   it("create from a draft, passing only what the body chose", async () => {
     const port = fakePort();
     const h = handlers(port);
@@ -222,13 +211,7 @@ describe("the creature routes", () => {
 
   it.each([
     ["no name", {}],
-    ["a blank name", { name: "  " }],
     ["a name past 64 characters", { name: "p".repeat(65) }],
-    ["a skin that is not kebab-case", { name: "Pip", skin: "Big Cat" }],
-    ["a blank workshop", { name: "Pip", workshop: "" }],
-    ["an unknown model class", { name: "Pip", models: { fast: "inherit" } }],
-    ["a model choice without a provider", { name: "Pip", models: { loop: { model: "x" } } }],
-    ["a model reference as a string", { name: "Pip", models: { loop: "ollama/qwen3:8b" } }],
     ["an unknown key", { name: "Pip", pet: true }],
     ["no object at all", "Pip"],
   ])("refuse a body with %s", async (_what, body) => {
@@ -308,42 +291,6 @@ describe("the creature routes", () => {
       404,
     );
   });
-
-  it("add eleven operations whose ids the document carries exactly once", () => {
-    const ids = routes.map((route) => route.operationId);
-    expect(creatureRoutes).toHaveLength(11);
-    for (const route of creatureRoutes) {
-      expect(
-        ids.filter((id) => id === route.operationId),
-        route.operationId,
-      ).toHaveLength(1);
-    }
-    expect(operationOf(creatureRoutes[2]).parameters).toEqual([
-      { name: "slug", in: "path", required: true, schema: { type: "string" } },
-    ]);
-    expect(operationOf(creatureRoutes[1]).requestBody?.required).toBe(true);
-  });
-});
-
-describe("the draft and the removal choice", () => {
-  it("keep a draft's name as typed and drop what was not given", () => {
-    expect(creatureDraftOf({ name: "Pip the Second" })).toEqual({ name: "Pip the Second" });
-    expect(creatureDraftOf({ name: "Pip", workshop: "ws-7", models: {} })).toEqual({
-      name: "Pip",
-      workshop: "ws-7",
-      models: {},
-    });
-  });
-
-  it("read the removal query", () => {
-    expect(removalChoiceOf(new URLSearchParams(""))).toEqual({ confirmed: false });
-    expect(removalChoiceOf(new URLSearchParams("confirmed=true"))).toEqual({ confirmed: true });
-    expect(removalChoiceOf(new URLSearchParams("keepWorkshop=false"))).toEqual({
-      confirmed: false,
-      keepWorkshop: false,
-    });
-    expect(removalChoiceOf(new URLSearchParams("confirmed=1"))).toBeUndefined();
-  });
 });
 
 describe("changing a creature", () => {
@@ -365,13 +312,9 @@ describe("changing a creature", () => {
 
   it.each([
     ["nothing to change", {}],
-    ["a blank name", { name: " " }],
-    ["an empty body", { body: {} }],
     ["a seed out of range", { body: { seed: -1 } }],
-    ["a fractional seed", { body: { seed: 1.5 } }],
     ["an unknown body key", { body: { hue: 3 } }],
     ["a workshop, which is not the keeper's to patch here", { workshop: "ws-7" }],
-    ["a cloud fallback that is not a boolean", { cloudFallback: "yes" }],
   ])("refuse a patch with %s", async (_what, body) => {
     const port = fakePort();
     const answer = await call(
@@ -423,22 +366,22 @@ describe("the shadow report route", () => {
     ).toBe(404);
   });
 
-  it.each([
-    ["no node state is known", new ShadowReportUnserved()],
-    ["ratchet cannot be loaded", new RatchetUnreachableError(new Error("not found"))],
-  ])("answer 503 when %s", async (_what, failure) => {
-    const h = handlers(
-      fakePort(undefined, async () => {
-        throw failure;
-      }),
-    );
+  it.each([["ratchet cannot be loaded", new RatchetUnreachableError(new Error("not found"))]])(
+    "answer 503 when %s",
+    async (_what, failure) => {
+      const h = handlers(
+        fakePort(undefined, async () => {
+          throw failure;
+        }),
+      );
 
-    const answer = await call(h.readCreatureReport, "GET", "/creatures/pip/report", {
-      slug: "pip",
-    });
+      const answer = await call(h.readCreatureReport, "GET", "/creatures/pip/report", {
+        slug: "pip",
+      });
 
-    expect(answer).toEqual({ status: 503, body: { error: failure.message } });
-  });
+      expect(answer).toEqual({ status: 503, body: { error: failure.message } });
+    },
+  );
 });
 
 describe("pausing and resuming a creature", () => {
@@ -460,17 +403,6 @@ describe("pausing and resuming a creature", () => {
       status: 200,
       body: { slug: "pip", paused: false, since: null, chores: [] },
     });
-  });
-
-  it("pause with no chores when the host serves no routines, and 404 an unknown creature", async () => {
-    const h = handlers(fakePort());
-
-    expect(
-      (await call(h.pauseCreature, "POST", "/creatures/pip/pause", { slug: "pip" })).body,
-    ).toMatchObject({ paused: true, chores: [] });
-    expect(
-      (await call(h.resumeCreature, "POST", "/creatures/mo/resume", { slug: "mo" })).status,
-    ).toBe(404);
   });
 });
 

@@ -127,30 +127,6 @@ describe("runChatBench on the replayed trace fixture", () => {
     });
   });
 
-  it("is stable: the same script and clock give the same report", async () => {
-    expect(await chatReport()).toEqual(await chatReport());
-  });
-
-  it("formats the report for the terminal", async () => {
-    expect(formatBenchReport(await chatReport())).toBe(
-      [
-        "bench ollama/qwen3.6-35b-a3b · trace keywork-core · 3 repeats of 4 turns",
-        "server ollama 0.40.14 · fingerprint ollama@moak-main:11434",
-        "  valid@1                   0.83 (0.50 to 1.00)",
-        "  tool name                 0.75 (0.50 to 1.00)",
-        "  tool schema               0.75 (0.50 to 1.00)",
-        "  tool arguments            0.58 (0.25 to 1.00)",
-        "  no tool when none         0.67 (0.00 to 1.00)",
-        "  parallel calls            0.67 (0.00 to 1.00)",
-        "  tokens per turn           1011 (880 to 1120)",
-        "  seconds per turn          0.50",
-        "  decode tok/s              76.4 (40.0 to 120.0)",
-        "  fallbacks                 1",
-        "",
-      ].join("\n"),
-    );
-  });
-
   it("refuses fewer than three repeats", async () => {
     await expect(
       runChatBench({

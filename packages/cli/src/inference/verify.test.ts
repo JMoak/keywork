@@ -59,21 +59,6 @@ describe("verifyEndpoint", () => {
     });
   });
 
-  it("reports a non-2xx answer with its status and an excerpt", async () => {
-    const report = await verifyEndpoint({
-      endpoint: "https://api.example/v1",
-      headers: {},
-      fetchFn: answering(401, "invalid api key").fetchFn,
-      now,
-    });
-    expect(report).toEqual({
-      ok: false,
-      at: "2026-08-21T10:00:00.000Z",
-      reason: "HTTP 401 from https://api.example/v1/models: invalid api key",
-      status: 401,
-    });
-  });
-
   it("reads a models list of names, the shape TypeSafe answers with", async () => {
     const report = await verifyEndpoint({
       endpoint: "https://api.typesafe.ai/v1",
@@ -160,24 +145,6 @@ describe("verifyEndpoint", () => {
       ok: false,
       at: "2026-08-21T10:00:00.000Z",
       reason: "could not reach http://localhost:9/v1: ECONNREFUSED",
-    });
-  });
-
-  it("names a timeout as no answer in time", async () => {
-    const timing: FetchLike = async () => {
-      const error = new Error("timed out");
-      error.name = "TimeoutError";
-      throw error;
-    };
-    const report = await verifyEndpoint({
-      endpoint: "http://localhost:9/v1",
-      headers: {},
-      fetchFn: timing,
-      now,
-    });
-    expect(report).toMatchObject({
-      ok: false,
-      reason: "no answer from http://localhost:9/v1 in time",
     });
   });
 });

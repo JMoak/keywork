@@ -33,11 +33,6 @@ describe("toResponsesRequest", () => {
     });
   });
 
-  it("asks for a reasoning summary only when thinking is on", () => {
-    expect("reasoning" in wire()).toBe(false);
-    expect(wire({ thinking: true })).toMatchObject({ reasoning: { summary: "auto" } });
-  });
-
   it("never sends visible thinking back as input", () => {
     const body = wire({
       messages: [

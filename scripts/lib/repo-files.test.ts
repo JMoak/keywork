@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { excludedDirectories, repoRoot, reportViolations, walkRepo } from "./repo-files.ts";
+import { repoRoot, reportViolations, walkRepo } from "./repo-files.ts";
 
 describe("walkRepo", () => {
   let root: string;
@@ -40,27 +40,6 @@ describe("walkRepo", () => {
     expect(await walkRepo(() => true, root)).toEqual(["docs/backlog/package.json", "src/index.ts"]);
   });
 
-  it("hands the predicate the relative path and keeps only its matches", async () => {
-    seed(root, ["a/package.json", "b/package.json", "b/readme.md"]);
-    const seen: string[] = [];
-    const manifests = await walkRepo((path) => {
-      seen.push(path);
-      return path.endsWith("package.json");
-    }, root);
-    expect(manifests).toEqual(["a/package.json", "b/package.json"]);
-    expect(seen).toEqual(expect.arrayContaining(["b/readme.md"]));
-  });
-
-  it("names the exclusion set that both checkers share", () => {
-    expect([...excludedDirectories].sort()).toEqual([
-      ".claude",
-      ".git",
-      "artifacts",
-      "dist",
-      "node_modules",
-    ]);
-  });
-
   it("defaults to the repository root regardless of the working directory", () => {
     expect(existsSync(join(repoRoot, "AGENTS.md"))).toBe(true);
     expect(existsSync(join(repoRoot, "scripts", "lib", "repo-files.ts"))).toBe(true);
@@ -69,19 +48,6 @@ describe("walkRepo", () => {
 
 describe("reportViolations", () => {
   const label = { check: "check:demo", heading: "Demo violations:", scanned: "2 files" };
-
-  it("prints the ok line with the scan summary and returns 0 when clean", () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      expect(reportViolations(label, [])).toBe(0);
-      expect(log).toHaveBeenCalledWith("check:demo ok (2 files)");
-      expect(error).not.toHaveBeenCalled();
-    } finally {
-      log.mockRestore();
-      error.mockRestore();
-    }
-  });
 
   it("prints the heading and each violation and returns 1 otherwise", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

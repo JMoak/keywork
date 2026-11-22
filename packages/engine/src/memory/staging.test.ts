@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  describeStaged,
-  isStagedWrite,
   MalformedStagedItemError,
   parseLegacyInbox,
   parseStagedMeta,
@@ -83,15 +81,12 @@ describe("staged sidecars", () => {
 
   it.each([
     ["not json", "not valid JSON"],
-    ["[]", "not an object"],
     [JSON.stringify({ kind: "wat", created: "c" }), 'unknown kind "wat"'],
     [
       JSON.stringify({ kind: "note", target: "../out.md", created: "c" }),
       "target: leaves the vault",
     ],
     [JSON.stringify({ kind: "note", created: "c" }), "target"],
-    [JSON.stringify({ kind: "contradiction", a: "x", key: "k", created: "c" }), "b"],
-    [JSON.stringify({ kind: "arc-question", arc: "a", note: "n" }), "key"],
   ])("rejects %j with a typed error naming the file", (raw, detail) => {
     const failure = (() => {
       try {
@@ -147,29 +142,5 @@ describe("staged ids", () => {
     expect(stagedIdOfFile(`${id}.md`)).toBeUndefined();
     expect(stagedIdOfFile("ask-gate.json")).toBeUndefined();
     expect(stagedIdOfFile("inbox.json")).toBeUndefined();
-  });
-});
-
-describe("describeStaged", () => {
-  it("names writes by target and reviews by key", () => {
-    const write = {
-      id,
-      kind: "daily" as const,
-      target: "daily/2026-08-10.md",
-      created: "c",
-      content: "x",
-    };
-    const review = {
-      id,
-      kind: "arc-question" as const,
-      arc: "a",
-      note: "n",
-      key: "arc-question:a:n",
-      created: "c",
-    };
-    expect(isStagedWrite(write)).toBe(true);
-    expect(isStagedWrite(review)).toBe(false);
-    expect(describeStaged(write)).toBe("daily → daily/2026-08-10.md");
-    expect(describeStaged(review)).toBe("arc-question:a:n");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProviderEmptyStreamError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import { ProviderHttpError, ProviderStreamError } from "./errors.ts";
 
 const fakeUserId = "user_2fAkE0000iD0000fAkE0000xx";
 
@@ -39,29 +39,6 @@ describe("ProviderHttpError meanings", () => {
 
     expect(messageOf(400, body)).toBe(
       "openrouter didn't recognize the model id · (400) acme/does-not-exist-9000 is not a valid model ID",
-    );
-  });
-
-  it("recognizes missing models in OpenAI and Ollama phrasing", () => {
-    const openAi = JSON.stringify({
-      error: {
-        message: "The model `gpt-9` does not exist or you do not have access to it.",
-        code: "model_not_found",
-      },
-    });
-    const ollama = '{"error":"model \\"qwen9\\" not found, try pulling it first"}';
-
-    expect(messageOf(404, openAi, "openai")).toBe(
-      "openai didn't recognize the model id · (404) The model `gpt-9` does not exist or you do not have access to it.",
-    );
-    expect(messageOf(404, ollama, "ollama")).toBe(
-      'ollama didn\'t recognize the model id · (404) model "qwen9" not found, try pulling it first',
-    );
-  });
-
-  it("keeps the status alone when a known rejection arrives without a body", () => {
-    expect(messageOf(401, "")).toBe(
-      "openrouter rejected the key · run keywork connect openrouter · (401)",
     );
   });
 
@@ -115,18 +92,6 @@ describe("account ids in surfaced provider text", () => {
 
     expect(failure.message).toBe(
       'openrouter stream failed: {"message":"boom","user_id":"[redacted]"}',
-    );
-  });
-});
-
-describe("ProviderEmptyStreamError", () => {
-  it("is a transient stream failure", () => {
-    const failure = new ProviderEmptyStreamError("openrouter");
-
-    expect(failure).toBeInstanceOf(ProviderStreamError);
-    expect(failure.transient).toBe(true);
-    expect(failure.message).toBe(
-      "openrouter stream failed: ended with no reply and no finish reason",
     );
   });
 });

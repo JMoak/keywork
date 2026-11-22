@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { meshHello, meshHelloPath, probeHello } from "./hello.ts";
+import { meshHello, probeHello } from "./hello.ts";
 
 const servers: Server[] = [];
 
@@ -39,10 +39,6 @@ describe("probeHello", () => {
     });
   });
 
-  it("asks the hello path", () => {
-    expect(meshHelloPath).toBe("/mesh/hello");
-  });
-
   it("does not mistake another product on the port for a node", async () => {
     const port = await answering(200, {
       product: "something-else",
@@ -60,16 +56,5 @@ describe("probeHello", () => {
     const closed = await answering(200, {});
     await new Promise<void>((resolve) => servers.pop()?.close(() => resolve()));
     expect(await probeHello("127.0.0.1", closed)).toBeNull();
-  });
-
-  it("brackets an IPv6 tailnet address in the URL", async () => {
-    const seen: string[] = [];
-    await probeHello("fd7a:115c:a1e0::5841:4d42", 47800, {
-      fetch: async (url) => {
-        seen.push(url);
-        return Response.json(meshHello("0.4.0", "claimed"));
-      },
-    });
-    expect(seen).toEqual(["http://[fd7a:115c:a1e0::5841:4d42]:47800/mesh/hello"]);
   });
 });

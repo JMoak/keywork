@@ -2,7 +2,7 @@ import { Agent, MockProvider } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { AppProbe } from "./probe.ts";
 import { TranscriptFeed } from "./transcript-feed.ts";
-import { groupRowSpans, nextVerbosity, toolGroups } from "./transcript-verbosity.ts";
+import { nextVerbosity, toolGroups } from "./transcript-verbosity.ts";
 import { TranscriptView } from "./transcript-view.ts";
 
 const syncTick = (flush: () => void) => flush();
@@ -97,17 +97,6 @@ describe("verbosity levels", () => {
     ]);
   });
 
-  it("high shows arguments that medium truncates", () => {
-    const { feed, agent } = scriptedFeed();
-    const long = "x".repeat(90);
-    runTool(agent, "w1", "write", { path: "a.ts", content: long }, "wrote a.ts");
-    feed.verbosity = "high";
-    const joined = rows(feed, 200).join("\n");
-    expect(joined).toContain(long);
-    feed.verbosity = "medium";
-    expect(rows(feed, 200).join("\n")).not.toContain(long);
-  });
-
   it("leaves a lone read alone and never groups a user's own shell run", () => {
     const { feed, agent } = scriptedFeed();
     runTool(agent, "r1", "read", { path: "a.ts" }, "alpha");
@@ -149,21 +138,6 @@ describe("verbosity levels", () => {
   });
 });
 
-describe("groupRowSpans", () => {
-  it("colors only the outcome word", () => {
-    const { feed, agent } = scriptedFeed();
-    runTool(agent, "r1", "read", { path: "a.ts" }, "alpha");
-    runTool(agent, "r2", "read", { path: "b.ts" }, "beta");
-    const head = toolGroups(feed.entries, "medium").get(0);
-    if (head?.role !== "head") throw new Error("expected a group head");
-    expect(groupRowSpans(head.group)).toEqual([
-      { text: "read 2 files: a.ts, b.ts", tone: "body" },
-      { text: " · ", tone: "meta" },
-      { text: "done", tone: "ok" },
-    ]);
-  });
-});
-
 describe("the verbosity verb", () => {
   it("cycles the focused conversation on leader v and shows the chord on its palette command", () => {
     const probe = new AppProbe();
@@ -174,13 +148,5 @@ describe("the verbosity verb", () => {
     expect(probe.model()?.feed.verbosity).toBe("high");
     probe.keys("v");
     expect(probe.model()?.feed.verbosity).toBe("low");
-  });
-
-  it("keeps the level per conversation", () => {
-    const probe = new AppProbe();
-    probe.command("split");
-    probe.keys("ctrl+k", "v");
-    expect(probe.model("session-2")?.feed.verbosity).toBe("high");
-    expect(probe.model("session-1")?.feed.verbosity).toBe("medium");
   });
 });

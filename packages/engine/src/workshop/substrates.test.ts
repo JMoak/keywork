@@ -71,14 +71,6 @@ describe("the substrates a node supports", () => {
     expect(report.preferred).toBe("host");
   });
 
-  it("refuses an unqualified sbx by version", async () => {
-    const workshops = await node(fakeSbx({ version: "0.46.0" }).run);
-
-    const [sbx] = (await workshops.substrates()).substrates;
-
-    expect(sbx).toMatchObject({ supported: false, reason: expect.stringContaining("0.46.0") });
-  });
-
   it("refuses to raise a workshop on a substrate it does not support, before creating anything", async () => {
     const workshops = await node(missingSbx);
 

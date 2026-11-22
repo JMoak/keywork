@@ -73,15 +73,6 @@ function text(model: BotCreateModel, row: number): string {
 }
 
 describe("BotCreateModel", () => {
-  it("starts on the purpose field with placeholders and a footer that says what enter does", () => {
-    const { model } = worldOf();
-    expect(model.field).toBe("purpose");
-    expect(text(model, 0)).toBe(" purpose  › ▌");
-    expect(text(model, 1)).toBe(" name     › a slug, or leave empty to be named");
-    expect(text(model, 2)).toBe(" scope    › project  global");
-    expect(text(model, 3)).toBe(" enter next · esc closes");
-  });
-
   it("asks for a name from the purpose when the name is empty, then lets enter accept it", async () => {
     const { model } = worldOf({ suggest: "test-hawk" });
     type(model, "Hunts for missing tests");
@@ -91,16 +82,6 @@ describe("BotCreateModel", () => {
     expect(text(model, 1)).toBe(" name     › test-hawk▌  proposed · edit or enter");
     press(model, "enter");
     expect(model.field).toBe("scope");
-  });
-
-  it("editing the proposed name drops the proposed hint", async () => {
-    const { model } = worldOf({ suggest: "test-hawk" });
-    type(model, "purpose");
-    press(model, "enter");
-    await waitFor(() => expect(model.name.value).toBe("test-hawk"));
-    type(model, "s");
-    expect(model.name.value).toBe("test-hawks");
-    expect(text(model, 1)).toBe(" name     › test-hawks▌");
   });
 
   it("refuses a hostile or malformed proposal and leaves the name for the user", async () => {

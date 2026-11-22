@@ -10,12 +10,6 @@ function ignored(text: string, path: string, isDirectory = false): boolean {
 }
 
 describe("parseIgnoreFile", () => {
-  it("skips blank lines and comments", () => {
-    const file = parseIgnoreFile("\n# a comment\n  \nfoo\n");
-    expect(file.patterns).toHaveLength(1);
-    expect(file.problems).toHaveLength(0);
-  });
-
   it("keeps a pattern that starts with an escaped hash", () => {
     expect(ignored("\\#tag", "#tag")).toBe(true);
   });

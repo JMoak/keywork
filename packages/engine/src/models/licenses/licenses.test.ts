@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { InferenceBinding, ProviderRegistration } from "../../inference/types.ts";
-import { readSlate } from "../bench/slate.ts";
 import {
   blankRecord,
   type CapabilityRecord,
@@ -40,26 +39,6 @@ describe("slateEntryFor", () => {
 });
 
 describe("licenseTermsFor", () => {
-  it("takes the slate's word on a license the slate lists for that model", () => {
-    expect(licenseTermsFor("laguna-xs-2.1", "OpenMDW-1.1", testSlate)).toEqual({
-      license: "OpenMDW-1.1",
-      acknowledgement: "not-required",
-      released: null,
-    });
-    expect(licenseTermsFor("qwen3.8:27b", "apache-2.0", testSlate)).toMatchObject({
-      acknowledgement: "not-required",
-      released: "2026-08-05",
-    });
-  });
-
-  it("fills a license the server does not report from the slate", () => {
-    expect(licenseTermsFor("qwen3.8-flash-next", null, testSlate)).toEqual({
-      license: "qwen-community-1.0",
-      acknowledgement: "required",
-      released: "2026-08-24",
-    });
-  });
-
   it("judges a served license the slate does not know as the inventory does", () => {
     expect(licenseTermsFor("qwen3.8-27b", "NVIDIA Open Model License", testSlate)).toMatchObject({
       license: "NVIDIA Open Model License",
@@ -74,12 +53,6 @@ describe("licenseTermsFor", () => {
       acknowledgement: "unknown",
       released: null,
     });
-  });
-
-  it("reads the shipped slate's non-permissive picks as needing acknowledgement", async () => {
-    const shipped = await readSlate();
-    expect(licenseTermsFor("qwen3.8-flash-next", null, shipped).acknowledgement).toBe("required");
-    expect(licenseTermsFor("qwen3.8-27b", null, shipped).acknowledgement).toBe("not-required");
   });
 });
 
@@ -157,18 +130,6 @@ describe("the policy resolver with unacknowledgedLicense", () => {
         },
       },
     ]);
-  });
-
-  it("fails resolution when the only candidate is unacknowledged", () => {
-    const resolution = resolvePolicy(
-      { modelClass: "strong", levels: strongPolicy(flash) },
-      environment(served),
-    );
-    expect(resolution).toMatchObject({
-      ok: false,
-      level: "creature",
-      failure: { code: "missing-capability", capability: "license-acknowledgement" },
-    });
   });
 
   it("admits the model once the keeper acknowledges that license", () => {

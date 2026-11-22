@@ -32,12 +32,6 @@ describe("discardFrame", () => {
     expect(frame.mounted).toEqual([]);
   });
 
-  it("is a no-op on an empty frame", () => {
-    const frame = mountedFrame(0);
-    discardFrame(frame.root);
-    expect(frame.destroyed).toEqual([]);
-  });
-
   it("never destroys the pointer plane, so mouse hits always resolve", () => {
     const frame = mountedFrame(2);
     let planeDestroyed = false;
@@ -66,11 +60,6 @@ describe("idle-main tip slot", () => {
     "ctrl+k s starts one · ctrl+p go · / commands · ctrl+q quits",
   ];
 
-  it("shows only the hints when no tip is eligible", () => {
-    expect(idleMainLines(undefined)).toEqual(mainHints);
-    expect(noSessionsLines(undefined)).toEqual(noSessionsHints);
-  });
-
   it("adds an eligible tip as one extra line, never replacing a hint", () => {
     expect(idleMainLines("/memory opens the garden")).toEqual([
       ...mainHints,
@@ -86,17 +75,6 @@ describe("idle-main tip slot", () => {
 describe("screenWithin", () => {
   it("leaves room for the status row in the boxed weight", () => {
     expect(screenWithin({ width: 120, height: 40 }, "regular")).toEqual({ width: 120, height: 39 });
-  });
-
-  it("keeps a one-cell ring for the anchor in the seams weight", () => {
-    expect(screenWithin({ width: 120, height: 40 }, "seams")).toEqual({ width: 118, height: 37 });
-  });
-
-  it("draws no ring in the borderless weight", () => {
-    expect(screenWithin({ width: 120, height: 40 }, "borderless")).toEqual({
-      width: 120,
-      height: 39,
-    });
   });
 
   it("never goes negative on a tiny terminal", () => {

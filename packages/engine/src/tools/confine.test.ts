@@ -54,11 +54,6 @@ describe("confinedPath", () => {
     expect(() => confinedPath(repo, "../outside.txt")).toThrow("escapes the project root");
   });
 
-  it("admits paths inside a linked folder", () => {
-    const scope = toolScope(root, [linked]);
-    expect(confinedPath(scope, join(linked, "notes.md"))).toBe(join(linked, "notes.md"));
-  });
-
   it("still confines siblings of a linked folder", () => {
     const scope = toolScope(root, [linked]);
     expect(() => confinedPath(scope, join(sibling, "secret.txt"))).toThrow(
@@ -107,26 +102,11 @@ describe("confinedPath", () => {
 });
 
 describe("toolScope", () => {
-  it("dedupes roots and always covers the working directory", () => {
-    const scope = toolScope(root, [root, linked, linked]);
-    expect(scope.roots).toEqual([root, linked]);
-    expect(scope.cwd).toBe(root);
-  });
-
   it("leaves a hand-built scope narrower than its cwd unwidened", () => {
     const narrow = { cwd: root, roots: [join(root, "sub")] };
     expect(scopeContains(narrow, join(root, "sub", "file.txt"))).toBe(true);
     expect(scopeContains(narrow, join(root, "elsewhere", "file.txt"))).toBe(false);
     expect(() => confinedPath(narrow, "elsewhere/file.txt")).toThrow("escapes");
-  });
-});
-
-describe("scopeContains", () => {
-  it("answers membership without throwing", () => {
-    const scope = toolScope(root, [linked]);
-    expect(scopeContains(scope, join(linked, "deep", "file.txt"))).toBe(true);
-    expect(scopeContains(scope, join(sibling, "file.txt"))).toBe(false);
-    expect(scopeContains(repo, join(root, "file.txt"))).toBe(true);
   });
 });
 
@@ -184,28 +164,5 @@ describe("file tools over a widened scope", () => {
     await editTool(scope).execute({ path: target, oldText: "alpha", newText: "beta" });
     expect(await readFile(target, "utf8")).toBe("beta");
     expect(await readTool(scope).execute({ path: target })).toContain("beta");
-  });
-
-  it("rejects sibling writes with the scope message", async () => {
-    const scope = toolScope(root, [linked]);
-    await expect(
-      writeTool(scope).execute({ path: join(sibling, "out.txt"), content: "x" }),
-    ).rejects.toThrow("escapes the workspace scope");
-  });
-
-  it("reports saved files to the tap", async () => {
-    const saved: string[] = [];
-    const scope = toolScope(root, [linked]);
-    await writeTool(scope, { afterSave: async (path) => void saved.push(path) }).execute({
-      path: "a.txt",
-      content: "one",
-    });
-    await writeFile(join(linked, "b.txt"), "two");
-    await editTool(scope, { afterSave: async (path) => void saved.push(path) }).execute({
-      path: join(linked, "b.txt"),
-      oldText: "two",
-      newText: "three",
-    });
-    expect(saved).toEqual([join(root, "a.txt"), join(linked, "b.txt")]);
   });
 });

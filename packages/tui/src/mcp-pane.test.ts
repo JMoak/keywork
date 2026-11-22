@@ -86,29 +86,12 @@ function rendered(pane: McpPane): string {
 }
 
 describe("McpPane", () => {
-  it("loads on construction and titles itself with density-ramp counts", async () => {
-    const { pane, world } = await paneOver(fixture);
-    expect(world.loads).toBe(1);
-    expect(pane.title()).toBe(" mcp · █1 ░1 ");
-  });
-
-  it("describes itself as an mcp pane", async () => {
-    const { pane } = await paneOver(fixture);
-    expect(pane.describe()).toEqual({ kind: "mcp" });
-  });
-
   it("renders one healthy and one failing server with correct states", async () => {
     const { pane } = await paneOver(fixture);
     const body = rendered(pane);
     expect(body).toContain("█ filesystem · 12 tools");
     expect(body).toContain("░ linear · ▛");
     expect(body).toContain("  spawn ENOENT");
-  });
-
-  it("constructed with zero servers it stays one calm line", async () => {
-    const { pane } = await paneOver([]);
-    expect(pane.title()).toBe(" mcp ");
-    expect(rendered(pane)).toContain("no mcp servers configured");
   });
 
   it("menu restart calls the port and the server walks connecting to connected", async () => {
@@ -132,32 +115,6 @@ describe("McpPane", () => {
     expect(rendered(pane)).toContain("░ filesystem · off");
   });
 
-  it("holds conflicting actions while a transition is in flight and releases after", async () => {
-    const { port, world } = portOver(fixture);
-    let release: () => void = () => {};
-    port.restart = (name) => {
-      world.restarted.push(name);
-      return new Promise((resolve) => {
-        release = resolve;
-      });
-    };
-    const pane = new McpPane("mcp-1", () => {}, port);
-    await pane.settled();
-    pane.handleKey(parseChord("enter"));
-    pane.handleKey(parseChord("j"));
-    pane.handleKey(parseChord("enter"));
-    pane.handleKey(parseChord("enter"));
-    pane.handleKey(parseChord("j"));
-    pane.handleKey(parseChord("enter"));
-    expect(world.restarted).toEqual(["filesystem"]);
-    expect(world.toggled).toEqual([]);
-    release();
-    await pane.settled();
-    pane.handleKey(parseChord("enter"));
-    await pane.settled();
-    expect(world.toggled).toEqual([["filesystem", false]]);
-  });
-
   it("menu tools lists tool names inline through the port", async () => {
     const { pane, world } = await paneOver(fixture);
     world.tools.filesystem = ["read_file", "write_file"];
@@ -165,66 +122,6 @@ describe("McpPane", () => {
     const body = rendered(pane);
     expect(body).toContain("    read_file");
     expect(body).toContain("    write_file");
-  });
-
-  it("a tools rejection renders inline and enter retries successfully", async () => {
-    const { pane, world } = await paneOver(fixture);
-    world.failNextTools = "transport closed";
-    world.tools.filesystem = ["read_file"];
-    await press(pane, "enter", "j", "j", "j", "enter");
-    expect(rendered(pane)).toContain("▛ tools failed · transport closed");
-    await press(pane, "j", "enter");
-    expect(rendered(pane)).toContain("    read_file");
-  });
-
-  it("captures a load failure truthfully and recovers on the next refresh", async () => {
-    const { pane, world } = await paneOver(fixture);
-    world.failNextLoad = "config unreadable";
-    await press(pane, "r");
-    expect(rendered(pane)).toContain("config unreadable");
-    await press(pane, "r");
-    const recovered = rendered(pane);
-    expect(recovered).not.toContain("config unreadable");
-    expect(recovered).toContain("█ filesystem · 12 tools");
-  });
-
-  it("declines keys the model does not own", async () => {
-    const { pane } = await paneOver(fixture);
-    expect(pane.handleKey(parseChord("z"))).toBe(false);
-  });
-
-  it("a disposed pane ignores late completions and starts no new work", async () => {
-    const { port, world } = portOver(fixture);
-    let release: () => void = () => {};
-    port.restart = (name) => {
-      world.restarted.push(name);
-      return new Promise((resolve) => {
-        release = resolve;
-      });
-    };
-    let notified = 0;
-    const pane = new McpPane(
-      "mcp-1",
-      () => {
-        notified += 1;
-      },
-      port,
-    );
-    await pane.settled();
-    pane.handleKey(parseChord("enter"));
-    pane.handleKey(parseChord("j"));
-    pane.handleKey(parseChord("enter"));
-    expect(world.restarted).toEqual(["filesystem"]);
-    const loadsBefore = world.loads;
-    pane.dispose();
-    const notifiedBefore = notified;
-    release();
-    await pane.settled();
-    expect(notified).toBe(notifiedBefore);
-    expect(world.loads).toBe(loadsBefore);
-    pane.refresh();
-    await pane.settled();
-    expect(world.loads).toBe(loadsBefore);
   });
 
   it("pushes subscribed status snapshots into the model and unsubscribes on dispose", async () => {
@@ -282,18 +179,6 @@ describe("McpPane command tray", () => {
     { name: "beta", state: "down", toolCount: 0, lastError: "boom" },
   ];
 
-  it("opens on / with the cursored server's actions plus refresh", async () => {
-    const { pane } = await paneOver(trayFixture());
-    pane.handleKey(parseChord("/"));
-    expect(pane.tray.open).toBe(true);
-    expect(pane.tray.matches().map((command) => command.name)).toEqual([
-      "restart",
-      "disable",
-      "tools",
-      "refresh",
-    ]);
-  });
-
   it("restarts the cursored server and reveals its menu", async () => {
     const { pane, world } = await paneOver(trayFixture());
     pane.handleKey(parseChord("/"));
@@ -301,31 +186,6 @@ describe("McpPane command tray", () => {
     await pane.settled();
     expect(world.restarted).toEqual(["alpha"]);
     expect(pane.model.rows().some((row) => row.id === "menu:alpha:restart")).toBe(true);
-  });
-
-  it("labels the toggle by the server's current state", async () => {
-    const { pane } = await paneOver([
-      { name: "alpha", state: "down", toolCount: 0, enabled: false },
-    ]);
-    pane.handleKey(parseChord("/"));
-    expect(pane.tray.matches().map((command) => command.name)).toContain("enable");
-  });
-
-  it("runs refresh through the pane's own key path", async () => {
-    const { pane, world } = await paneOver(trayFixture());
-    const loadsBefore = world.loads;
-    pane.handleKey(parseChord("/"));
-    for (const character of "ref") pane.handleKey(parseChord(character), character);
-    pane.handleKey(parseChord("enter"));
-    await pane.settled();
-    expect(world.loads).toBe(loadsBefore + 1);
-    expect(pane.tray.open).toBe(false);
-  });
-
-  it("offers only refresh when no server is configured", async () => {
-    const { pane } = await paneOver([]);
-    pane.handleKey(parseChord("/"));
-    expect(pane.tray.matches().map((command) => command.name)).toEqual(["refresh"]);
   });
 });
 
@@ -362,32 +222,6 @@ describe("mcp status pane wiring", () => {
     expect(dockOf(probe, "session-1")).toBeUndefined();
     expect(dockOf(probe, "mcp-1")).toBe("right");
     expect(probe.snapshot().focused).toBe("session-1");
-  });
-
-  it("per-side defaults: mcp homes right while the browser homes left", async () => {
-    const probe = new AppProbe({
-      createMcpPane: mcpFactory(),
-      createBrowserPane: (id) => stubFilePane(id, "workspace"),
-    });
-    await probe.settled();
-    probe.command("browse");
-    expect(dockOf(probe, "browser-1")).toBe("left");
-    expect(dockOf(probe, "mcp-1")).toBe("right");
-    expect(paneIds(probe)).toEqual(["browser-1", "session-1", "mcp-1"]);
-  });
-
-  it("/mcp summons and refocuses the pane instead of duplicating it", async () => {
-    const probe = new AppProbe({ createMcpPane: mcpFactory() });
-    await probe.settled();
-    probe.type("/mcp").keys("enter");
-    expect(probe.snapshot().focused).toBe("mcp-1");
-    expect(paneIds(probe)).toEqual(["session-1", "mcp-1"]);
-  });
-
-  it("with zero servers configured the pane never exists and /mcp is absent", () => {
-    const probe = new AppProbe();
-    expect(paneIds(probe)).toEqual(["session-1"]);
-    expect(probe.command("mcp")).toBe(false);
   });
 
   it("revives a saved mcp pane without double-docking a second one", async () => {

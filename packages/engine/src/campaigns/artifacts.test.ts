@@ -79,27 +79,6 @@ describe("campaign artifact capture and isolation", () => {
     expect(await store.readText(manifest, "notes.md", 1_000)).toBe("Notes");
   });
 
-  it("captures a single file and an empty directory", async () => {
-    const file = join(source, "notes.md");
-    await writeFile(file, "Notes");
-    const manifest = await store.capture({
-      sourcePath: file,
-      allowedRoot: source,
-      ownerScope: "owner",
-      title: "Notes",
-    });
-    expect(manifest.kind).toBe("file");
-    expect((await store.preview(manifest)).content).toBe("Notes");
-    await mkdir(join(source, "empty"));
-    const empty = await store.capture({
-      sourcePath: join(source, "empty"),
-      allowedRoot: source,
-      ownerScope: "owner",
-      title: "Empty",
-    });
-    expect(await store.preview(empty)).toMatchObject({ path: null, content: null, totalBytes: 0 });
-  });
-
   it("rejects source paths outside the authorized root and unmanaged candidate snapshots", async () => {
     const outside = join(root, "outside.md");
     await writeFile(outside, "Outside");

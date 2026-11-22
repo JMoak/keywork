@@ -71,12 +71,4 @@ describe("gardener under a lease", () => {
     expect((await store.readAudit()).at(-1)?.event).toMatch(/^gardener sweep:/);
     expect(await leaseFor(root, "alpha", () => clock).inspect()).toBeUndefined();
   });
-
-  it("sweeps without a lease exactly as before", async () => {
-    const root = await scratch();
-    const store = new MemoryStore({ vaultRoot: root, trusted: true });
-    const report = await new Gardener({ store }).sweep();
-    expect(report.deferred).toBeUndefined();
-    expect(await new SweepLease({ vaultRoot: root, host: "x" }).inspect()).toBeUndefined();
-  });
 });

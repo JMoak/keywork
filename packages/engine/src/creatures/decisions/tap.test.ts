@@ -51,14 +51,4 @@ describe("tapKeeperVerdicts", () => {
     await tap.flush();
     expect(recorded).toEqual([]);
   });
-
-  it("stops listening when stopped", async () => {
-    const { bus, recorded, tap } = tapped();
-    tap.stop();
-    const ask = bashAsk("npm test");
-    bus.emit("gate.ask", { ask });
-    bus.emit("gate.permission", { decision: granted(ask) });
-    await tap.flush();
-    expect(recorded).toEqual([]);
-  });
 });

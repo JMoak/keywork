@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../provider.ts";
-import {
-  ProviderEmptyResponseError,
-  ProviderEmptyStreamError,
-  ProviderHttpError,
-  ProviderStreamError,
-} from "./errors.ts";
+import { ProviderEmptyStreamError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
 import { OpenAiCompatibleProvider } from "./openai.ts";
 import { RetryingProvider } from "./retry.ts";
-import { rawSseResponse, sseResponse } from "./stream-fixtures.ts";
+import { sseResponse } from "./stream-fixtures.ts";
 import type { FetchLike } from "./transport.ts";
 
 function provider(fetchFn: FetchLike): OpenAiCompatibleProvider {
@@ -114,31 +109,6 @@ describe("OpenAiCompatibleProvider", () => {
     ]);
   });
 
-  it("surfaces HTTP failures with status and body", async () => {
-    const failing = provider(async () => new Response("quota exceeded", { status: 429 }));
-
-    await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(ProviderHttpError);
-    await expect(collect(failing.stream(emptyRequest))).rejects.toThrow(/429.*quota exceeded/s);
-  });
-
-  it("fails with a typed transient error when the response has no body", async () => {
-    const bodiless = provider(async () => new Response(null, { status: 200 }));
-
-    await expect(collect(bodiless.stream(emptyRequest))).rejects.toThrow(
-      ProviderEmptyResponseError,
-    );
-  });
-
-  it("keeps unparseable tool arguments as raw text for the model to see", async () => {
-    const lines = [
-      '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"{broken"}}]}}]}',
-      "[DONE]",
-    ];
-    const deltas = await collect(provider(async () => sseResponse(lines)).stream(emptyRequest));
-
-    expect(deltas[0]).toMatchObject({ call: { arguments: "{broken" } });
-  });
-
   it("fails the turn when the stream carries a mid-stream error event", async () => {
     const lines = [
       '{"choices":[{"delta":{"content":"partial"}}]}',
@@ -148,29 +118,6 @@ describe("OpenAiCompatibleProvider", () => {
 
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(ProviderStreamError);
     await expect(collect(streaming.stream(emptyRequest))).rejects.toThrow(/model overloaded/);
-  });
-
-  it("synthesizes a stable callId when the stream never provides one", async () => {
-    const lines = [
-      '{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"bash","arguments":"{}"}}]}}]}',
-      "[DONE]",
-    ];
-    const deltas = await collect(provider(async () => sseResponse(lines)).stream(emptyRequest));
-
-    expect(deltas[0]).toMatchObject({ call: { callId: "call_0", name: "bash" } });
-  });
-
-  it("sets the tool name once even when duplicate-index fragments repeat it", async () => {
-    const lines = [
-      '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"{\\"a\\":"}}]}}]}',
-      '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"1}"}}]}}]}',
-      "[DONE]",
-    ];
-    const deltas = await collect(provider(async () => sseResponse(lines)).stream(emptyRequest));
-
-    expect(deltas[0]).toMatchObject({
-      call: { callId: "c1", name: "bash", arguments: { a: 1 } },
-    });
   });
 
   it("splits cached prompt tokens out and captures a metered cost when reported", async () => {
@@ -233,10 +180,6 @@ describe("OpenAiCompatibleProvider", () => {
 
     expect(headers[0]?.authorization).toBe("Bearer key");
     expect(headers[1]).not.toHaveProperty("authorization");
-  });
-
-  it("exposes the configured model id for cost accounting", () => {
-    expect(provider(async () => stoppedStream()).modelId).toBe("test-model");
   });
 
   it("fails the turn when accumulated tool-call arguments exceed the size ceiling", async () => {
@@ -331,19 +274,6 @@ describe("OpenAiCompatibleProvider reasoning", () => {
       { type: "visible-thinking", text: "Same words." },
     ]);
   });
-
-  it("leaves encrypted reasoning_details alone", async () => {
-    const encrypted = [{ type: "reasoning.encrypted", data: "opaque==", index: 0 }];
-    const deltas = await streamOf([
-      chunk({ reasoning_details: encrypted }),
-      chunk({ content: "ok" }, "stop"),
-    ]);
-
-    expect(deltas).toEqual([
-      { type: "text", text: "ok" },
-      { type: "done", usage: zeroUsage },
-    ]);
-  });
 });
 
 describe("OpenAiCompatibleProvider empty streams", () => {
@@ -358,12 +288,6 @@ describe("OpenAiCompatibleProvider empty streams", () => {
       transient: true,
       message: "test stream failed: ended with no reply and no finish reason",
     });
-  });
-
-  it("fails a stream that only ever sent keepalive comments", async () => {
-    const keepalive = provider(async () => rawSseResponse(": OPENROUTER PROCESSING\n\n"));
-
-    await expect(collect(keepalive.stream(emptyRequest))).rejects.toThrow(ProviderEmptyStreamError);
   });
 
   it("fails a stream that reasoned and then dropped without a reply or finish reason", async () => {

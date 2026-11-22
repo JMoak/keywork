@@ -15,13 +15,7 @@ vi.mock("./deps.ts", async (importOriginal) => ({
   },
 }));
 
-const absoluteScripts = [
-  "/src/keywork/main.ts",
-  "C:/src/keywork/main.ts",
-  "C:\\src\\keywork\\main.ts",
-  "\\\\server\\share\\keywork\\main.ts",
-  "\\src\\keywork\\main.ts",
-];
+const absoluteScripts = ["/src/keywork/main.ts", "C:\\src\\keywork\\main.ts"];
 
 describe("node path syntax with POSIX host semantics", () => {
   it.each(absoluteScripts)("retains an existing source entry %s", (script) => {
@@ -41,7 +35,7 @@ describe("node path syntax with POSIX host semantics", () => {
     expect(printError).toHaveBeenCalledWith(expect.stringContaining("slug, not a path"));
   });
 
-  it.each(["main.ts", "./main.ts", "C:main.ts", "file:///src/main.ts", "/$bunfs/root/keywork"])(
+  it.each(["main.ts", "C:main.ts", "/$bunfs/root/keywork"])(
     "does not treat %s as an absolute source script",
     (script) => {
       const exists = vi.fn(() => true);

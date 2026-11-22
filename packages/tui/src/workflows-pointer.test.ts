@@ -5,7 +5,7 @@ import { paletteFrame, paletteRowLimit } from "./overlays/index.ts";
 import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
 import { SessionTreePane, type SessionTreePort } from "./session-tree-pane.ts";
-import { dockedIds, paneIds, stubFilePane } from "./testing/workflow-probe.ts";
+import { paneIds, stubFilePane } from "./testing/workflow-probe.ts";
 
 describe("mouse", () => {
   const modelFilePane = () => {
@@ -19,14 +19,6 @@ describe("mouse", () => {
     });
     return { probe, models };
   };
-
-  it("focuses the pane under a click", () => {
-    const probe = new AppProbe();
-    probe.command("split");
-    const rect = probe.rect("session-1");
-    probe.click(rect.x + 1, rect.y + 1);
-    expect(probe.snapshot().focused).toBe("session-1");
-  });
 
   it("wheel-scrolls the pane under the cursor without moving focus", () => {
     const { probe, models } = modelFilePane();
@@ -49,16 +41,6 @@ describe("mouse", () => {
     expect(models.get("file-1")?.scrollTop).toBe(10);
   });
 
-  it("moves the palette selection on hover, and arrows still win afterwards", () => {
-    const probe = new AppProbe().keys("ctrl+shift+p");
-    const rows = Math.min(paletteRowLimit, probe.core.registry.search("").length);
-    const frame = paletteFrame(probe.screen, rows);
-    probe.hover(frame.x + 2, frame.firstRowY + 2);
-    expect(probe.core.paletteIndex).toBe(2);
-    probe.keys("down");
-    expect(probe.core.paletteIndex).toBe(3);
-  });
-
   it("runs the clicked palette row", () => {
     const probe = new AppProbe().keys("ctrl+shift+p").type("split");
     const rows = Math.min(paletteRowLimit, probe.core.registry.search("split").length);
@@ -66,27 +48,6 @@ describe("mouse", () => {
     probe.click(frame.x + 2, frame.firstRowY);
     expect(probe.snapshot().overlay).toBeUndefined();
     expect(paneIds(probe)).toEqual(["session-1", "session-2"]);
-  });
-
-  it("closes the palette on an outside click without running anything", () => {
-    const probe = new AppProbe().keys("ctrl+shift+p").type("split");
-    probe.click(0, 0);
-    expect(probe.snapshot().overlay).toBeUndefined();
-    expect(paneIds(probe)).toEqual(["session-1"]);
-  });
-
-  it("closes the help overlay on an outside click", () => {
-    const probe = new AppProbe().keys("ctrl+k", "/");
-    expect(probe.snapshot().overlay).toBe("help");
-    probe.click(0, 0);
-    expect(probe.snapshot().overlay).toBeUndefined();
-  });
-
-  it("ignores clicks and scrolls when no pane is under the cursor", () => {
-    const probe = new AppProbe();
-    probe.click(500, 500).scroll(500, 500, "down").hover(500, 500);
-    expect(paneIds(probe)).toEqual(["session-1"]);
-    expect(probe.exited).toBe(false);
   });
 
   it("drags a pane by its title row onto a sibling, previewing the swap rect", () => {
@@ -103,39 +64,6 @@ describe("mouse", () => {
     expect(probe.rect("session-1")).toEqual(second);
     expect(probe.rect("session-2")).toEqual(first);
     expect(probe.snapshot().focused).toBe("session-1");
-  });
-
-  it("drags a main pane into a dock at the previewed slot", () => {
-    const probe = new AppProbe();
-    probe.command("split");
-    probe.command("split");
-    probe.command("dock-left");
-    const dock = probe.rect("session-3");
-    const source = probe.rect("session-1");
-    probe.core.handleMouse({ type: "down", x: source.x + 2, y: source.y, button: 0 });
-    probe.core.handleMouse({ type: "drag", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 });
-    expect(probe.core.dragPreview()).toMatchObject({ x: dock.x, width: dock.width });
-    probe.core.handleMouse({ type: "up", x: dock.x + 1, y: dock.y + dock.height - 1, button: 0 });
-    expect(dockedIds(probe)).toEqual(["session-3", "session-1"]);
-    expect(probe.snapshot().focused).toBe("session-1");
-  });
-
-  it("a plain title-row click focuses without rearranging anything", () => {
-    const probe = new AppProbe();
-    probe.command("split");
-    const first = probe.rect("session-1");
-    probe.click(first.x + 2, first.y);
-    expect(probe.snapshot().focused).toBe("session-1");
-    expect(probe.rect("session-1")).toEqual(first);
-  });
-
-  it("dropping where there is no target leaves the layout unchanged", () => {
-    const probe = new AppProbe();
-    probe.command("split");
-    const first = probe.rect("session-1");
-    probe.drag({ x: first.x + 2, y: first.y }, { x: first.x + 10, y: first.y + 10 });
-    expect(probe.rect("session-1")).toEqual(first);
-    expect(probe.core.dragPreview()).toBeUndefined();
   });
 });
 

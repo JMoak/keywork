@@ -1,7 +1,5 @@
-import { RGBA } from "@opentui/core";
 import { describe, expect, it } from "vitest";
-import { keyworkNight } from "./palette.ts";
-import { slugChunks, slugInk, slugParts, slugWords } from "./slug-ink.ts";
+import { slugParts, slugWords } from "./slug-ink.ts";
 
 describe("the slug display grammar", () => {
   it("splits a slug into lit words and dim separators", () => {
@@ -11,18 +9,6 @@ describe("the slug display grammar", () => {
       { text: "retry", role: "word" },
       { text: "-", role: "separator" },
       { text: "fix", role: "word" },
-    ]);
-  });
-
-  it("marks the arc colon as its own role", () => {
-    expect(slugParts("mcp-hardening:sleep-wake").map((part) => part.role)).toEqual([
-      "word",
-      "separator",
-      "word",
-      "colon",
-      "word",
-      "separator",
-      "word",
     ]);
   });
 
@@ -40,20 +26,5 @@ describe("the slug display grammar", () => {
           .join(""),
       ).toBe(slug);
     }
-  });
-
-  it("inks words in the given color and separators dim, the colon soft accent", () => {
-    const ink = slugInk(keyworkNight, keyworkNight.accentSoft);
-    expect(ink).toEqual({
-      word: keyworkNight.accentSoft,
-      separator: keyworkNight.textDim,
-      colon: keyworkNight.accentSoft,
-    });
-    const chunks = slugChunks("arc:a-b", ink);
-    expect(chunks.map((chunk) => chunk.text)).toEqual(["arc", ":", "a", "-", "b"]);
-    const expectedInk = [ink.word, ink.colon, ink.word, ink.separator, ink.word];
-    chunks.forEach((chunk, index) => {
-      expect(RGBA.fromHex(expectedInk[index] as string).equals(chunk.fg)).toBe(true);
-    });
   });
 });

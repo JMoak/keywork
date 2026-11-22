@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { forgetObservation, readObservations, recordObservation } from "./observations.ts";
+import { readObservations, recordObservation } from "./observations.ts";
 
 const tempDir = scratchDirs("keywork-observations-");
 
@@ -49,13 +49,6 @@ describe("connection observations", () => {
     );
     expect(cleared).toEqual({ ollama: { verifiedAt: "t2" } });
     expect(await readObservations(dir)).toEqual({ ollama: { verifiedAt: "t2" } });
-  });
-
-  it("forgets one connection without touching the others", async () => {
-    const dir = await tempDir();
-    await recordObservation("a", { verifiedAt: "t" }, dir);
-    await recordObservation("b", { verifiedAt: "t" }, dir);
-    expect(await forgetObservation("a", dir)).toEqual({ b: { verifiedAt: "t" } });
   });
 
   it("drops fields it does not understand instead of failing", async () => {

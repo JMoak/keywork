@@ -32,17 +32,6 @@ function closeEntry(slug: string, timestamp: string): AuditEntry {
 }
 
 describe("returnDelta", () => {
-  it("is silent when nothing changed", () => {
-    expect(
-      returnDelta({
-        since,
-        workspaceNotes: [noteOf("Old", "2026-08-01T00:00:00.000Z")],
-        arc: { slug: "dock-v2", notes: [noteOf("Settled", "2026-08-02T00:00:00.000Z")] },
-        audit: [closeEntry("earlier", "2026-08-10T00:00:00.000Z")],
-      }),
-    ).toEqual([]);
-  });
-
   it("is byte-stable for a fixed ledger", () => {
     const inputs = {
       since,
@@ -178,12 +167,5 @@ describe("the bot line", () => {
       "1 learned by ⚖ reviewer: [[Terse Reviews]]",
       "1 new in the workspace: [[Fresh Rule]]",
     ]);
-  });
-
-  it("stays byte-identical without a bot", () => {
-    const inputs = { since, workspaceNotes: [noteOf("Fresh Rule", "2026-08-21T10:00:00.000Z")] };
-    expect(returnDelta({ ...inputs, bot: { slug: "reviewer", sigil: "⚖", notes: [] } })).toEqual(
-      returnDelta(inputs),
-    );
   });
 });

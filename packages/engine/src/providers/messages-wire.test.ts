@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type Message, textMessage } from "../messages.ts";
 import type { ProviderRequest } from "../provider.ts";
-import { toChatRequest } from "./chat-wire.ts";
 import { thinkingBudgetTokens, thinkingConfig, toMessagesRequest } from "./messages-wire.ts";
-import { toResponsesRequest } from "./responses-wire.ts";
 
 const owner = { provider: "anthropic", model: "claude-test" };
 const shape = { maxTokens: 1000 };
@@ -22,18 +20,6 @@ function wire(messages: Message[], overrides: Partial<ProviderRequest> = {}) {
 }
 
 describe("toMessagesRequest", () => {
-  it("folds the system prompt and system-role messages into one system field", () => {
-    const body = wire([textMessage("system", "house rules"), textMessage("user", "hi")], {
-      systemPrompt: "You are keywork.",
-    });
-    expect(body.system).toBe("You are keywork.\n\nhouse rules");
-    expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
-  });
-
-  it("omits the system field entirely when nothing was assembled", () => {
-    expect("system" in wire([textMessage("user", "hi")])).toBe(false);
-  });
-
   it("carries images as base64 source blocks", () => {
     const body = wire([
       {
@@ -181,77 +167,6 @@ describe("toMessagesRequest", () => {
       },
     ]);
     expect(body.messages[1]?.content).toEqual([{ type: "text", text: "a" }]);
-  });
-});
-
-describe("switching models mid-session through the neutral format", () => {
-  const history: Message[] = [
-    textMessage("user", "list files"),
-    {
-      role: "assistant",
-      parts: [
-        {
-          type: "redacted-thinking",
-          data: JSON.stringify({ type: "thinking", thinking: "", signature: "sig" }),
-          owner,
-        },
-        { type: "visible-thinking", text: "shown reasoning" },
-        { type: "tool-call", callId: "toolu_1", name: "bash", arguments: { command: "ls" } },
-      ],
-    },
-    {
-      role: "tool",
-      parts: [{ type: "tool-result", callId: "toolu_1", output: "a.ts", isError: false }],
-    },
-    { role: "assistant", parts: [{ type: "text", text: "One file: a.ts" }] },
-    textMessage("user", "thanks"),
-  ];
-
-  it("keeps the anthropic transcript intact for a chat-completions provider, minus the private thinking", () => {
-    const body = toChatRequest(request(history), "gpt-x") as { messages: object[] };
-    expect(body.messages).toEqual([
-      { role: "user", content: "list files" },
-      {
-        role: "assistant",
-        tool_calls: [
-          {
-            id: "toolu_1",
-            type: "function",
-            function: { name: "bash", arguments: '{"command":"ls"}' },
-          },
-        ],
-      },
-      { role: "tool", tool_call_id: "toolu_1", content: "a.ts" },
-      { role: "assistant", content: "One file: a.ts" },
-      { role: "user", content: "thanks" },
-    ]);
-  });
-
-  it("hands the same transcript to a responses provider without leaking anthropic-owned state", () => {
-    const body = toResponsesRequest(request(history), "gpt-x", {
-      provider: "codex",
-      model: "gpt-x",
-    }) as {
-      input: object[];
-    };
-    expect(body.input).not.toContainEqual(expect.objectContaining({ type: "thinking" }));
-    expect(JSON.stringify(body)).not.toContain("shown reasoning");
-    expect(body.input).toContainEqual(
-      expect.objectContaining({ type: "function_call", call_id: "toolu_1" }),
-    );
-  });
-
-  it("drops thinking produced by a different anthropic model when the session switches", () => {
-    const switched = toMessagesRequest(
-      request(history),
-      "claude-other",
-      { provider: "anthropic", model: "claude-other" },
-      shape,
-    ) as { messages: { content: object[] }[] };
-    const blocks = switched.messages.flatMap((message) => message.content);
-    expect(blocks).not.toContainEqual(expect.objectContaining({ type: "thinking" }));
-    expect(JSON.stringify(blocks)).not.toContain("shown reasoning");
-    expect(blocks).toContainEqual(expect.objectContaining({ type: "tool_use", id: "toolu_1" }));
   });
 });
 
@@ -447,16 +362,6 @@ describe("effort on the Messages wire", () => {
     ]);
   });
 
-  it("keeps the cached prefix when only a per-message change is added", () => {
-    const before = wireFor(opus55, twoTurns, { effort: "high" });
-    const after = wireFor(opus55, twoTurns, {
-      effort: "high",
-      effortChanges: [{ before: 2, level: "low" }],
-    });
-    expect(after.output_config).toEqual(before.output_config);
-    expect(after.messages.slice(0, 2)).toEqual(before.messages.slice(0, 2));
-  });
-
   it("hoists a change ahead of the user turn it merges into", () => {
     const interrupted: Message[] = [
       textMessage("user", "go"),
@@ -541,16 +446,6 @@ describe("thinking replay across turns", () => {
 
     expect(signaturesIn(first)).toEqual(["s-plan", "s-answer"]);
     expect(second.messages.slice(0, first.messages.length)).toEqual(first.messages);
-  });
-
-  it("drops the earlier turn's thinking on a model that strips it server-side", () => {
-    const haiku = "claude-haiku-4-5";
-    const second = wireFor(haiku, [...toolTurn(haiku), textMessage("user", "now test it")], {
-      thinking: true,
-    });
-    expect(signaturesIn(second)).toEqual([]);
-    const midLoop = wireFor(haiku, toolTurn(haiku).slice(0, 3), { thinking: true });
-    expect(signaturesIn(midLoop)).toEqual(["s-plan"]);
   });
 
   it("falls back to current-turn replay when the request carries no thinking config", () => {

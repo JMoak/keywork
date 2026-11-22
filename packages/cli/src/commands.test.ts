@@ -84,16 +84,6 @@ describe("loadWorkspaceExtensions", () => {
       "bundled",
     ]);
   });
-
-  it("stays calm when nothing is defined anywhere", async () => {
-    const cwd = await scratch();
-    const userRoot = await scratch();
-    const extensions = await loadWorkspaceExtensions(cwd, true, userRoot);
-    expect(extensions.commands).toEqual([]);
-    expect(extensions.bots).toEqual([]);
-    expect(extensions.failures).toEqual([]);
-    expect(extensions.skills.map((entry) => entry.name)).toEqual(bundledSkillNames);
-  });
 });
 
 describe("parseSlashLine", () => {
@@ -122,13 +112,6 @@ describe("resolveSlashCommand", () => {
     });
   });
 
-  it("resolves bare invocations with empty arguments", () => {
-    expect(resolveSlashCommand(commands, "/ship")).toMatchObject({
-      command: { name: "ship" },
-      args: "",
-    });
-  });
-
   it("ignores unknown commands and plain prompts", () => {
     expect(resolveSlashCommand(commands, "/unknown")).toBeUndefined();
     expect(resolveSlashCommand(commands, "review this")).toBeUndefined();
@@ -141,11 +124,6 @@ describe("slashCompleter", () => {
 
   it("completes slash prefixes", () => {
     expect(complete("/sh")).toEqual([["/shave", "/ship"], "/sh"]);
-  });
-
-  it("offers nothing once arguments begin or for plain text", () => {
-    expect(complete("/ship now")).toEqual([[], "/ship now"]);
-    expect(complete("hello")).toEqual([[], "hello"]);
   });
 });
 

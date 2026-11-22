@@ -394,17 +394,6 @@ describe("the consent invariant: a fired trigger cannot grant", () => {
     expect(harness.service.needsYou()).toEqual([]);
   });
 
-  it("cancels a parked run by hand", async () => {
-    await started({ ...writer, enabled: false });
-    const parked = await harness.service.run("wren", "triage");
-    expect(await harness.service.cancel("wren", "triage")).toMatchObject({
-      runId: (parked as RunRow).runId,
-      status: "ended",
-      process: "cancelled",
-    });
-    expect(harness.service.needsYou()).toEqual([]);
-  });
-
   it("takes no acceptance from a routine body, a stale digest or a widened file", async () => {
     await started(writer);
     expect(await harness.service.put("wren", "triage", { ...writer, accepted: true })).toEqual({
@@ -507,15 +496,6 @@ describe("approvals", () => {
     expect(harness.runner.last().stops).toBe(0);
     await harness.advance(minuteMs);
     expect(runsOf()[0]?.process).toBe("blocked");
-  });
-
-  it("resumes a parked run when the keeper answers", async () => {
-    await started();
-    await harness.service.run("wren", "triage");
-    harness.runner.last().signals.asked({ callId: "call-2", tool: "write" });
-    harness.runner.last().signals.answered("call-2", "granted");
-    expect(runsOf()[0]?.status).toBe("running");
-    expect(harness.store.pendingApprovals()).toEqual([]);
   });
 });
 

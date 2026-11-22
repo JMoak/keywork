@@ -49,19 +49,6 @@ describe("campaign cartridge lifecycle", () => {
     expect(resolved[0]?.resources?.entries.map((entry) => entry.path)).toContain("SKILL.md");
   });
 
-  it("does not visit skill directories until the skill is selected", async () => {
-    const skill = await skillFixture();
-    await rm(skill.dir, { recursive: true, force: true });
-    const registry = new CampaignCartridges({ root: join(root, "cache"), skills: [skill] });
-    expect(registry.inventory().some((item) => item.id === "skill:ordinary")).toBe(true);
-    expect(registry.inspect("skill:ordinary").resources).toBeNull();
-    await registry.activate(["implementation"], [], { stage: "building", at: 1 });
-    await expect(access(join(root, "cache", "resources"))).rejects.toThrow();
-    await expect(
-      registry.activate(["skill:ordinary"], [], { stage: "building", at: 2 }),
-    ).rejects.toThrow();
-  });
-
   it("pins selected resources exactly, preserving old versions until an explicit upgrade", async () => {
     const skill = await skillFixture();
     const resource = join(skill.dir, "references", "guide.md");

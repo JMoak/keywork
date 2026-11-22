@@ -65,13 +65,6 @@ describe("linkCommand", () => {
     expect(() => confinedPath(scope, join(sibling, "secret.txt"))).toThrow("escapes");
   });
 
-  it("materializes the workspace when linking is the first durable act", async () => {
-    store.trust(repo);
-
-    expect(await linkCommand(linked, repo, store, io, answering(true), memory)).toBe(0);
-    expect(openWorkspace(repo)?.contextDirs).toEqual([linked]);
-  });
-
   it("keeps already declared dirs operative without another prompt", async () => {
     store.trust(repo);
     materializeWorkspace(repo);

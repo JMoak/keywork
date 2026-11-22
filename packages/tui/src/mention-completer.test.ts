@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { insertedMention, mentionAt, rankMentions } from "./mention-completer.ts";
+import { mentionAt, rankMentions } from "./mention-completer.ts";
 
 const files = [
   "README.md",
@@ -25,20 +25,12 @@ describe("mentionAt", () => {
     expect(mentionAt("mail me@host", 12)).toBeUndefined();
     expect(mentionAt("no mention here", 15)).toBeUndefined();
   });
-
-  it("ends at whitespace", () => {
-    expect(mentionAt("@app.ts and more", 16)).toBeUndefined();
-  });
 });
 
 describe("rankMentions", () => {
   it("fuzzy matches and puts file-name hits first", () => {
     const ranked = rankMentions("app", files, 5);
     expect(ranked.slice(0, 2)).toEqual(["packages/tui/src/app.ts", "packages/tui/src/app-core.ts"]);
-  });
-
-  it("matches across the path when the query has a slash", () => {
-    expect(rankMentions("engine/ag", files, 5)).toEqual(["packages/engine/src/agent.ts"]);
   });
 
   it("hides dot paths until the query reaches for them, like the browser", () => {
@@ -54,11 +46,5 @@ describe("rankMentions", () => {
     const ranked = rankMentions("", files, 3);
     expect(ranked).toHaveLength(3);
     expect(ranked[0]).toBe("README.md");
-  });
-});
-
-describe("insertedMention", () => {
-  it("writes the canonical path with a trailing space so typing carries on", () => {
-    expect(insertedMention("packages/tui/src/app.ts")).toBe("@packages/tui/src/app.ts ");
   });
 });

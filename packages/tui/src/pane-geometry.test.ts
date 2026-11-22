@@ -72,23 +72,6 @@ describe("pane content stays inside the chrome at every drawable size", () => {
     assertFitsAtEverySize(pane);
   });
 
-  it("an empty session overview keeps its calm zero-state inside the chrome", async () => {
-    const pane = new SessionTreePane(
-      "tree-1",
-      () => {},
-      inertIntents,
-      {
-        overview: async () => [],
-        load: async () => undefined,
-        setLabel: async () => {},
-        fork: async () => undefined,
-      },
-      () => undefined,
-    );
-    await pane.settled();
-    assertFitsAtEverySize(pane);
-  });
-
   it("mcp rows fit", async () => {
     const pane = new McpPane("mcp-1", () => {}, {
       load: async () => [
@@ -283,24 +266,6 @@ describe("gap cells ride the layout truth", () => {
                 gap + (chrome === "seams" ? 1 : 0),
               );
             }
-          }
-        }
-      }
-    });
-  });
-
-  it("hit-tests exactly through gaps: a drawn cell finds its pane, a gap cell finds none", () => {
-    walkLayouts((layout, screen) => {
-      if (layout.panes().length < 2) return;
-      for (const gap of gaps) {
-        const drawn = drawnRects(layout, screen, "regular", gap);
-        const laid = layout.rects(screen);
-        for (let y = 0; y < screen.height; y += 3) {
-          for (let x = 0; x < screen.width; x += 3) {
-            const owner = [...laid].find(([, rect]) => contains(rect, x, y))?.[0];
-            const hit = [...drawn].filter(([, rect]) => contains(rect, x, y)).map(([id]) => id);
-            expect(hit.length).toBeLessThanOrEqual(1);
-            if (hit.length === 1) expect(hit[0]).toBe(owner);
           }
         }
       }

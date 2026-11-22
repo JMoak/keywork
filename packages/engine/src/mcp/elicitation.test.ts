@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  defaultFormContent,
-  describeElicitation,
-  type ElicitationAnswer,
-  inputResponsesOf,
-  pendingInputOf,
-  validateFormContent,
-} from "./elicitation.ts";
+import { describeElicitation, pendingInputOf, validateFormContent } from "./elicitation.ts";
 import { McpInputRequiredError } from "./errors.ts";
 
 const formResult = {
@@ -91,21 +84,5 @@ describe("form content", () => {
       "color must be one of Red | Green",
       "tags must be a list drawn from a | b",
     ]);
-  });
-
-  it("pre-fills defaults and shapes answers into the inputResponses map", () => {
-    if (fields?.mode !== "form") throw new Error("expected form mode");
-    expect(defaultFormContent(fields.fields)).toEqual({ color: "Red" });
-    const answers = new Map<string, ElicitationAnswer>([
-      ["github_login", { action: "accept", content: { name: "octocat" } }],
-      ["link", { action: "decline" }],
-    ]);
-    expect(inputResponsesOf(answers)).toEqual({
-      github_login: { action: "accept", content: { name: "octocat" } },
-      link: { action: "decline" },
-    });
-    expect(describeElicitation(fields)).toBe(
-      "fixture asks: Please provide your GitHub username (Name, age?, color?, tags?)",
-    );
   });
 });

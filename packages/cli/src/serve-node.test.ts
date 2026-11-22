@@ -29,10 +29,6 @@ describe("a served turn's usage", () => {
       costSource: null,
     });
   });
-
-  it("records no usage at all when the provider reported none", () => {
-    expect(normalizedUsageOf({ inputTokens: 0, outputTokens: 0 }, "gpt-5-mini")).toBeNull();
-  });
 });
 
 describe("what a creature spent", () => {

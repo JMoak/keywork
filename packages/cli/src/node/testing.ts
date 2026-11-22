@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { Account } from "./account.ts";
 import type { CommandRunner, Ran } from "./runner.ts";
 import type {
@@ -213,36 +213,6 @@ export class FakeSystemd {
     if (args[0] === "show-user") return ok(`Linger=${this.lingering.size > 0 ? "yes" : "no"}\n`);
     return failed(1, "loginctl: unexpected");
   }
-}
-
-export class FakeLaunchctl {
-  readonly calls: string[][] = [];
-  readonly loaded = new Set<string>();
-
-  readonly run: CommandRunner = async (program, args) => {
-    this.calls.push([program, ...args]);
-    const [verb, target = ""] = args;
-    const label =
-      verb === "bootstrap" ? basename(args[2] ?? "", ".plist") : (target.split("/").at(-1) ?? "");
-    switch (verb) {
-      case "bootstrap":
-        this.loaded.add(label);
-        return ok();
-      case "bootout":
-        if (!this.loaded.delete(label)) return failed(3, "Boot-out failed: 3: No such process");
-        return ok();
-      case "kickstart":
-        return this.loaded.has(args[2]?.split("/").at(-1) ?? "")
-          ? ok()
-          : failed(113, "Could not find service");
-      case "print":
-        return this.loaded.has(label)
-          ? ok(`${target} = {\n\tstate = running\n\tpid = 501\n\tlast exit code = 0\n}\n`)
-          : failed(113, `Could not find service "${label}" in domain`);
-      default:
-        return failed(64, "Unrecognized subcommand");
-    }
-  };
 }
 
 function valueAfter(args: readonly string[], flag: string): string {

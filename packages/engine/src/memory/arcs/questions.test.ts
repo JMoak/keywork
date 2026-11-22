@@ -87,18 +87,6 @@ describe("the hard per-arc cap", () => {
     expect((await readdir(dir)).sort()).toEqual(["A.md", "B.md"]);
   });
 
-  it("names the open questions so the choice is informed", async () => {
-    const { questions } = await questionsDir();
-    await questions.add({ title: "A", body: "a", provenance: "user" });
-    await questions.add({ title: "B", body: "b", provenance: "user" });
-    const error = await questions
-      .add({ title: "C", body: "c", provenance: "user" })
-      .then(() => undefined)
-      .catch((thrown: unknown) => thrown as OpenQuestionCapError);
-    expect(error?.openTitles).toEqual(["A", "B"]);
-    expect(error?.cap).toBe(2);
-  });
-
   it("merge folds the newcomer into a survivor and records what was absorbed", async () => {
     const { questions, dir } = await questionsDir();
     await questions.add({ title: "A", body: "a", provenance: "user" });

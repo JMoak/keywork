@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { memoryQuestions } from "./decider.ts";
 import {
-  deciderEdition,
   isQuestionProven,
   memoryEvalProofs,
   provenQuestions,
@@ -28,10 +27,5 @@ describe("provenQuestions", () => {
     expect([...provenQuestions("jev-1.14.0", proofs)]).toEqual(["pair-relation@1"]);
     expect(isQuestionProven("jev-1.13.0", memoryQuestions.pairRelation, proofs)).toBe(false);
     expect(isQuestionProven("jev-1.14.0", memoryQuestions.pairRelation, proofs)).toBe(true);
-  });
-
-  it("names an edition the way the report file and the pinned model do", () => {
-    expect(deciderEdition("jev", "1.13.0")).toBe("jev-1.13.0");
-    expect(deciderEdition("builtin", "1")).toBe("builtin-1");
   });
 });

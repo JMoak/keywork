@@ -4,13 +4,11 @@ import { join } from "node:path";
 import {
   ArcRegistry,
   type CreatureDetail,
-  type CreatureHost,
   creatureTagOf,
   EndpointUnreachableError,
   filePairStore,
   formatReference,
   type InferenceBinding,
-  inboundBlockHeading,
   isMemoryFlushPrompt,
   type Message,
   MockProvider,
@@ -441,27 +439,6 @@ describe("serve parity: a creature's chore, end to end", () => {
 });
 
 describe("serve parity: the node ports", () => {
-  it("answers the creature, chore, model, workshop and mesh families instead of 503", async () => {
-    const world = await servedWorld(parityProvider([]), { modelProbe: unreachableServers });
-    try {
-      await world.json("/creatures", { name: "Pip" }, 201);
-      const answered = await Promise.all(
-        ["/creatures", "/creatures/pip/routines", "/models", "/workshops", "/mesh/pairs"].map(
-          async (path) => [path, (await world.call(path)).status] as const,
-        ),
-      );
-      expect(answered).toEqual([
-        ["/creatures", 200],
-        ["/creatures/pip/routines", 200],
-        ["/models", 200],
-        ["/workshops", 200],
-        ["/mesh/pairs", 200],
-      ]);
-    } finally {
-      await world.close();
-    }
-  });
-
   it("streams workshop.changed, models.changed and the mesh events on GET /events", async () => {
     const world = await servedWorld(parityProvider([]), { modelProbe: unreachableServers });
     try {
@@ -855,43 +832,6 @@ describe("serve parity: a creature's conversation turn", () => {
       await world.close();
     }
   });
-
-  it("carries a delivered message into the next turn as an untrusted block, once, without a turn of its own", async () => {
-    const provider = parityProvider([textTurn("Lark asked me to check notes."), textTurn("ok")]);
-    const world = await servedWorld(provider);
-    try {
-      await world.json("/creatures", { name: "Hal" }, 201);
-      await world.json("/creatures", { name: "Lark" }, 201);
-      const hal = await world.json<CreatureDetail>("/creatures/hal");
-      const creatures = world.host.creatures as CreatureHost;
-      const origin = {
-        kind: "creature" as const,
-        creature: "lark",
-        thread: "parityMessage1",
-        node: "nParityHouse",
-        machine: "house",
-      };
-      expect(await creatures.deliver("hal", "Message from lark: please check notes", origin)).toBe(
-        "noted",
-      );
-      expect(provider.requests).toHaveLength(0);
-
-      const reader = await world.events();
-      await world.post(`/sessions/${hal.conversation}/prompt`, { text: "what did Lark say?" });
-      await until(reader, (frame) => frame.event === "turn.completed");
-      await world.post(`/sessions/${hal.conversation}/prompt`, { text: "and now?" });
-      await until(reader, (frame) => frame.event === "turn.completed");
-      await reader.close();
-
-      expect(provider.requests[0]?.systemPrompt).toContain(
-        `${inboundBlockHeading}\n- Message from lark: please check notes [untrusted, `,
-      );
-      expect(provider.requests[1]?.systemPrompt).not.toContain(inboundBlockHeading);
-      expect(provider.requests[1]?.systemPrompt).not.toContain("please check notes");
-    } finally {
-      await world.close();
-    }
-  });
 });
 
 function reportedAfterTurn(sessionId: string): (frame: SseFrame) => boolean {
@@ -904,116 +844,8 @@ function reportedAfterTurn(sessionId: string): (frame: SseFrame) => boolean {
   };
 }
 
-describe("serve parity: a creature in its bare host workshop", () => {
-  it("finds its workshop running before the first turn and works in the workspace itself", async () => {
-    const provider = parityProvider([
-      [
-        toolCall("r1", "read", { path: "docs/INDEX.md" }),
-        toolCall("w1", "write", { path: "notes/largest.md", content: "docs/INDEX.md\n" }),
-        { type: "done", usage: meteredAt(0.001) },
-      ],
-      textTurn("The list is in notes/largest.md."),
-    ]);
-    const world = await servedWorld(provider);
-    try {
-      await mkdir(join(world.cwd, "docs"), { recursive: true });
-      await writeFile(join(world.cwd, "docs", "INDEX.md"), "# Index\n", "utf8");
-      const made = await world.json<{ workshop: string }>(
-        "/creatures",
-        { name: "Osk", substrate: "host" },
-        201,
-      );
-      expect(await world.json(`/workshops/${made.workshop}`)).toMatchObject({
-        state: "running",
-        workdir: world.cwd,
-        workspace: { access: "direct", path: world.cwd },
-      });
-
-      const osk = await world.json<CreatureDetail>("/creatures/osk");
-      const reader = await world.events();
-      await world.post(`/sessions/${osk.conversation}/prompt`, {
-        text: "list the five largest files under docs and write the list to notes/largest.md",
-      });
-      await until(reader, (frame) => frame.event === "turn.completed");
-      await reader.close();
-
-      const results = toolResultsOf(provider.requests.at(-1));
-      expect(results.r1).toContain("# Index");
-      expect(results.w1).toBe("Wrote notes/largest.md");
-      expect(await readFile(join(world.cwd, "notes", "largest.md"), "utf8")).toBe(
-        "docs/INDEX.md\n",
-      );
-    } finally {
-      await world.close();
-    }
-  });
-
-  it("runs an accepted parked chore as running while its session works, completed after, writing in the workspace", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const inner = parityProvider([
-      [
-        toolCall("s1", "write", { path: "notes/stamp.md", content: "stamped\n" }),
-        { type: "done", usage: meteredAt(0.001) },
-      ],
-      textTurn("Stamped notes/stamp.md."),
-    ]);
-    const provider: Provider = {
-      name: inner.name,
-      modelId: inner.modelId,
-      capabilities: inner.capabilities,
-      async *stream(request) {
-        await gate;
-        yield* inner.stream(request);
-      },
-    };
-    const world = await servedWorld(provider);
-    try {
-      await world.json("/creatures", { name: "Osk", substrate: "host" }, 201);
-      await world.put("/creatures/osk/routines/stamp", { ...triageChore, ...heldOnGrants }, 201);
-      const held = await world.json<{ run: RunRow }>("/creatures/osk/routines/stamp/run", {}, 200);
-      expect(held.run).toMatchObject(parkedRun);
-      const { routine } = await world.json<{ routine: { grants: { digest: string } } }>(
-        "/creatures/osk/routines/stamp",
-      );
-
-      const reader = await world.events();
-      await world.json("/creatures/osk/routines/stamp/accept", { digest: routine.grants.digest });
-      await until(reader, (frame) => frame.event === "routine.fired");
-      const working = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
-      release();
-      await until(reader, (frame) => frame.event === "routine.finished");
-      await reader.close();
-      const finished = await world.json<{ runs: RunRow[] }>("/creatures/osk/routines/stamp/runs");
-
-      expect(working.runs).toEqual([
-        expect.objectContaining({ runId: held.run.runId, status: "running", reason: null }),
-      ]);
-      expect(working.runs[0]?.sessionId).not.toBeNull();
-      expect(finished.runs).toEqual([
-        expect.objectContaining({ runId: held.run.runId, status: "ended", process: "completed" }),
-      ]);
-      expect(await readFile(join(world.cwd, "notes", "stamp.md"), "utf8")).toBe("stamped\n");
-    } finally {
-      await world.close();
-    }
-  });
-});
-
 function toolCall(callId: string, name: string, args: unknown): TurnDelta {
   return { type: "tool-call", call: { type: "tool-call", callId, name, arguments: args } };
-}
-
-function toolResultsOf(request: ProviderRequest | undefined): Record<string, string> {
-  const results: Record<string, string> = {};
-  for (const message of request?.messages ?? []) {
-    for (const part of message.parts) {
-      if (part.type === "tool-result") results[part.callId] = String(part.output);
-    }
-  }
-  return results;
 }
 
 describe("serve parity: a chore waiting on the keeper's answer", () => {

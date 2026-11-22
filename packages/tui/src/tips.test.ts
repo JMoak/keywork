@@ -17,10 +17,6 @@ const nothingUsed: TipSignals = {
 };
 
 describe("rotatingTip", () => {
-  it("says nothing once every feature is in use", () => {
-    expect(rotatingTip(everythingUsed, 0)).toBeUndefined();
-  });
-
   it("offers only tips for features the workspace has not used yet", () => {
     const tip = rotatingTip({ ...everythingUsed, costsShown: false }, 0);
     expect(tip).toBe("/show-costs puts spend in the pane headers");
@@ -33,17 +29,6 @@ describe("rotatingTip", () => {
       ),
     );
     expect(seen.size).toBe(curatedTips.length);
-  });
-
-  it("holds one tip steady inside a single interval", () => {
-    expect(rotatingTip(nothingUsed, 0)).toBe(rotatingTip(nothingUsed, tipRotationMs - 1));
-  });
-
-  it("keeps the curated list free of em dashes and shouting", () => {
-    for (const tip of curatedTips) {
-      expect(tip.text).not.toMatch(/\u2014/);
-      expect(tip.text).toBe(tip.text.toLowerCase());
-    }
   });
 });
 

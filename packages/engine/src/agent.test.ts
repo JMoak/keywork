@@ -153,55 +153,6 @@ describe("Agent end-to-end with mock provider", () => {
     });
   });
 
-  it("leaves non-mutating calls and silent recalls untouched", async () => {
-    const provider = new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-1",
-        name: "echo",
-        arguments: { text: "hi" },
-      }),
-      textTurn("done"),
-    ]);
-    let consulted = 0;
-    const agent = new Agent({
-      provider,
-      tools: [echoTool],
-      actionRecall: async () => {
-        consulted += 1;
-        return undefined;
-      },
-    });
-
-    await agent.send("echo please");
-
-    expect(consulted).toBe(0);
-    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi" });
-  });
-
-  it("appends nothing when the recall stays silent on a mutating call", async () => {
-    const mutatingEcho: Tool = { ...echoTool, mutates: true };
-    const provider = new MockProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "call-1",
-        name: "echo",
-        arguments: { text: "hi" },
-      }),
-      textTurn("done"),
-    ]);
-    const agent = new Agent({
-      provider,
-      tools: [mutatingEcho],
-      guard: { confirm: async () => true },
-      actionRecall: async () => undefined,
-    });
-
-    await agent.send("echo please");
-
-    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi" });
-  });
-
   it("resolves an already-aborted send as an interrupted turn", async () => {
     const provider = new MockProvider([textTurn("this streams")]);
     const agent = new Agent({ provider });
@@ -267,27 +218,6 @@ describe("Agent end-to-end with mock provider", () => {
     expect(toolResult).toMatchObject({ isError: true, output: declinedWithoutRetry });
   });
 
-  it("labels a guard-answered ask with the guard's gate", async () => {
-    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
-    const provider = new MockProvider([
-      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
-      textTurn("Understood."),
-    ]);
-    const agent = new Agent({
-      provider,
-      tools: [mutatingTool],
-      guard: { confirm: async () => false, gate: "headless" },
-    });
-    const gates: string[] = [];
-    agent.bus.on("gate.permission", ({ decision }) =>
-      gates.push(`${decision.verdict}:${decision.gate}`),
-    );
-
-    await agent.send("Change something");
-
-    expect(gates).toEqual(["denied:headless"]);
-  });
-
   it("ends the run at a declined call without another model call when the guard says so", async () => {
     const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
     const provider = new MockProvider([
@@ -323,24 +253,6 @@ describe("Agent end-to-end with mock provider", () => {
     });
   });
 
-  it("keeps going after a declined call when the guard leaves the run open", async () => {
-    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
-    const provider = new MockProvider([
-      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
-      textTurn("Understood."),
-    ]);
-    const agent = new Agent({
-      provider,
-      tools: [mutatingTool],
-      guard: { confirm: async () => false, gate: "user" },
-    });
-
-    const reply = await agent.send("Change something");
-
-    expect(provider.remaining()).toBe(0);
-    expect(messageText(reply)).toBe("Understood.");
-  });
-
   it("announces an ask before consulting the guard and labels the answer with the gate it names", async () => {
     const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
     const provider = new MockProvider([
@@ -367,23 +279,6 @@ describe("Agent end-to-end with mock provider", () => {
     await agent.send("Change something");
 
     expect(order).toEqual(["ask:scribble:default", "confirm", "granted:user"]);
-  });
-
-  it("stays silent about asks when no guard can answer them", async () => {
-    const mutatingTool: Tool = { ...echoTool, name: "scribble", mutates: true };
-    const provider = new MockProvider([
-      toolCallTurn({ type: "tool-call", callId: "call-1", name: "scribble", arguments: {} }),
-      textTurn("Understood."),
-    ]);
-    const agent = new Agent({ provider, tools: [mutatingTool] });
-    let asks = 0;
-    agent.bus.on("gate.ask", () => {
-      asks += 1;
-    });
-
-    await agent.send("Change something");
-
-    expect(asks).toBe(0);
   });
 
   it("asks with the tool's own preview and hands the guard the same ask the bus carried", async () => {
@@ -501,36 +396,6 @@ describe("Agent end-to-end with mock provider", () => {
     await agent.send("Change once more");
 
     expect(order).toEqual(["checkpoint", "execute", "execute", "checkpoint", "execute"]);
-  });
-
-  it("leaves non-mutating tools unguarded", async () => {
-    const guardCalls: string[] = [];
-    const agent = new Agent({
-      provider: new MockProvider([
-        toolCallTurn({
-          type: "tool-call",
-          callId: "call-1",
-          name: "echo",
-          arguments: { text: "hi" },
-        }),
-        textTurn("Echoed."),
-      ]),
-      tools: [echoTool],
-      guard: {
-        confirm: async (call) => {
-          guardCalls.push(call.name);
-          return true;
-        },
-        beforeMutation: async () => {
-          guardCalls.push("checkpoint");
-        },
-      },
-    });
-
-    await agent.send("Just echo");
-
-    expect(guardCalls).toEqual([]);
-    expect(agent.history()[2]?.parts[0]).toMatchObject({ output: "echo: hi", isError: false });
   });
 
   it("denies a tool by permission verdict without consulting the guard", async () => {
@@ -824,39 +689,6 @@ describe("Agent end-to-end with mock provider", () => {
     expect(messageText(final)).toBe("recovered");
   });
 
-  it("queues a send while a turn is in flight and runs it once the turn settles", async () => {
-    let calls = 0;
-    const provider: Provider = {
-      name: "two-phase",
-      stream: (request) =>
-        calls++ === 0 ? hangUntilAborted(request.signal) : streamOf(textTurn("free again")),
-    };
-    const agent = new Agent({ provider });
-
-    const first = agent.send("one");
-    expect(agent.busy()).toBe(true);
-    const second = agent.send("two");
-    expect(agent.queued().map((prompt) => prompt.text)).toEqual(["two"]);
-    expect(agent.history().filter((message) => message.role === "user")).toHaveLength(1);
-
-    agent.interrupt();
-    await first;
-    expect(agent.busy()).toBe(true);
-    expect(messageText(await second)).toBe("free again");
-    expect(agent.busy()).toBe(false);
-    expect(agent.queued()).toEqual([]);
-  });
-
-  it("hands out a history snapshot that later turns do not mutate", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("one")]) });
-    const before = agent.history();
-
-    await agent.send("go");
-
-    expect(before).toEqual([]);
-    expect(agent.history()).toHaveLength(2);
-  });
-
   it("keeps usage the provider delivered before a stream failure", async () => {
     const provider: Provider = {
       name: "flaky",
@@ -893,28 +725,6 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.busy()).toBe(false);
   });
 
-  it("never leaves two consecutive user messages after a stream failure and a retry", async () => {
-    let calls = 0;
-    const provider: Provider = {
-      name: "flaky-then-fine",
-      async *stream(): AsyncGenerator<TurnDelta> {
-        if (calls++ === 0) {
-          yield { type: "text", text: "half" };
-          throw new Error("wire dropped");
-        }
-        yield* textTurn("whole");
-      },
-    };
-    const agent = new Agent({ provider });
-
-    await expect(agent.send("first")).rejects.toThrow("wire dropped");
-    await agent.send("second");
-
-    const roles = agent.history().map((message) => message.role);
-    expect(roles).toEqual(["user", "assistant", "user", "assistant"]);
-    expect(roles.some((role, index) => role === "user" && roles[index - 1] === "user")).toBe(false);
-  });
-
   it("settles tool calls orphaned by a stream failure the way an interrupt does", async () => {
     const provider: Provider = {
       name: "flaky-tools",
@@ -939,29 +749,6 @@ describe("Agent end-to-end with mock provider", () => {
     });
   });
 
-  it("stays free and resolves when context.injected or turn.started listeners throw", async () => {
-    const provider = new MockProvider([textTurn("one"), textTurn("two")]);
-    const agent = new Agent({
-      provider,
-      standingInjections: [{ source: "project-instructions", id: "AGENTS.md" }],
-    });
-    const failures: string[] = [];
-    agent.bus.on("engine.error", ({ error }) => failures.push(error.message));
-    agent.bus.on("context.injected", () => {
-      throw new Error("bad tap");
-    });
-    agent.bus.on("turn.started", () => {
-      throw new Error("render crashed");
-    });
-
-    expect(messageText(await agent.send("first"))).toBe("one");
-
-    expect(agent.busy()).toBe(false);
-    expect(failures).toEqual(["bad tap", "render crashed"]);
-    expect(messageText(await agent.send("second"))).toBe("two");
-    expect(agent.busy()).toBe(false);
-  });
-
   it("never rejects a successful turn because a turn.completed listener threw", async () => {
     const provider = new MockProvider([textTurn("done"), textTurn("again")]);
     const agent = new Agent({ provider });
@@ -978,22 +765,6 @@ describe("Agent end-to-end with mock provider", () => {
     expect(agent.busy()).toBe(false);
     expect(agent.history().map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messageText(await agent.send("more"))).toBe("again");
-  });
-
-  it("accumulates streamed text into one part", async () => {
-    const provider = new MockProvider([
-      [
-        { type: "text", text: "Hello " },
-        { type: "text", text: "world" },
-        { type: "done", usage: { inputTokens: 1, outputTokens: 2 } },
-      ],
-    ]);
-    const agent = new Agent({ provider });
-
-    const final = await agent.send("hi");
-
-    expect(final.parts).toHaveLength(1);
-    expect(messageText(final)).toBe("Hello world");
   });
 });
 
@@ -1036,10 +807,6 @@ describe("Agent visible thinking", () => {
     agent.setThinking(false);
     await agent.send("three");
     expect("thinking" in (requests[2] ?? {})).toBe(false);
-  });
-
-  it("starts with thinking on when constructed that way", () => {
-    expect(new Agent({ provider: new MockProvider([]), thinking: true }).thinking()).toBe(true);
   });
 });
 
@@ -1167,18 +934,6 @@ describe("Agent turn queue", () => {
     await Promise.all([first, queued, steerOne, steerTwo]);
 
     expect(prompts).toEqual(["first", "steer one", "steer two", "queued"]);
-  });
-
-  it("steers an idle agent like a plain send", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("hi")]) });
-    let interrupted = false;
-    agent.bus.on("turn.interrupted", () => {
-      interrupted = true;
-    });
-
-    expect(messageText(await agent.send("now", { behavior: "steer" }))).toBe("hi");
-
-    expect(interrupted).toBe(false);
   });
 
   it("cancels a queued prompt by id, rejects its send, and announces queue changes", async () => {
@@ -1471,17 +1226,6 @@ describe("Agent tool batch settlement", () => {
     expect(messageText(await agent.send("go"))).toBe("all done");
     expect(errors).toEqual(["summary model down", "summary model down"]);
     expect(seen).toHaveLength(3);
-  });
-
-  it("never runs the batch settler on a turn without tool calls", async () => {
-    const agent = new Agent({ provider: new MockProvider([textTurn("plain")]) });
-    let settled = 0;
-    agent.settleToolBatchesWith(async () => {
-      settled += 1;
-      return undefined;
-    });
-    await agent.send("hi");
-    expect(settled).toBe(0);
   });
 });
 

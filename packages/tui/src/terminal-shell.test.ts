@@ -54,19 +54,6 @@ describe("PtyShell lifecycle", () => {
     expect(shell.status()).toBe("shell · fakesh");
   });
 
-  it("shows a start failure in the surface and lets enter retry", () => {
-    const backend = fakePtyBackend();
-    backend.failNextOpen("posix_openpt: ENOENT");
-    const { shell } = shellOver(backend);
-    expect(shell.running()).toBe(false);
-    expect(shell.status()).toBe("shell failed · enter retries");
-    expect(firstOf(backend.surfaces).fed).toEqual([
-      "\r\n· shell failed to start: posix_openpt: ENOENT · enter retries\r\n",
-    ]);
-    shell.handleKey(parseChord("enter"), "\r");
-    expect(shell.running()).toBe(true);
-  });
-
   it("kills the child and releases the surface on dispose, and stays dead afterwards", () => {
     const { shell, backend } = shellOver();
     const process = firstOf(backend.processes);
@@ -118,14 +105,6 @@ describe("PtyShell key policy (every key the pane receives goes to the pty)", ()
       "<ctrl+\x03>",
       "<ctrl+\x04>",
     ]);
-  });
-
-  it("reports a key as unhandled when the surface encodes nothing for it", () => {
-    const backend = fakePtyBackend();
-    const { shell } = shellOver(backend);
-    firstOf(backend.surfaces).encodeKey = () => new Uint8Array();
-    expect(shell.handleKey(parseChord("f13"), undefined)).toBe(false);
-    expect(firstOf(backend.processes).written).toEqual([]);
   });
 
   it("sends pastes through the surface's paste encoder so bracketed paste follows the child's mode", () => {

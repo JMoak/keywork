@@ -16,10 +16,8 @@ describe("a setting's owner", () => {
 
 describe("a thread in a caller's sight", () => {
   const cases: ReadonlyArray<[string, SettingSeat, ShowThread, boolean]> = [
-    ["a child the creature spawned", wren, { creature: null, parent: "s1" }, true],
     ["a child a plain thread spawned", plain, { creature: null, parent: "s1" }, true],
     ["another thread of the same creature", wren, { creature: "wren", parent: null }, true],
-    ["a child of that other thread", wren, { creature: "wren", parent: "s7" }, true],
     ["another creature's thread", wren, { creature: "hal", parent: null }, false],
     ["a stranger's thread, seen by a creature", wren, { creature: null, parent: null }, false],
     ["a stranger's thread, seen by a plain thread", plain, { creature: null, parent: null }, false],

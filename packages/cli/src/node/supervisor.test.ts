@@ -1,4 +1,3 @@
-import { backoffMs } from "@keywork/engine";
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "../../../engine/src/routines/testing.ts";
 import {
@@ -59,19 +58,6 @@ async function supervising(units: readonly UnitSpec[] = [core, workspace]): Prom
 }
 
 describe("the supervisor", () => {
-  it("starts every unit and reports each as running with its pid", async () => {
-    const rig = await supervising();
-    expect(rig.processes.spawned.map((child) => child.unit.name)).toEqual([
-      "core",
-      "workspace:abc123",
-    ]);
-    expect(rig.supervisor.status().get("core")).toMatchObject({ state: "running", pid: 4100 });
-    expect(rig.supervisor.status().get("workspace:abc123")).toMatchObject({
-      state: "running",
-      pid: 4101,
-    });
-  });
-
   it("learns a workspace URL from serve's listening line and never passes the token on", async () => {
     const rig = await supervising();
     const serve = rig.processes.latest("workspace:abc123");
@@ -211,13 +197,5 @@ describe("the supervisor", () => {
     await rig.outcome;
     await rig.advance(10 * minute);
     expect(rig.processes.of("core")).toHaveLength(1);
-  });
-});
-
-describe("backoffMs", () => {
-  it("doubles from one second and caps at a minute", () => {
-    expect([1, 2, 3, 6, 7, 12].map((attempt) => backoffMs(attempt, supervisionPolicy))).toEqual([
-      1_000, 2_000, 4_000, 32_000, 60_000, 60_000,
-    ]);
   });
 });

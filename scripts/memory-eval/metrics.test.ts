@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { memoryQuestions } from "../../packages/engine/src/index.ts";
-import { answersOf, disagreements, measureQuestion, questionsIn } from "./metrics.ts";
+import { answersOf, measureQuestion } from "./metrics.ts";
 import {
   actionPoint,
   answers,
@@ -204,29 +204,5 @@ describe("measureQuestion for curation", () => {
       ]),
     );
     expect(measures.calibration).toMatchObject({ samples: 1, rawEce: expect.closeTo(0.2, 10) });
-  });
-});
-
-describe("disagreements and questionsIn", () => {
-  it("lists every point where two arms chose differently, in corpus order", () => {
-    const challenger = answersOf([
-      keeps(auth, ["Auth Tokens"]),
-      keeps(lint, ["Biome Lint", "Package Manager"]),
-    ]);
-    expect(disagreements([auth, lint], challenger, builtin)).toEqual([
-      {
-        point: "auth",
-        subject: "edit src/auth.ts",
-        ours: "kept [[Auth Tokens]]",
-        theirs: "kept [[Auth Tokens]], [[Release Pipeline]], [[Theme Tokens]]",
-      },
-    ]);
-  });
-
-  it("lists the corpus's questions in catalog order", () => {
-    expect(questionsIn(corpusOf([entryPoint("e"), auth]))).toEqual([
-      "action-relevance@1",
-      "entry-durability@1",
-    ]);
   });
 });

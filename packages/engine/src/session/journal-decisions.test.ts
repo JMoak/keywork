@@ -73,16 +73,4 @@ describe("memory decisions on the session journal", () => {
 
     expect(seen).toEqual(["decided", "injected Dock Rule"]);
   });
-
-  it("never re-appends a replayed decision", async () => {
-    const store = await SessionStore.create(join(await tempDir(), "session.jsonl"), "/work");
-    const bus = new EventBus<EngineEvents>();
-    const tap = tapJournal(bus, store);
-
-    bus.emit("memory.decided", { decision, replay: true });
-    await tap.flush();
-    tap.stop();
-
-    expect(store.entries()).toHaveLength(0);
-  });
 });

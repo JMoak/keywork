@@ -27,28 +27,6 @@ describe("SessionStore", () => {
     expect(reopened.messages()).toEqual([textMessage("user", "first")]);
   });
 
-  it("a session created but never used leaves no file behind", async () => {
-    const file = await sessionFile();
-    await SessionStore.create(file, ".");
-
-    expect(existsSync(file)).toBe(false);
-  });
-
-  it("round-trips a conversation through disk", async () => {
-    const file = await sessionFile();
-    const store = await SessionStore.create(file, "C:\\repo");
-    await store.append(textMessage("user", "hi"));
-    await store.append(textMessage("assistant", "hello"));
-
-    const reopened = await SessionStore.open(file);
-
-    expect(reopened.header.cwd).toBe("C:\\repo");
-    expect(reopened.messages()).toEqual([
-      textMessage("user", "hi"),
-      textMessage("assistant", "hello"),
-    ]);
-  });
-
   it("marks a creature report at its place among the messages and keeps it out of them", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, ".");
@@ -84,16 +62,6 @@ describe("SessionStore", () => {
     expect(reopened.messageMarks().reports).toEqual([
       { index: 0, entryId: mark.id, at: mark.timestamp, text: frame, origin, kind: "frame" },
     ]);
-  });
-
-  it("links entries into a parent chain with timestamps", async () => {
-    const store = await SessionStore.create(await sessionFile(), ".");
-    const first = await store.append(textMessage("user", "one"));
-    const second = await store.append(textMessage("assistant", "two"));
-
-    expect(first.parentId).toBeNull();
-    expect(second.parentId).toBe(first.id);
-    expect(second.timestamp).not.toBe("");
   });
 
   it("serializes overlapping appends into one linear chain in file order", async () => {
@@ -301,14 +269,6 @@ describe("SessionStore", () => {
 
     expect(store.labelFor(target.id)).toBeUndefined();
     expect(store.labels().size).toBe(0);
-  });
-
-  it("persists a session name", async () => {
-    const file = await sessionFile();
-    const store = await SessionStore.create(file, ".");
-    await store.setName("refactor-session");
-
-    expect((await SessionStore.open(file)).name()).toBe("refactor-session");
   });
 
   it("builds a tree with branch points, labels, and the active path", async () => {

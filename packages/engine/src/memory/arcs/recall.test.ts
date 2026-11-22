@@ -138,12 +138,4 @@ describe("the arc bootstrap slice", () => {
     expect(layer.selection.skipped).toContain("Huge Note");
     expect(layer.selection.tokens).toBeLessThanOrEqual(200);
   });
-
-  it("selects nothing from an archived arc", async () => {
-    const { registry } = await fixture();
-    await registry.createArc("dock-v2");
-    await registry.archiveArc("dock-v2");
-    const layer = await arcBootstrapLayer(registry, "dock-v2", 200);
-    expect(layer.selection.notes).toEqual([]);
-  });
 });

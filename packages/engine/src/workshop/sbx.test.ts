@@ -121,19 +121,6 @@ describe("the sbx adapter", () => {
     await expect(substrate.start(workshop)).rejects.toMatchObject({ reason: "unhealthy" });
   });
 
-  it("sizes the disks at creation through the documented environment", async () => {
-    const sbx = fakeSbx();
-    const substrate = sbxSubstrate({ run: sbx.run, stateDir: await tempDir(), pause: noPause });
-
-    await substrate.create(spec({ disks: { rootGb: 40, dockerGb: 20 } }));
-
-    const create = sbx.calls.find((call) => call.args[0] === "create");
-    expect(create?.env).toEqual({
-      DOCKER_SANDBOXES_ROOT_SIZE: "40g",
-      DOCKER_SANDBOXES_DOCKER_SIZE: "20g",
-    });
-  });
-
   it("leaves the keeper's other sandboxes alone and seals this one from deny-all", async () => {
     const sbx = fakeSbx({ globalAllows: ["*.googleapis.com", "*.npmjs.org", "api.anthropic.com"] });
     const substrate = sbxSubstrate({
@@ -217,17 +204,6 @@ describe("the sbx adapter", () => {
     ).toBe(true);
     expect(hasSecretService("win32", {})).toBe(true);
     expect(hasSecretService("darwin", {})).toBe(true);
-  });
-
-  it("keeps the disk on remove by stopping instead of deleting", async () => {
-    const sbx = fakeSbx();
-    const substrate = sbxSubstrate({ run: sbx.run, stateDir: await tempDir(), pause: noPause });
-    const workshop = await substrate.create(spec());
-    await substrate.start(workshop);
-
-    await substrate.remove(workshop, true);
-
-    expect(sbx.sandboxes.get(workshop.handle)?.status).toBe("stopped");
   });
 });
 

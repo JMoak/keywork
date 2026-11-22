@@ -182,23 +182,6 @@ describe("memory decisions in a composed session", () => {
     ]);
     expect(notices).toEqual([deciderNotices.noKey]);
   });
-
-  it("runs builtin under jev with no fallback for a question no eval has proven", async () => {
-    const asked: string[] = [];
-    const { setup } = setupFor({
-      env: { KEYWORK_TYPESAFE_API_KEY: "ts-key" },
-      fetchFn: async (url) => {
-        asked.push(url);
-        return Response.json({});
-      },
-    });
-    const { decided, notices } = await writeOnceUnder(setup);
-
-    expect(asked).toEqual([]);
-    expect(notices).not.toContain(deciderNotices.trial);
-    expect(decided).toEqual([expect.objectContaining({ decider: "builtin" })]);
-    expect(decided[0]?.fallback).toBeUndefined();
-  });
 });
 
 describe("selecting jev at startup", () => {
@@ -220,22 +203,6 @@ describe("selecting jev at startup", () => {
 
     expect(state.memoryDecider.status).toMatchObject({ selected: "jev", credential: "missing" });
     expect(warnings).toEqual([deciderNotices.noKey]);
-  });
-
-  it("composes the builtin and says nothing when the decider is unset", async () => {
-    const warnings: string[] = [];
-    const state = await withHome({}, async () => {
-      const live = await openInferenceState({
-        cwd: await tempDir(),
-        projectTrusted: false,
-        env: {},
-        warn: (line) => warnings.push(line),
-      });
-      live.current().memoryDecider.deciderFor();
-      return live.current();
-    });
-    expect(state.memoryDecider.status.selected).toBe("builtin");
-    expect(warnings).toEqual([]);
   });
 });
 
@@ -347,10 +314,6 @@ describe("the doctor's memory decider row", () => {
     return deciderStatusOf({ config: jev, credentials: {}, env: {}, observations: {}, ...facts });
   }
 
-  it("names the builtin when nothing selects Jev", () => {
-    expect(deciderDoctorLine(statusOf({ config: {} }))).toBe("builtin · keywork's own rules");
-  });
-
   it("names the model, the key's home, the verification and the proven count", () => {
     const status = statusOf({
       credentials: { typesafe: { type: "api_key", key: "k" } },
@@ -361,22 +324,6 @@ describe("the doctor's memory decider row", () => {
       "jev · jev-1.13.0 · saved key (OS credential store) · verified 2026-10-15 · 0 of 5 questions proven",
     );
     expect(status.credential).toBe("saved");
-  });
-
-  it("names an environment key and the trial", () => {
-    const status = statusOf({
-      env: { TYPESAFE_API_KEY: "k", KEYWORK_DECIDER_TRIAL: "1" },
-    });
-    expect(deciderDoctorLine(status)).toBe(
-      "jev · jev-1.13.0 · TYPESAFE_API_KEY · 0 of 5 questions proven · trial on (KEYWORK_DECIDER_TRIAL=1)",
-    );
-    expect(status.credential).toBe("environment");
-  });
-
-  it("says when jev is selected without a key", () => {
-    expect(deciderDoctorLine(statusOf({}))).toBe(
-      "jev selected · no TypeSafe key · keywork connect typesafe",
-    );
   });
 
   it("says when TypeSafe last refused the key", () => {

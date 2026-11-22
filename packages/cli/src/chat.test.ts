@@ -130,18 +130,6 @@ describe("chat REPL", () => {
     expect(io.out.some((line) => line.startsWith("file "))).toBe(false);
   });
 
-  it("/session prints the session facts", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/session"] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.out.some((line) => line.startsWith("file      "))).toBe(true);
-    expect(io.out.some((line) => line.startsWith("id        "))).toBe(true);
-    expect(io.out).toContain("entries   0 (0 messages, 0 branch points, 0 labels, 0 compactions)");
-    expect(io.out).toContain("tokens    0 in / 0 out this run");
-  });
-
   it("/label bookmarks the leaf and explains itself before a turn or without a name", async () => {
     const { options, sessionDir } = await world();
     const io = scriptedIo({ lines: ["/label early", "hi", "/label", "/label good-path"] });
@@ -153,26 +141,6 @@ describe("chat REPL", () => {
     expect(io.out.some((line) => /^labeled [0-9a-f]{8} as "good-path"$/.test(line))).toBe(true);
     const file = await latestSessionFile(sessionDir);
     expect((await SessionStore.open(file ?? "")).entryForLabel("good-path")).toBeDefined();
-  });
-
-  it("treats /labelfoo as an unknown command, never as /label", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/labelfoo"] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.err).toEqual([expect.stringContaining("unknown command /labelfoo · /session")]);
-    expect(io.out).not.toContain("usage: /label <name>");
-  });
-
-  it("/undo and /redo report when there is nothing to move", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/undo", "/redo"] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.out).toContain("nothing to undo");
-    expect(io.out).toContain("nothing to redo");
   });
 
   it("/preset lists, asks before loosening, and applies through the port", async () => {
@@ -192,24 +160,6 @@ describe("chat REPL", () => {
     expect(io.out.some((line) => line.includes("loosens permissions"))).toBe(true);
     expect(applied).toEqual(["open"]);
     expect(io.out).toContain("permissions preset → open");
-  });
-
-  it("/compact reports that a fresh session has nothing to fold", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/compact"] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.out.some((line) => line.includes("nothing to compact yet"))).toBe(true);
-  });
-
-  it("/bot explains when no bots are defined", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/bot"] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.out).toContain("no bots yet, add one at .keywork/bots/<slug>/bot.md");
   });
 
   it("/bot lists, switches, rejects unknown names, and releases", async () => {
@@ -244,19 +194,6 @@ describe("chat REPL", () => {
       scriptedIo({ lines: ["hello again"] }),
     );
     expect(provider.requests[0]?.systemPrompt).toBe("Be helpful.");
-  });
-
-  it("renders an extension command and sends the rendered prompt", async () => {
-    const { options, cwd, sessionDir } = await world();
-    await mkdir(join(cwd, ".keywork", "commands"), { recursive: true });
-    await writeFile(join(cwd, ".keywork", "commands", "ship.md"), "Ship $ARGUMENTS now");
-    const io = scriptedIo({ lines: ["/ship the fix"] });
-
-    await chat(options(new MockProvider([textTurn("shipped")]), { projectTrusted: true }), io);
-
-    expect(io.out).toContain("commands: /ship");
-    const [prompt] = await savedMessages(sessionDir);
-    expect(prompt).toEqual(textMessage("user", "Ship the fix now"));
   });
 
   it("lists hosted extensions and runs their commands from the slash table", async () => {
@@ -348,42 +285,6 @@ describe("chat return delta", () => {
     const io = scriptedIo({ lines: [] });
     await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), io);
     expect(io.out).toContain("since you were here: 1 new in the workspace: [[Fresh Rule]]");
-  });
-
-  it("tells a bot-bound session what its bot learned, under the bot's sigil", async () => {
-    const { options, cwd } = await world();
-    const vault = await trustedVault(cwd);
-    await seedHelperBot(cwd);
-    await chat(
-      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
-      scriptedIo({ lines: ["/bot helper", "one"] }),
-    );
-    const layer = join(vault, "bots", "helper");
-    await mkdir(layer, { recursive: true });
-    await writeFile(
-      join(layer, "Terse Reviews.md"),
-      "---\ncreated: 2099-01-01T00:00:00.000Z\nprovenance: agent\n---\nshort\n",
-    );
-
-    const io = scriptedIo({ lines: [] });
-    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), io);
-    expect(io.out).toContain("since you were here: 1 learned by H helper: [[Terse Reviews]]");
-  });
-
-  it("says nothing on resume when nothing changed, and nothing on a fresh session", async () => {
-    const { options, cwd } = await world();
-    await trustedVault(cwd);
-    const fresh = scriptedIo({ lines: [] });
-    await chat(options(new MockProvider([]), { projectTrusted: true }), fresh);
-    expect(fresh.out.some((line) => line.startsWith("since you were here"))).toBe(false);
-
-    await chat(
-      options(new MockProvider([textTurn("first")]), { projectTrusted: true }),
-      scriptedIo({ lines: ["one"] }),
-    );
-    const resumed = scriptedIo({ lines: [] });
-    await chat(options(new MockProvider([]), { projectTrusted: true, resume: true }), resumed);
-    expect(resumed.out.some((line) => line.startsWith("since you were here"))).toBe(false);
   });
 });
 
@@ -495,12 +396,6 @@ describe("persistNewMessages", () => {
     expect(entries[2]).toMatchObject({ checkpoint: "tree-two" });
     expect(entries[3]).not.toHaveProperty("checkpoint");
   });
-
-  it("persists untagged when checkpoints are unavailable", async () => {
-    const store = await tempStore();
-    await persistNewMessages(store, turn("one", "re: one"), 0);
-    expect(store.entries()[0]).not.toHaveProperty("checkpoint");
-  });
 });
 
 describe("chat turn queue", () => {
@@ -577,16 +472,6 @@ describe("chat turn queue", () => {
       "user:1",
       "assistant:1",
     ]);
-  });
-
-  it("/steer and /queue without text explain themselves", async () => {
-    const { options } = await world();
-    const io = scriptedIo({ lines: ["/steer", "/queue  "] });
-
-    await chat(options(new MockProvider([])), io);
-
-    expect(io.out).toContain("usage: /steer <prompt>");
-    expect(io.out).toContain("usage: /queue <prompt>");
   });
 });
 

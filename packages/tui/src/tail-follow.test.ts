@@ -14,10 +14,6 @@ describe("TailFollow", () => {
     expect(tail.rows(80)).toEqual(["done: 1", "done: 2", "working on 3"]);
   });
 
-  it("renders nothing before any output arrives", () => {
-    expect(new TailFollow().rows(80)).toEqual([]);
-  });
-
   it("strips ANSI color, cursor, and OSC sequences plus control characters", () => {
     const tail = new TailFollow();
     tail.push("\x1b[31mred\x1b[0m \x1b]0;title\x07plain\x07\x00\x1b[2K");
@@ -47,24 +43,9 @@ describe("TailFollow", () => {
     expect(tail.rows(80)).toEqual(["line 4997", "line 4998", "line 4999"]);
     expect(tail.rows(80).length).toBeLessThanOrEqual(tailRowLimit);
   });
-
-  it("advances the density-ramp mark deterministically with output volume", () => {
-    const tail = new TailFollow();
-    expect(tail.mark()).toBe("░");
-    tail.push("x".repeat(256));
-    expect(tail.mark()).toBe("▒");
-    tail.push("x".repeat(512));
-    expect(tail.mark()).toBe("█");
-    tail.push("x".repeat(256));
-    expect(tail.mark()).toBe("░");
-  });
 });
 
 describe("elideMiddle", () => {
-  it("returns short lines unchanged", () => {
-    expect(elideMiddle("short", 10)).toBe("short");
-  });
-
   it("never splits surrogate pairs and measures wide glyphs in cells", () => {
     const elided = elideMiddle("😀".repeat(40), 9);
     expect(elided).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);

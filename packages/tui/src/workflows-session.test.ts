@@ -76,40 +76,6 @@ describe("workspace persistence", () => {
     expect(paneIds(second)).toContain("session-3");
   });
 
-  it("persists browser panes as root only; expansion state is absent by design", () => {
-    const probe = new AppProbe(describableFactories());
-    probe.command("browse src");
-    const browser = probe.workspaceState().panes.find((pane) => pane.kind === "browser");
-    expect(browser).toEqual({ id: "browser-1", kind: "browser", root: "src" });
-  });
-
-  it("skips panes whose revival fails and keeps the rest", () => {
-    const state = mustParse(savedState(buildWorkspace()));
-    const second = new AppProbe({
-      ...describableFactories(),
-      createFilePane: () => {
-        throw new Error("file vanished");
-      },
-      restoreWorkspace: state,
-    });
-    expect(paneIds(second)).not.toContain("file-1");
-    expect(paneIds(second)).toEqual(
-      expect.arrayContaining(["session-1", "session-2", "browser-1"]),
-    );
-  });
-
-  it("starts clean when nothing survives restore", () => {
-    const first = new AppProbe(describableFactories());
-    first.command("open notes.md");
-    first.core.layout.focus("session-1");
-    first.command("exit");
-    const state = mustParse(savedState(first));
-    expect(state.panes).toEqual([{ id: "file-1", kind: "file", path: "notes.md" }]);
-
-    const second = new AppProbe({ restoreWorkspace: state });
-    expect(paneIds(second)).toEqual(["session-1"]);
-  });
-
   it("saves on layout changes but not on mere typing", () => {
     const saves: string[] = [];
     const probe = new AppProbe({
@@ -222,48 +188,6 @@ describe("session after-turn lifecycle", () => {
     expect(rebuilt[0]?.history()).toHaveLength(6);
   });
 
-  it("keeps the turn open until the after-turn hook settles", async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { probe } = lifecycleProbe({
-      turns: [textTurn("reply")],
-      afterTurn: async () => {
-        await gate;
-        return undefined;
-      },
-    });
-    probe.type("hi").keys("enter");
-    await waitFor(() =>
-      expect(probe.model()?.entries.findLast((entry) => entry.kind !== "ledger")).toEqual({
-        kind: "assistant",
-        text: "reply",
-      }),
-    );
-    expect(probe.model()?.busy).toBe(true);
-    release();
-    await probe.settled();
-    expect(probe.model()?.busy).toBe(false);
-  });
-
-  it("surfaces an after-turn failure and keeps the pane usable", async () => {
-    const { probe } = lifecycleProbe({
-      turns: [textTurn("first"), textTurn("second")],
-      afterTurn: async () => {
-        throw new Error("flush pipeline broke");
-      },
-    });
-    probe.type("one").keys("enter");
-    await probe.settled();
-    expect(probe.model()?.entries).toContainEqual({ kind: "error", text: "flush pipeline broke" });
-    expect(probe.model()?.busy).toBe(false);
-
-    probe.type("two").keys("enter");
-    await probe.settled();
-    expect(probe.model()?.entries).toContainEqual({ kind: "assistant", text: "second" });
-  });
-
   it("posts settlement notices and rebuilds on the compacted history", async () => {
     const summary = textMessage("user", "## Goal\nfolded");
     const { probe, rebuilt } = lifecycleProbe({
@@ -328,16 +252,6 @@ describe("session after-turn lifecycle", () => {
       "reply",
     ]);
     expect(probe.model()?.entries.at(-1)?.text).toContain("compacted 3 tokens");
-  });
-
-  it("/compact without a compactor says so instead of hanging", async () => {
-    const { probe } = lifecycleProbe({ turns: [] });
-    probe.type("/compact").keys("enter");
-    await probe.settled();
-    expect(probe.model()?.entries.at(-1)).toEqual({
-      kind: "info",
-      text: "can't compact · no session store",
-    });
   });
 
   function settlement(

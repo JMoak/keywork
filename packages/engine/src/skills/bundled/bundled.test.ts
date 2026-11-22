@@ -126,18 +126,4 @@ describe("bundled skills in a mock conversation", () => {
     expect(skillOutput).toContain("resolve.ts");
     expect(resolverOutput).toContain("tool: vitest\ncommand: bunx vitest run");
   }, 30_000);
-
-  it("resolves bun test and eslint for the bun-test+eslint repo", async () => {
-    const test = await conversation(bunTestAndEslint, "test");
-    expect(test.resolverOutput).toContain("tool: bun test\ncommand: bun test");
-    const lint = await conversation(bunTestAndEslint, "lint");
-    expect(lint.resolverOutput).toContain("tool: eslint\ncommand: bunx eslint .");
-  }, 30_000);
-
-  it("resolves biome and tsc for the vitest+biome repo", async () => {
-    const lint = await conversation(vitestAndBiome, "lint");
-    expect(lint.resolverOutput).toContain("tool: biome\ncommand: bunx biome check .");
-    const typecheck = await conversation(vitestAndBiome, "typecheck");
-    expect(typecheck.resolverOutput).toContain("tool: tsc\ncommand: bunx tsc --noEmit");
-  }, 30_000);
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { Provider, ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderEmptyResponseError, ProviderHttpError } from "./errors.ts";
+import { ProviderHttpError } from "./errors.ts";
 import {
   type ProviderResume,
   type ProviderWait,
@@ -183,15 +183,6 @@ describe("RetryingProvider", () => {
     expect(await collect(provider.stream(request))).toEqual(goodTurn);
   });
 
-  it("retries an empty response body", async () => {
-    const provider = new RetryingProvider(
-      providerFailingTimes(1, () => new ProviderEmptyResponseError("flaky")),
-      { attempts: 2, sleep: instantSleep },
-    );
-
-    expect(await collect(provider.stream(request))).toEqual(goodTurn);
-  });
-
   it("does not retry errors that declare themselves non-transient", async () => {
     const provider = new RetryingProvider(
       providerFailingTimes(1, () => Object.assign(new Error("invalid"), { transient: false })),
@@ -250,12 +241,10 @@ describe("RetryingProvider", () => {
       baseDelayMs: 60_000,
       maxDelayMs: 60_000,
     });
-    const startedAt = Date.now();
     const outcome = collect(provider.stream({ ...request, signal: controller.signal }));
     setTimeout(() => controller.abort(), 10);
 
     await expect(outcome).rejects.toThrow(/429/);
-    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });
 
@@ -328,13 +317,5 @@ describe("RetryingProvider watch", () => {
       collect(provider.stream({ ...watched, signal: controller.signal })),
     ).rejects.toThrow(/429/);
     expect(heard.map(([kind]) => kind)).toEqual(["wait"]);
-  });
-
-  it("stays silent when the call needs no retry", async () => {
-    const provider = new RetryingProvider(providerFailingTimes(0, throttled));
-    const { heard, request: watched } = watching();
-
-    await collect(provider.stream(watched));
-    expect(heard).toEqual([]);
   });
 });

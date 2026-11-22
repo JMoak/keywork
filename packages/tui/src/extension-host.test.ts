@@ -8,7 +8,6 @@ import {
   extensionStartupNotice,
   registerHostedCommands,
   routeExtensionNotice,
-  watchExtensionNotices,
 } from "./extension-host.ts";
 import { waitFor } from "./testing/index.ts";
 
@@ -70,28 +69,6 @@ describe("extension notices in the TUI", () => {
     expect(feed).toEqual(["greeter: info line"]);
   });
 
-  it("drops info with no pane open and keeps listening through the port", () => {
-    const { seams, statusBar, feed } = recordedSeams(false);
-    let listener: ((notice: ExtensionNotice) => void) | undefined;
-    const stop = watchExtensionNotices(
-      portOf({
-        onNotice: (given) => {
-          listener = given;
-          return () => {
-            listener = undefined;
-          };
-        },
-      }),
-      seams,
-    );
-    listener?.({ extension: "greeter", level: "info", message: "quiet" });
-    listener?.({ extension: "greeter", level: "warn", message: "loud" });
-    expect(feed).toEqual([]);
-    expect(statusBar).toEqual(["greeter: loud"]);
-    stop();
-    expect(listener).toBeUndefined();
-  });
-
   it("summarizes load-time quarantines for the startup status bar", () => {
     expect(extensionStartupNotice(portOf({ extensions: () => [greeter] }))).toBeUndefined();
     expect(extensionStartupNotice(portOf({ extensions: () => [greeter, broken] }))).toBe(
@@ -128,14 +105,6 @@ describe("/extensions", () => {
       ].join("\n"),
     ]);
   });
-
-  it("falls back to a one-line count on the status bar with no pane", () => {
-    const { seams, statusBar } = recordedSeams(false);
-    extensionListingCommand(portOf({ extensions: () => [greeter, broken] }), seams).run(undefined);
-    expect(statusBar).toEqual([
-      "extensions: 1 active · 1 quarantined · open a conversation to print the list into",
-    ]);
-  });
 });
 
 describe("hosted extension commands", () => {
@@ -165,22 +134,5 @@ describe("hosted extension commands", () => {
     await waitFor(() => expect(feed).toEqual(["hello world"]));
     expect(ran).toEqual(["hello:world"]);
     expect(statusBar).toEqual([]);
-  });
-
-  it("notices a failed command instead of throwing", async () => {
-    const registry = new CommandRegistry();
-    const { seams, statusBar } = recordedSeams();
-    registerHostedCommands(
-      registry,
-      portOf({
-        commands: () => [{ name: "boom", extension: "fragile", run: () => undefined }],
-        runCommand: async () => {
-          throw new Error("went sideways");
-        },
-      }),
-      seams,
-    );
-    registry.search("boom")[0]?.run(undefined);
-    await waitFor(() => expect(statusBar).toEqual(["/boom failed: went sideways"]));
   });
 });

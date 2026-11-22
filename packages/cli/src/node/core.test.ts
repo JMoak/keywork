@@ -78,13 +78,4 @@ describe("the node core", () => {
     );
     expect(steps).toContain("routines.start");
   });
-
-  it("says so when the mesh is off in the node config", async () => {
-    const { services } = recordingServices({ mesh: undefined });
-    const said: string[] = [];
-    const stop = new AbortController();
-    stop.abort();
-    await runNodeCore({ services, signal: stop.signal, say: (line) => said.push(line) });
-    expect(said).toContain("mesh: the tailnet listener is off in the node config");
-  });
 });

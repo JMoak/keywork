@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import process from "node:process";
 
 type Json = Record<string, unknown>;
@@ -52,10 +52,6 @@ function main(): void {
   if (profile === "silent") {
     setInterval(() => {}, 60_000);
     return;
-  }
-  if (profile === "crash-once" && markerPath !== undefined && !existsSync(markerPath)) {
-    writeFileSync(markerPath, "crashed");
-    process.exit(1);
   }
   if (profile === "leaky" && markerPath !== undefined) {
     const grandchild = spawn(process.execPath, [process.argv[1] ?? "", "silent"], {

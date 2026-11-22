@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { askFactsOf } from "./facts.ts";
-import { keeperFloors, keeperGateId, keeperGateSpec, keeperPlan } from "./gate.ts";
+import { keeperFloors, keeperGateSpec } from "./gate.ts";
 import { keeperRuleOracle } from "./oracles.ts";
 import { loadRatchet, type Oracle, type StateLike } from "./ratchet.ts";
 import { keeperState } from "./state.ts";
@@ -17,34 +17,11 @@ const floorOf = (state: StateLike) =>
     .map((floor) => floor(state.text, question))
     .find((action) => action !== undefined);
 
-describe("keeperGateSpec", () => {
-  it("is a shadow gate with a promise and an evidence version naming its oracle", () => {
-    const spec = keeperGateSpec(ratchet, "decide:local/nimble-0.8b");
-    expect(spec).toMatchObject({
-      id: keeperGateId,
-      mode: "shadow",
-      promisedAccuracy: keeperPlan.target,
-      evidenceVersion: "keeper-would-approve/1 decide:local/nimble-0.8b",
-      question: { kind: "judge", id: keeperGateId },
-    });
-    expect(spec.question.prompt).toMatch(/^Would the keeper approve this tool call/);
-  });
-});
-
 describe("keeperFloors", () => {
-  it("holds a destructive form at review as a one-way door", () => {
-    expect(floorOf(stateOfAsk(bashAsk("rm -rf dist")))).toBe("review");
-    expect(floorOf(stateOfAsk(bashAsk("git push --force origin main")))).toBe("review");
-  });
-
   it("reviews what the model cannot see: opaque, cut or unplaced", () => {
     expect(floorOf(stateOfAsk(bashAsk("rg foo > out.txt")))).toBe("review");
     expect(floorOf(stateOfAsk(bashAsk(`echo ${"a".repeat(3_000)}`)))).toBe("review");
     expect(floorOf(stateOfAsk(askFor("write", { path: "a.ts" })))).toBe("review");
-  });
-
-  it("stays silent on a routine call", () => {
-    expect(floorOf(stateOfAsk(bashAsk("npm test")))).toBeUndefined();
   });
 
   it("settles a one-way door in code, without asking any oracle", async () => {

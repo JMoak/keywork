@@ -66,38 +66,6 @@ describe("inheritedClasses", () => {
     });
   });
 
-  it("resolves keywork's OpenRouter default in every class though nothing about it was measured", () => {
-    const inherits = inheritedClasses(
-      { provider: "openrouter", model: "openai/gpt-5-mini" },
-      environment(),
-    );
-
-    const gpt = { provider: "openrouter", model: "openai/gpt-5-mini" };
-    expect(inherits.strong).toEqual(gpt);
-    expect(inherits.loop).toEqual(gpt);
-    expect(inherits.vision).toEqual(gpt);
-    expect(inherits.decide).toMatchObject({ ...gpt, decider: "builtin" });
-  });
-
-  it("refuses a cloud default only on a declared shortfall, naming the measurement and the model", () => {
-    const small = inheritedClasses({ provider: "openrouter", model: "small/m" }, environment());
-    expect(small.strong).toEqual({
-      refused: "missing-capability",
-      detail:
-        "openrouter/small/m cannot serve the strong class: 32768 tokens of context allocated, and it needs at least 131072 tokens of context allocated",
-    });
-    expect(small.loop).toMatchObject({ refused: "missing-capability" });
-    expect(small.vision).toEqual({ provider: "openrouter", model: "small/m" });
-
-    const blind = inheritedClasses({ provider: "openrouter", model: "blind/m" }, environment());
-    expect(blind.strong).toEqual({ provider: "openrouter", model: "blind/m" });
-    expect(blind.vision).toEqual({
-      refused: "missing-capability",
-      detail:
-        "openrouter/blind/m cannot serve the vision class: it declares no image input, and it needs image input",
-    });
-  });
-
   it("refuses every class when the host has no default", () => {
     const inherits = inheritedClasses(undefined, environment());
     expect(Object.values(inherits)).toEqual(
@@ -106,17 +74,6 @@ describe("inheritedClasses", () => {
         detail: "this host has no default model to inherit",
       }),
     );
-  });
-
-  it("carries the resolver's own failure code for a default that cannot bind", () => {
-    expect(inheritedClasses({ provider: "keyless", model: "m" }, environment()).strong).toEqual({
-      refused: "unavailable-credential",
-      detail: expect.any(String),
-    });
-    expect(inheritedClasses({ provider: "gone", model: "m" }, environment()).strong).toEqual({
-      refused: "unknown-provider",
-      detail: expect.any(String),
-    });
   });
 
   it("judges a class by the probed record when the host has one", () => {

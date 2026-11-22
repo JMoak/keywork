@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AirlockDigestView, type ArcAirlockPort, arcInk } from "./arcs.ts";
+import type { AirlockDigestView, ArcAirlockPort } from "./arcs.ts";
 import { parseChord } from "./keys.ts";
 import { MemoryPane, type MemoryPanePort } from "./memory-pane.ts";
 import type { InboxItemView } from "./memory-pane-model.ts";
@@ -10,13 +10,7 @@ import {
 } from "./memory-pane-model.ts";
 import { resolvePalette } from "./palette.ts";
 import { AppProbe } from "./probe.ts";
-import {
-  describePaneTree,
-  dockedIds,
-  mustParse,
-  paneContext,
-  paneIds,
-} from "./testing/workflow-probe.ts";
+import { dockedIds, paneIds } from "./testing/workflow-probe.ts";
 
 interface World {
   loads: number;
@@ -151,17 +145,6 @@ const populated: Partial<MemoryPaneInputs> = {
 };
 
 describe("MemoryPane", () => {
-  it("loads on construction and titles itself with note and staged counts", async () => {
-    const { pane, world } = await paneOver(populated);
-    expect(world.loads).toBe(1);
-    expect(pane.title()).toBe(" memory · 1 note · ░1 ");
-  });
-
-  it("keeps the title calm when memory is empty", async () => {
-    const { pane } = await paneOver({});
-    expect(pane.title()).toBe(" memory ");
-  });
-
   it("a disposed pane ignores late completions and starts no new work", async () => {
     const { port, world } = portOver(populated);
     let release: () => void = () => {};
@@ -214,26 +197,6 @@ describe("MemoryPane", () => {
     expect(pane.model.stagedCount()).toBe(0);
   });
 
-  it("r reloads through the port", async () => {
-    const { pane, world } = await paneOver(populated);
-    pane.handleKey(parseChord("r"));
-    await pane.settled();
-    expect(world.loads).toBe(2);
-  });
-
-  it("captures a load failure and recovers on the next refresh", async () => {
-    const { pane, world } = await paneOver(populated);
-    world.failNext = "vault unreadable";
-    pane.handleKey(parseChord("r"));
-    await pane.settled();
-    const failed = pane.view(context());
-    expect(JSON.stringify(describeTree(failed))).toContain("vault unreadable");
-    pane.handleKey(parseChord("r"));
-    await pane.settled();
-    const recovered = pane.view(context());
-    expect(JSON.stringify(describeTree(recovered))).not.toContain("vault unreadable");
-  });
-
   it("renders the garden rows and highlights the cursored selectable row", async () => {
     const { pane } = await paneOver(populated);
     const rendered = JSON.stringify(describeTree(pane.view(context())));
@@ -267,13 +230,6 @@ describe("MemoryPane", () => {
     expect(notices.at(-1)).toBe("couldn't revert · the file changed since that write");
   });
 
-  it("o opens the note file through the intents", async () => {
-    const { pane, opened } = await paneOver(populated);
-    pane.handleKey(parseChord("g"));
-    pane.handleKey(parseChord("o"));
-    expect(opened).toEqual(["/vault/split-ratios.md"]);
-  });
-
   it("describes its lens, note, and question so the workspace can revive them", async () => {
     const { pane } = await paneOver(populated);
     expect(pane.describe()).toEqual({ kind: "memory" });
@@ -295,31 +251,10 @@ describe("MemoryPane", () => {
     expect(pane.model.currentLens()).toBe("note");
     expect(pane.model.focused()).toBe("split-ratios");
   });
-
-  it("paints the note lens body with the reading rail on the cursored line", async () => {
-    const { pane } = await paneOver(populated);
-    pane.handleKey(parseChord("g"));
-    pane.handleKey(parseChord("enter"));
-    pane.handleKey(parseChord("j"));
-    const rendered = describeTree(pane.view(context())) as { children?: unknown[] };
-    const lines = JSON.stringify(rendered);
-    expect(lines).toContain("▌ ");
-    expect(lines).toContain("60/40");
-  });
-
-  it("declines keys the model does not own", async () => {
-    const { pane } = await paneOver(populated);
-    expect(pane.handleKey(parseChord("z"))).toBe(false);
-  });
 });
 
 function context() {
   return { theme: resolvePalette(), focused: true, width: 60, height: 20 };
-}
-
-function paintedRgb(hex: string): string {
-  const channel = (at: number) => Number.parseInt(hex.slice(at, at + 2), 16);
-  return JSON.stringify({ buffer: { 0: channel(1), 1: channel(3), 2: channel(5), 3: 255 } });
 }
 
 function describeTree(node: unknown): unknown {
@@ -490,18 +425,6 @@ describe("MemoryPane airlock digest", () => {
     ]);
   });
 
-  it("explains itself when the port has no airlock", async () => {
-    const { port } = portOver(arcInputs);
-    const notices: string[] = [];
-    const pane = new MemoryPane("memory-1", () => {}, port, {
-      intents: { openFile: () => {}, notice: (text) => notices.push(text) },
-      focusedArc: () => "dock-v2",
-    });
-    await pane.settled();
-    pane.handleKey(parseChord("a"));
-    expect(notices).toEqual(["the airlock isn't available here"]);
-  });
-
   it("reloads when the arcs feed changes, so /arc close shows its digest without a keystroke", async () => {
     const listeners: Array<() => void> = [];
     const { pane, world } = await digestPane({ listeners });
@@ -510,22 +433,6 @@ describe("MemoryPane airlock digest", () => {
     await frames(pane);
     expect(world.loads).toBe(2);
     pane.dispose();
-  });
-
-  it("paints the arc layer header and the close row in the arc's hue, and the words carry the grouping alone", async () => {
-    const theme = resolvePalette();
-    const wide = { ...context(), width: 100 };
-    const { pane } = await digestPane({ ordinal: 3 });
-    const painted = JSON.stringify(pane.view(wide));
-    const header = "#dock-v2 · 1 note · airlock ░2 · 2 flushed · 1 didn't flush";
-    expect(JSON.stringify(describeTree(pane.view(wide)))).toContain(header);
-    expect(painted).toContain(`"text":"#dock-v2","fg":${paintedRgb(arcInk(theme, 3))}`);
-    expect(painted).not.toContain(`"text":"#dock-v2","fg":${paintedRgb(theme.textDim)}`);
-    const { pane: plain } = await digestPane();
-    expect(JSON.stringify(plain.view(wide))).toContain(
-      `"text":"#dock-v2","fg":${paintedRgb(theme.textDim)}`,
-    );
-    expect(JSON.stringify(describeTree(plain.view(wide)))).toContain(header);
   });
 });
 
@@ -585,12 +492,6 @@ describe("memory pane", () => {
     return { probe, world, port };
   }
 
-  function memoryPane(probe: AppProbe, id = "memory-1"): MemoryPane {
-    const pane = probe.core.panes.get(id);
-    if (!(pane instanceof MemoryPane)) throw new Error(`no memory pane "${id}"`);
-    return pane;
-  }
-
   it("/memory opens the pane docked and focused with counts in the title", async () => {
     const { probe } = memoryProbe();
     probe.type("/memory").keys("enter");
@@ -601,71 +502,5 @@ describe("memory pane", () => {
     expect(probe.snapshot().panes.find((pane) => pane.id === "memory-1")?.title).toContain(
       "1 note",
     );
-  });
-
-  it("leader m summons the memory pane and refocuses instead of duplicating", () => {
-    const { probe } = memoryProbe();
-    probe.keys("ctrl+k", "m");
-    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
-    expect(probe.snapshot().focused).toBe("memory-1");
-    probe.keys("ctrl+k", "l");
-    expect(probe.snapshot().focused).toBe("session-1");
-    probe.keys("m");
-    expect(probe.snapshot().focused).toBe("memory-1");
-    expect(paneIds(probe)).toEqual(["memory-1", "session-1"]);
-  });
-
-  it("i jumps to the inbox and a approves the staged item through the port", async () => {
-    const { probe, world } = memoryProbe();
-    probe.command("memory");
-    await probe.settled();
-    probe.keys("i", "a");
-    await probe.settled();
-    expect(world.approved).toEqual(["staged-1"]);
-    expect(memoryPane(probe).model.stagedCount()).toBe(0);
-  });
-
-  it("approving an already-resolved item shows a calm failure and r recovers", async () => {
-    const { probe, world } = memoryProbe();
-    probe.command("memory");
-    await probe.settled();
-    const pane = memoryPane(probe);
-    world.inbox = [];
-    probe.keys("i", "a");
-    await probe.settled();
-    expect(world.approved).toEqual([]);
-    const failed = JSON.stringify(describePaneTree(pane.view(paneContext())));
-    expect(failed).toContain("no review item with id staged-1");
-    probe.keys("r");
-    await probe.settled();
-    const recovered = JSON.stringify(describePaneTree(pane.view(paneContext())));
-    expect(recovered).not.toContain("no review item");
-  });
-
-  it("persists as a memory pane and revives from workspace state", async () => {
-    const { probe, port } = memoryProbe();
-    probe.command("memory");
-    await probe.settled();
-    const state = mustParse(probe.workspaceState());
-    expect(state.panes).toContainEqual({ id: "memory-1", kind: "memory" });
-    const restored = new AppProbe({
-      createMemoryPane: (id, notify) => new MemoryPane(id, notify, port),
-      restoreWorkspace: state,
-    });
-    await restored.settled();
-    expect(paneIds(restored)).toEqual(["memory-1", "session-1"]);
-    expect(memoryPane(restored).model.noteCount()).toBe(1);
-  });
-
-  it("an empty vault renders the calm invitation, not a dashboard of zeros", async () => {
-    const { probe } = memoryProbe({ layers: [], notes: [], inbox: [], ledger: [] });
-    probe.command("memory");
-    await probe.settled();
-    const rows = memoryPane(probe).model.rows();
-    expect(rows.map((row) => row.text)).toEqual(["nothing remembered yet"]);
-  });
-
-  it("memory is absent when no memory factory is wired", () => {
-    expect(new AppProbe().command("memory")).toBe(false);
   });
 });

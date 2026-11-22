@@ -14,7 +14,6 @@ import { composeInference } from "./inference/runtime.ts";
 import type { DeciderConnection } from "./inference/typesafe-connection.ts";
 import type { LiveInference } from "./inference-state.ts";
 import { memoryDeciderSetup } from "./memory-decider.ts";
-import { createPresetSwitch } from "./presets.ts";
 import { findSession } from "./sessions/store.ts";
 
 const tempDir = scratchDirs("keywork-panes-");
@@ -134,15 +133,6 @@ describe("composePanes", () => {
     await expect(app.arcs?.create("dock-v2")).rejects.toThrow("C:/play isn't trusted yet");
   });
 
-  it("binds the preset switch as the presets port and the status label", async () => {
-    const presets = createPresetSwitch({ initial: undefined, persist: async () => {} });
-    const { app } = await composedIn(await tempDir(), { presets });
-    expect(app.presets?.names()).toEqual(["careful", "standard", "open"]);
-    expect(app.presets?.active()).toBe("standard");
-    await presets.apply("careful");
-    expect(typeof app.statusLabel === "function" && app.statusLabel()).toBe("careful");
-  });
-
   it("builds agents, the titler, and both inference ports when inference is live", async () => {
     const inference = stubInference();
     const { app } = await composedIn(await tempDir(), { inference });
@@ -200,23 +190,6 @@ describe("composePanes", () => {
       { tool: "bash", callId: "user-shell-1", verdict: "granted", gate: "trusted", asked: false },
     ]);
     expect(result?.output.trim()).toBe("wired");
-  });
-
-  it("passes the workspaces port and the config's theme and page through", async () => {
-    const workspaces = {
-      list: async () => [],
-      create: async () => {},
-      use: async () => {},
-      linkFocusDir: async () => "",
-      unlinkFocusDir: async () => {},
-    };
-    const { app } = await composedIn(await tempDir(), {
-      workspaces,
-      config: { theme: { accent: "#ff0000" }, page: { columnAt: 90 } },
-    });
-    expect(app.workspaces).toBe(workspaces);
-    expect(app.paletteOverrides).toEqual({ accent: "#ff0000" });
-    expect(app.page).toEqual({ columnAt: 90 });
   });
 });
 

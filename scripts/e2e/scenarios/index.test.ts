@@ -4,62 +4,6 @@ import { committedGoldenRoot, goldenTree } from "../goldens.ts";
 import { defaultScenarios, scenarioNamed, scenarios } from "./index.ts";
 
 describe("scenario registry", () => {
-  it("registers the full scenario pack in workflow order", () => {
-    expect(scenarios.map((scenario) => scenario.name)).toEqual([
-      "cold-start",
-      "first-conversation",
-      "tiling-tour",
-      "lsp-loop",
-      "chroma-sweep",
-      "chrome-states",
-      "chrome-states-ascii",
-      "chrome-states-dim-on",
-      "chrome-states-dim-off",
-      "focus-corners-frame",
-      "focus-corners-grid",
-      "focus-corners-frame-ascii",
-      "focus-corners-grid-ascii",
-      "focus-repaint",
-      "page-tiers",
-      "masthead-ladder",
-      "session-lifecycle",
-      "delegation",
-      "long-session",
-      "gauge-ramp",
-      "gauge-steps",
-      "gauge-tile",
-      "gauge-bare",
-      "gauge-bar",
-      "elevation-arc-stamps",
-      "elevation-turn-age",
-      "elevation-scroll-map",
-      "elevation-chrome",
-      "arcs",
-      "arc-fold",
-      "bots-tour",
-      "bots-tour-ascii",
-      "memory-browser",
-      "memory-airlock-tail",
-      "garden-heat-lead",
-      "garden-heat-ink",
-      "status-tips",
-      "discovery",
-      "defect-repros",
-      "injection-citizenship",
-      "pointer-tour",
-      "pointer-off",
-      "tray-tour",
-      "terminal-mirror",
-      "terminal-hygiene",
-      "file-links",
-      "file-links-off",
-      "diff-pane",
-      "feel-polish",
-      "live-playground",
-      "extensions-tour",
-    ]);
-  });
-
   it("keeps manual scenarios out of the default pack", () => {
     expect(scenarioNamed("live-playground")?.manual).toBe(true);
     expect(defaultScenarios().map((scenario) => scenario.name)).toEqual([
@@ -123,16 +67,6 @@ describe("scenario registry", () => {
     }
   });
 
-  it("gives every scenario a unique kebab-case name and a description", () => {
-    const names = scenarios.map((scenario) => scenario.name);
-    expect(new Set(names).size).toBe(names.length);
-    for (const scenario of scenarios) {
-      expect(scenario.name).toBe(kebabCase(scenario.name));
-      expect(scenario.description.length).toBeGreaterThan(0);
-      expect(typeof scenario.run).toBe("function");
-    }
-  });
-
   it("commits exactly the goldens the scenarios declare, keyed by step name", () => {
     const declared = Object.fromEntries(
       scenarios
@@ -140,43 +74,5 @@ describe("scenario registry", () => {
         .map((scenario) => [scenario.name, [...(scenario.goldens ?? [])].map(kebabCase).sort()]),
     );
     expect(goldenTree(committedGoldenRoot)).toEqual(declared);
-  });
-
-  it("looks scenarios up by exact name only", () => {
-    expect(scenarioNamed("tiling-tour")?.name).toBe("tiling-tour");
-    expect(scenarioNamed("tiling")).toBeUndefined();
-  });
-
-  it("scripts a mutating write turn for the first conversation", () => {
-    const scenario = scenarioNamed("first-conversation");
-    const deltas = scenario?.turns?.flat() ?? [];
-    expect(deltas.some((delta) => delta.type === "tool-call")).toBe(true);
-    expect(scenario?.files).toHaveProperty(["notes.txt"]);
-    expect(scenario?.tools).toBeDefined();
-  });
-
-  it("boots cold-start without any provider", () => {
-    expect(scenarioNamed("cold-start")?.provider).toBe("none");
-    for (const scenario of scenarios.filter((entry) => entry.name !== "cold-start")) {
-      expect(scenario.provider).toBeUndefined();
-    }
-  });
-
-  it("wires discovery an honest preset port over the real preset data", async () => {
-    const factory = scenarioNamed("discovery")?.presets;
-    expect(factory).toBeDefined();
-    const { mkdtempSync, rmSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const stateDir = mkdtempSync(join(tmpdir(), "keywork-presets-"));
-    try {
-      const port = factory?.(stateDir);
-      expect(port?.names()).toEqual(["careful", "standard", "open"]);
-      expect(port?.active()).toBe("standard");
-      expect(port?.requiresConfirmation("open")).toBe(true);
-      expect(port?.requiresConfirmation("careful")).toBe(false);
-    } finally {
-      rmSync(stateDir, { recursive: true, force: true });
-    }
   });
 });

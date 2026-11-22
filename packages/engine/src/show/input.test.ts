@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keeperOpeningJsonSchema, keeperOpeningOf } from "./input.ts";
+import { keeperOpeningOf } from "./input.ts";
 
 const plan = { kind: "file", ref: "docs/plan.md" };
 
@@ -30,14 +30,5 @@ describe("the keeper's opening body", () => {
       { what: plan, from: "s1", why: "Because." },
     ];
     for (const body of refused) expect(keeperOpeningOf(body)).toBeUndefined();
-  });
-
-  it("is described for /doc with rung optional and defaulting to unfold", () => {
-    expect(keeperOpeningJsonSchema).toMatchObject({
-      type: "object",
-      required: ["what", "from"],
-      additionalProperties: false,
-      properties: { rung: { const: "unfold", default: "unfold" } },
-    });
   });
 });

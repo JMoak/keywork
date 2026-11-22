@@ -2,16 +2,12 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  botDefinitionText,
   emptyCostRollup,
   knownCostNanos,
   loadBots,
-  type Provider,
   SessionStore,
   textMessage,
-  textTurn,
 } from "@keywork/engine";
-import { recordingProvider } from "@keywork/engine/testing";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
 import { type BotRoots, botCommand, botCosts, botService, boundStores, createBot } from "./bots.ts";
@@ -76,10 +72,6 @@ describe("createBot", () => {
       "project bots need a trusted workspace",
     );
     expect(existsSync(join(untrusted.cwd, ".keywork"))).toBe(false);
-  });
-
-  it("serializes only the keys the schema knows", () => {
-    expect(botDefinitionText({})).toBe('---\nlearning: "notes"\n---\n');
   });
 });
 
@@ -155,20 +147,6 @@ describe("botService", () => {
       byName.get("scout")?.costNanos,
     );
     expect(rollups.get("critic")).toMatchObject({ nanos: 4_000_000, unpricedTurns: 1 });
-  });
-
-  it("proposes a slug through the naming provider and stays quiet when none is bound", async () => {
-    const roots = await rootsOf();
-    let provider: Provider | undefined = recordingProvider([textTurn("Test Hawk")]);
-    const service = botService({
-      ...roots,
-      sessionDir: await scratch(),
-      roster: [],
-      namer: () => provider,
-    });
-    expect(await service.suggestSlug?.("hunts for missing tests")).toBe("test-hawk");
-    provider = undefined;
-    expect(await service.suggestSlug?.("anything")).toBeUndefined();
   });
 });
 

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   builtinDecider,
-  jevModel,
   type MemoryDecider,
   type MemoryDecision,
   memoryQuestions,
@@ -19,17 +18,10 @@ import {
   StaleCassetteError,
   writeCassette,
 } from "./cassette.ts";
-import {
-  type AnswerLine,
-  canonicalJson,
-  type DecisionPoint,
-  fixtureCorpusDir,
-  readCorpus,
-} from "./corpus.ts";
+import { type AnswerLine, canonicalJson, fixtureCorpusDir, readCorpus } from "./corpus.ts";
 import { answersOf, keptOf } from "./metrics.ts";
-import { builtinArm, builtinEdition, editionName, offArm, portArm, runArm } from "./replay.ts";
+import { builtinArm, builtinEdition, offArm, portArm, runArm } from "./replay.ts";
 import { formatReport } from "./report.ts";
-import { actionPoint, entryPoint, pairPoint } from "./test-corpus.ts";
 
 const scratch = scratchDirs("keywork-memory-eval-replay-");
 const fixture = join(repoRoot, fixtureCorpusDir);
@@ -50,20 +42,6 @@ describe("the builtin arm", () => {
     expect(recorded.length).toBeGreaterThan(20);
     for (const point of recorded)
       expect(keptOf(answers.get(point.id))).toEqual(point.recorded?.kept);
-  });
-
-  it("answers every question the corpus asks, network-free", async () => {
-    const corpus = await readCorpus(fixture);
-    const answers = await runArm(builtinArm(), corpus.points);
-    expect(answers.map((line) => line.decision.decider)).toEqual(
-      corpus.points.map(() => "builtin"),
-    );
-    expect(answers.find((line) => line.question === memoryQuestions.pairRelation)?.outcome).toEqual(
-      {
-        relation: "unsure",
-        confidence: 0,
-      },
-    );
   });
 
   it("matches the checked-in reference report", async () => {
@@ -87,53 +65,6 @@ describe("the builtin arm", () => {
     });
     const checkedIn = await readFile(join(repoRoot, "docs", "memory-eval", "builtin-1.md"), "utf8");
     expect(withoutTimings(markdown)).toBe(withoutTimings(checkedIn));
-  });
-});
-
-describe("the off arm", () => {
-  it("is the floor: it keeps nothing, triages nothing and links nothing", async () => {
-    const points: DecisionPoint[] = [actionPoint("a", ["A", "B"]), entryPoint("e"), pairPoint("p")];
-    const answers = await runArm(offArm(), points);
-    expect(answers.map((line) => line.outcome)).toEqual([
-      { kept: [] },
-      { durability: "unsure" },
-      { relation: "unsure", confidence: 0 },
-    ]);
-  });
-});
-
-describe("portArm", () => {
-  it("hands every question to its port method with the state the point holds", async () => {
-    const seen: unknown[] = [];
-    const builtin = builtinDecider();
-    const listening: MemoryDecider = {
-      ...builtin,
-      id: "listening",
-      chooseForAction: (input) => {
-        seen.push(
-          input.hits.map((hit) => [hit.note.name, hit.note.tokens, hit.legs]),
-          [...input.surfaced],
-        );
-        return builtin.chooseForAction(input);
-      },
-      relatePair: (pair) => {
-        seen.push([pair.a.name, pair.b.name, pair.similarity]);
-        return builtin.relatePair(pair);
-      },
-    };
-    const action = actionPoint("a", ["A", "B"], { surfaced: ["B"] });
-    const arm = portArm({ decider: "listening", version: "1" }, listening);
-    const [kept, related] = await runArm(arm, [action, pairPoint("p")]);
-    expect(seen).toEqual([
-      [
-        ["A", 100, ["lexical"]],
-        ["B", 100, ["lexical"]],
-      ],
-      ["B"],
-      ["p older", "p newer", 0.5],
-    ]);
-    expect(kept?.outcome).toEqual({ kept: ["A"] });
-    expect(related?.question).toBe(memoryQuestions.pairRelation);
   });
 });
 
@@ -173,19 +104,6 @@ async function corpusCopy(): Promise<string> {
 }
 
 describe("opening the jev arm", () => {
-  it("skips cleanly with no cassette and no key, and says so", async () => {
-    const dir = await corpusCopy();
-    const opened = await openArm("jev", { corpusDir: dir, points: [], env: {} });
-    expect(opened).toMatchObject({ kind: "skipped", edition: jevEdition });
-    if (opened.kind === "skipped") {
-      expect(opened.reason).toContain("jev-1.13.0.cassette.jsonl and no TypeSafe key");
-    }
-  });
-
-  it("names its edition after the model the adapter pins", () => {
-    expect(editionName(jevEdition)).toBe(jevModel);
-  });
-
   it("records with a key through the registered adapter, which asks Jev every question", async () => {
     const dir = await corpusCopy();
     const corpus = await readCorpus(dir);

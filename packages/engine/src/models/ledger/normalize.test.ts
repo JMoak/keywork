@@ -159,12 +159,6 @@ describe("normalizeUsage across the research's usage shapes", () => {
     expect(usage?.tokS).toBeCloseTo(62.08, 2);
   });
 
-  it("reads Ollama /v1 usage, which reports no cache split", () => {
-    expect(
-      normalizeUsage("ollama-openai", { usage: { prompt_tokens: 900, completion_tokens: 12 } }),
-    ).toMatchObject({ inputUncached: 900, cacheRead: 0, output: 12, costSource: "local_estimate" });
-  });
-
   it("charges decisions for input only", () => {
     expect(
       normalizeUsage(

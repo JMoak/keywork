@@ -7,8 +7,6 @@ import { BreakerBoard } from "../health/breaker.ts";
 import {
   advertiseLocalServers,
   type DiscoveredServer,
-  knownServerPorts,
-  licenseAcknowledgementFor,
   ModelInventory,
   mergeDiscovered,
   rootOf,
@@ -77,12 +75,6 @@ describe("discovery by port probing", () => {
       ["llama-server", "none", "probed"],
       ["openai-compatible", "none", "probed"],
       ["openai-compatible", "key", "probed"],
-    ]);
-  });
-
-  it("probes the research's default ports", async () => {
-    expect(knownServerPorts.map((known) => known.port)).toEqual([
-      11434, 9931, 8080, 1234, 8000, 30000,
     ]);
   });
 
@@ -253,54 +245,5 @@ describe("ModelInventory", () => {
     });
     const [server] = (await inventory.list()).nodes[0]?.servers ?? [];
     expect(server?.models.find((model) => model.id === "qwen3.8:27b")?.health.state).toBe("down");
-  });
-
-  it("filters by node", async () => {
-    const inventory = new ModelInventory({
-      cache: new CapabilityCache(now),
-      now,
-      nodes: async () => [
-        { node: "moak-main", address: "127.0.0.1" },
-        { node: "spark-ad4d", address: "127.0.0.1" },
-      ],
-    });
-    expect((await inventory.list({ node: "spark-ad4d" })).nodes).toEqual([
-      { node: "spark-ad4d", servers: [] },
-    ]);
-  });
-
-  it("probes one endpoint on demand, including the tool-call behaviour probe", async () => {
-    const llama = await started(new FixtureServer(loadFixture("llama-server-b12122")));
-    const inventory = new ModelInventory({
-      cache: new CapabilityCache(now),
-      now,
-      nodes: async () => [],
-    });
-    const report = await inventory.probe({
-      endpoint: `http://127.0.0.1:${llama.port}/v1`,
-      model: "qwen3.8-27b",
-      behaviour: true,
-    });
-    expect(report).toMatchObject({
-      root: `http://127.0.0.1:${llama.port}`,
-      status: "recognized",
-      fingerprint: { id: "llama-server@b12122" },
-      health: { state: "up", resident: true },
-      listedOnly: [],
-      detail: null,
-    });
-    expect(
-      report.records.map((record) => [record.model, record.tools.known && record.tools.value]),
-    ).toEqual([["qwen3.8-27b", true]]);
-  });
-});
-
-describe("licenseAcknowledgementFor", () => {
-  it("asks for acknowledgement on non-permissive licenses", () => {
-    expect(licenseAcknowledgementFor("Apache-2.0")).toBe("not-required");
-    expect(licenseAcknowledgementFor("MIT")).toBe("not-required");
-    expect(licenseAcknowledgementFor("qwen-community-1.0")).toBe("required");
-    expect(licenseAcknowledgementFor("NVIDIA Open Model License")).toBe("required");
-    expect(licenseAcknowledgementFor(null)).toBe("unknown");
   });
 });

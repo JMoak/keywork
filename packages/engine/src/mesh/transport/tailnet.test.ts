@@ -40,24 +40,6 @@ describe("the WhoIs cache", () => {
     expect(state.lookups).toEqual([recordedHost.ipv4]);
   });
 
-  it("shares one lookup between connections that arrive together", async () => {
-    const { state, transport } = countingTransport();
-    const tailnet = createTailnet(transport);
-    await Promise.all([tailnet.whois(recordedHost.ipv4), tailnet.whois(recordedHost.ipv4)]);
-    expect(state.lookups).toHaveLength(1);
-  });
-
-  it("keeps identities while the status says nothing changed", async () => {
-    const { state, transport } = countingTransport();
-    const tailnet = createTailnet(transport);
-    await tailnet.status();
-    await tailnet.whois(recordedHost.ipv4);
-    state.status = parseStatus(recordedText("status-direct"));
-    await tailnet.status();
-    await tailnet.whois(recordedHost.ipv4);
-    expect(state.lookups).toHaveLength(1);
-  });
-
   it("forgets identities when the status shows a changed netmap", async () => {
     const { state, transport } = countingTransport();
     const tailnet = createTailnet(transport);

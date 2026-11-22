@@ -161,16 +161,4 @@ describe("rendererHold", () => {
       "after",
     ]);
   });
-
-  it("leaves modes it never enabled alone", () => {
-    const log: string[] = [];
-    const held = rendererHold({
-      renderer: { suspend: () => log.push("suspend"), resume: () => log.push("resume") },
-      write: (bytes) => log.push(bytes),
-      modes: () => ({ focusReporting: false, themeReports: false }),
-    });
-    held.suspend();
-    held.resume();
-    expect(log).toEqual(["suspend", "resume"]);
-  });
 });

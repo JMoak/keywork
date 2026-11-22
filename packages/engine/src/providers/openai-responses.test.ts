@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { textMessage } from "../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../provider.ts";
-import { ProviderEmptyResponseError, ProviderHttpError, ProviderStreamError } from "./errors.ts";
+import { ProviderStreamError } from "./errors.ts";
 import { OpenAiResponsesProvider } from "./openai-responses.ts";
 import { sseResponse } from "./stream-fixtures.ts";
 import type { FetchLike } from "./transport.ts";
@@ -156,18 +156,6 @@ describe("OpenAiResponsesProvider", () => {
     });
   });
 
-  it("throws ProviderHttpError on a non-200 response", async () => {
-    const failing = provider(async () => new Response("denied", { status: 401 }));
-    await expect(collect(failing.stream(simpleRequest))).rejects.toThrow(ProviderHttpError);
-  });
-
-  it("fails with a typed transient error when the response has no body", async () => {
-    const bodiless = provider(async () => new Response(null, { status: 200 }));
-    await expect(collect(bodiless.stream(simpleRequest))).rejects.toThrow(
-      ProviderEmptyResponseError,
-    );
-  });
-
   it("surfaces failed responses and error events as stream errors", async () => {
     const failed = [
       '{"type":"response.failed","response":{"error":{"message":"usage limit reached"}}}',
@@ -196,15 +184,5 @@ describe("OpenAiResponsesProvider cache diagnostics", () => {
       responseId: "resp_2",
       cacheMiss: { cause: "tools changed", missedTokens: 5629 },
     });
-  });
-
-  it("reports no miss on a cache hit", async () => {
-    const lines = [
-      '{"type":"response.completed","response":{"id":"resp_3","usage":{"input_tokens":1,"output_tokens":1},"prompt_cache_diagnostics":{"type":"cache_hit"}}}',
-    ];
-    const done = (await collect(provider(async () => sseResponse(lines)).stream(simpleRequest))).at(
-      -1,
-    );
-    expect(done).not.toHaveProperty("cacheMiss");
   });
 });

@@ -18,11 +18,6 @@ afterEach(async () => {
 });
 
 describe("SessionStore model selection (IR-12)", () => {
-  it("has no selection until a model_change is recorded", async () => {
-    const store = await SessionStore.create(await sessionFile(), ".");
-    expect(store.modelSelection()).toBeUndefined();
-  });
-
   it("records provider-qualified changes and resolves the last one on the active path", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, ".");

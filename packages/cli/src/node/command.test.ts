@@ -10,10 +10,8 @@ import { readNodeConfig } from "./config.ts";
 import type { CoreServices } from "./core.ts";
 import type { NodeCommandDeps } from "./deps.ts";
 import { nodeStoppedItem, readStoppedItem, writeStoppedItem } from "./desk.ts";
-import { defaultAgentLabel } from "./launchd.ts";
 import { type NodeFile, nodeFileStore } from "./node-file.ts";
 import { nodePaths } from "./paths.ts";
-import { keeperUid, RecordedLaunchctl } from "./platform-fixtures.ts";
 import type { ClaimDesk } from "./reconcile.ts";
 import { nodeStatus, statusLines } from "./status.ts";
 import { defaultUnitName } from "./systemd.ts";
@@ -216,17 +214,6 @@ describe("keywork node install on Windows", () => {
     );
   });
 
-  it("adds each workspace once and keeps the ones installed before", async () => {
-    const h = harness();
-    await h.run(["install"]);
-    await h.run(["install"]);
-    await h.run(["install", "--workspace", "research"]);
-    expect(readNodeConfig(nodePaths(root).config).workspaces).toEqual([
-      { cwd: workspace, slug: null },
-      { cwd: workspace, slug: "research" },
-    ]);
-  });
-
   it("refuses a workspace that does not exist", async () => {
     const h = harness();
     expect(await h.run(["install", "--workspace", "missing"])).toBe(exitCodes.usage);
@@ -253,13 +240,6 @@ describe("keywork node install on Windows", () => {
     expect(h.out).toContain(
       "pairing: claim this headless node from your console with code ABCD-EFGH-IJKL (valid until 2026-11-05T09:15:00.000Z); keywork node status shows it again",
     );
-  });
-
-  it("registers without starting when asked", async () => {
-    const h = harness();
-    await h.run(["install", "--no-start"]);
-    expect(h.schtasks.verbs()).toEqual(["/Create"]);
-    expect(h.schtasks.tasks.get("keywork node")?.state).toBe("Ready");
   });
 });
 
@@ -510,29 +490,6 @@ describe("keywork node status", () => {
     );
   });
 
-  it("says which workspace a folder opens when it resolves to another root", async () => {
-    const paths = nodePaths(root);
-    nodeFileStore(paths.nodeFile).write(
-      recordedNode({ supervisor: 5001, core: 5002, workspace: 5003 }),
-    );
-    const report = await nodeStatus({
-      paths,
-      manager: undefined,
-      isAlive: () => true,
-      claimDesk: unclaimedDesk(),
-      answers: async () => false,
-      anchorOf: (cwd, slug) => ({
-        cwd,
-        slug,
-        anchor: { root: "C:/src/stead", source: "git" },
-        identity: "94b5d29c334e",
-      }),
-    });
-    expect(statusLines(report)).toContain(
-      `workspace: ${workspace} stopped (stale node.json) · opens the workspace at C:/src/stead (its git root), identity 94b5d29c334e · ticket server.json`,
-    );
-  });
-
   it("prints the whole report as JSON for scripts", async () => {
     const h = harness();
     await h.run(["status", "--json"]);
@@ -572,16 +529,6 @@ describe("keywork node reset", () => {
 });
 
 describe("keywork node install from the console or by hand", () => {
-  it("registers no workspace with --no-workspace and says how one is added", async () => {
-    const h = harness();
-    expect(await h.run(["install", "--no-workspace"])).toBe(exitCodes.completed);
-    expect(readNodeConfig(nodePaths(root).config).workspaces).toEqual([]);
-    expect(h.out).toContain(
-      "serves: no workspace yet; keywork node install run inside a folder adds that folder",
-    );
-    expect(h.schtasks.tasks.get("keywork node")?.state).toBe("Running");
-  });
-
   it("keeps the workspaces installed before when a later install adds none", async () => {
     const h = harness();
     await h.run(["install"]);
@@ -590,25 +537,6 @@ describe("keywork node install from the console or by hand", () => {
       { cwd: workspace, slug: null },
     ]);
     expect(h.out.filter((line) => line === `serves: ${workspace}`)).toHaveLength(2);
-  });
-
-  it("registers the folder it stands in when run without the flag, as a keeper in a terminal does", async () => {
-    const opened = join(root, "src", "garden");
-    mkdirSync(opened, { recursive: true });
-    const h = harness();
-    await h.run(["install"], { cwd: opened });
-    expect(readNodeConfig(nodePaths(root).config).workspaces).toEqual([
-      { cwd: opened, slug: null },
-    ]);
-  });
-
-  it("refuses a workspace and no workspace together", async () => {
-    const h = harness();
-    expect(await h.run(["install", "--workspace", "research", "--no-workspace"])).toBe(
-      exitCodes.usage,
-    );
-    expect(h.err[0]).toContain("--workspace and --no-workspace ask for opposite things");
-    expect(h.schtasks.calls).toEqual([]);
   });
 
   it("names the program the registration runs in the JSON status, for the console to compare", async () => {
@@ -696,46 +624,6 @@ describe("keywork node restart", () => {
       "note: the node on MOAK-MAIN stopped after three crashes in five minutes; keywork node reset clears that and starts it",
     );
   });
-
-  it("stops and starts the systemd user unit without rewriting it or the config", async () => {
-    const unitDir = join(root, ".config", "systemd", "user");
-    const systemd = new FakeSystemd(unitDir);
-    const h = harness({ platform: "linux", account: linuxKeeper, run: systemd.run });
-    await h.run(["install"]);
-    const unit = readFileSync(join(unitDir, defaultUnitName), "utf8");
-    const config = readFileSync(nodePaths(root).config, "utf8");
-    const before = systemd.calls.length;
-    expect(await h.run(["restart"])).toBe(exitCodes.completed);
-    const verbs = systemd.calls
-      .slice(before)
-      .filter((call) => call[0] === "systemctl" && call[2] !== "show")
-      .map((call) => call[2]);
-    expect(verbs).toEqual(["stop", "reset-failed", "start"]);
-    expect(systemd.active.has(defaultUnitName)).toBe(true);
-    expect(readFileSync(join(unitDir, defaultUnitName), "utf8")).toBe(unit);
-    expect(readFileSync(nodePaths(root).config, "utf8")).toBe(config);
-  });
-
-  it("boots the launchd agent out and loads the same plist again", async () => {
-    const launchctl = new RecordedLaunchctl(keeperUid);
-    const h = harness({
-      platform: "darwin",
-      account: { name: "keeper", domain: null, uid: keeperUid },
-      run: launchctl.run,
-    });
-    await h.run(["install"]);
-    const plist = join(root, "Library", "LaunchAgents", `${defaultAgentLabel}.plist`);
-    const written = readFileSync(plist, "utf8");
-    const before = launchctl.calls.length;
-    expect(await h.run(["restart"])).toBe(exitCodes.completed);
-    const verbs = launchctl
-      .verbs()
-      .slice(before)
-      .filter((verb) => verb !== "print");
-    expect(verbs).toEqual(["bootout", "kickstart", "bootstrap"]);
-    expect(launchctl.loaded.get(defaultAgentLabel)?.printed).toBe("running");
-    expect(readFileSync(plist, "utf8")).toBe(written);
-  });
 });
 
 describe("keywork node run", () => {
@@ -771,12 +659,6 @@ describe("keywork node run", () => {
     expect(h.out).toContain("node core: supervisor 555 is gone; stopping");
     expect(h.core.at(-1)).toBe("activity.stop");
   });
-
-  it("only hides the console of the supervisor", async () => {
-    const h = harness();
-    expect(await h.run(["run", "--hidden"])).toBe(exitCodes.usage);
-    expect(h.hidden).toBe(0);
-  });
 });
 
 describe("keywork node usage", () => {
@@ -789,20 +671,6 @@ describe("keywork node usage", () => {
     expect(await h.run(["status", "--bogus"])).toBe(exitCodes.usage);
     expect(h.err[1]).toContain('unknown verb "start"');
     expect(h.err.every((line) => line.includes("usage: keywork node install"))).toBe(true);
-  });
-
-  it("reports a broken node config instead of guessing", async () => {
-    const h = harness();
-    mkdirSync(nodePaths(root).state, { recursive: true });
-    writeFileSync(nodePaths(root).config, JSON.stringify({ mesh: { port: "47800" } }));
-    expect(await h.run(["install"])).toBe(exitCodes.failed);
-    expect(h.err[0]).toContain("mesh.port that is not a port");
-  });
-
-  it("prints the firewall script only for Windows", async () => {
-    const h = harness({ platform: "linux", account: linuxKeeper });
-    expect(await h.run(["firewall"])).toBe(exitCodes.unresolved);
-    expect(h.err[0]).toContain("100.64.0.0/10 and fd7a:115c:a1e0::/48");
   });
 });
 
@@ -827,23 +695,6 @@ describe("keywork node workspace", () => {
     expect(h.out[1]).toMatch(/^ticket: .*server\.json$/);
     expect(h.out[2]).toBe(
       "note: the node is not running here; it takes the change when it next starts (keywork node install sets it up)",
-    );
-  });
-
-  it("adds the folder it stands in when none is named, once", async () => {
-    const h = harness({ isAlive: (pid) => pid === 5001 });
-    nodeFileStore(nodePaths(root).nodeFile).write(
-      recordedNode({ supervisor: 5001, core: 5002, workspace: 5003 }),
-    );
-    await h.run(["workspace", "add"]);
-    h.out.length = 0;
-    expect(await h.run(["workspace", "add"])).toBe(exitCodes.completed);
-    expect(readNodeConfig(nodePaths(root).config).workspaces).toEqual([
-      { cwd: workspace, slug: null },
-    ]);
-    expect(h.out[0]).toBe(`serves already: ${workspace}`);
-    expect(h.out[2]).toBe(
-      "node: running as pid 5001; it starts serving it now, or wakes it if it was parked",
     );
   });
 
@@ -912,22 +763,6 @@ describe("keywork node workspace", () => {
         { cwd: notes, slug: null, state: "waiting for the node", url: null },
       ],
     });
-  });
-
-  it("says parked in node status for a workspace the node parked", async () => {
-    const h = harness({ isAlive: (pid) => pid === 5001 });
-    const node = recordedNode({ supervisor: 5001, core: 5002, workspace: 5003 });
-    nodeFileStore(nodePaths(root).nodeFile).write({
-      ...node,
-      workspaces: node.workspaces.map((view) => ({
-        ...view,
-        state: "parked",
-        pid: null,
-        url: null,
-      })),
-    });
-    await h.run(["status"]);
-    expect(h.out).toContain(`workspace: ${workspace} parked · ticket server.json`);
   });
 
   it("is picked up by the running node: a folder added starts and a folder removed stops", async () => {

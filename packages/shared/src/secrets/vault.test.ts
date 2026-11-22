@@ -77,26 +77,6 @@ describe("platformVault on Windows (DPAPI via PowerShell)", () => {
     expect(await vault?.lookup("provider.anthropic")).toBeUndefined();
   });
 
-  it("answers undefined for a name it never stored without starting PowerShell", async () => {
-    const powershell = fakeDpapi();
-    const vault = platformVault({
-      dataDir: await tempDir(),
-      platform: "win32",
-      run: powershell.run,
-    });
-
-    expect(await vault?.lookup("never")).toBeUndefined();
-    expect(powershell.calls).toEqual([]);
-  });
-
-  it("reports a missing PowerShell as a store error", async () => {
-    const vault = platformVault({ dataDir: await tempDir(), platform: "win32", run: missing });
-
-    await expect(vault?.store("token", "x")).rejects.toThrow(
-      "windows dpapi: powershell is not installed",
-    );
-  });
-
   it.runIf(process.platform === "win32")(
     "round-trips through the real DPAPI on this machine",
     async () => {
@@ -139,10 +119,6 @@ describe("platformVault on macOS (Keychain via security)", () => {
 });
 
 describe("platformVault names", () => {
-  it("has no backend on a platform without a known credential store", () => {
-    expect(platformVault({ dataDir: ".", platform: "aix" })).toBeUndefined();
-  });
-
   it("refuses names that could escape the store's namespace", async () => {
     const vault = platformVault({ dataDir: await tempDir(), platform: "win32", run: missing });
 

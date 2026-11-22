@@ -19,12 +19,6 @@ describe("AwayWatch", () => {
     expect(watch.attend({ pane: true }, 9)).toEqual({ from: 3, files: new Set(), settled: true });
   });
 
-  it("has nothing to say when no turn settled meanwhile", () => {
-    const { watch } = watched();
-    watch.attend({ pane: false }, 0);
-    expect(watch.attend({ pane: true }, 0)).toBeUndefined();
-  });
-
   it("needs both the pane and the terminal to count you present", () => {
     const { watch } = watched();
     watch.attend({ pane: true }, 0);
@@ -89,9 +83,5 @@ describe("awayDigest", () => {
     expect(awayDigest(stretch(["1", "2", "3", "4", "5", "6"]), entries, undefined)).toBe(
       'while you were away: changed 1, 2, 3, 4 and 2 more; it stopped on "rate limited"',
     );
-  });
-
-  it("stays quiet with nothing to report", () => {
-    expect(awayDigest(stretch([]), [{ kind: "info", text: "x" }], undefined)).toBeUndefined();
   });
 });

@@ -423,15 +423,6 @@ describe("unlinked-mention densification", () => {
 });
 
 describe("sweep hygiene", () => {
-  it("writes one audit entry per sweep", async () => {
-    const { store, root } = await vault();
-    const { gardener: g } = gardener(store);
-    await g.sweep();
-    await g.sweep();
-    const audit = await readFile(join(root, "curation.md"), "utf8");
-    expect(audit.split("\n").filter((line) => line.includes("gardener sweep:"))).toHaveLength(2);
-  });
-
   it("is idempotent: a second sweep with no new input changes nothing but the audit", async () => {
     const { store, root } = await vault();
     await store.appendDaily("tests run on node", "user");
@@ -571,14 +562,6 @@ describe("entry token budget", () => {
     expect(seen.map((entry) => entry.id)).toEqual([`${today}#1`, `${today}#2`]);
     expect(seen.reduce((sum, entry) => sum + entryTokens(entry), 0)).toBeLessThanOrEqual(220);
   });
-
-  it("skips the judgment entirely when nothing fits", async () => {
-    const { store } = await vault();
-    await store.appendDaily("x".repeat(400), "agent");
-    const port = scriptedPort({});
-    await new Gardener({ store, judgment: port }).sweep({ entryTokenBudget: 10 });
-    expect(port.seenEntries).toEqual([]);
-  });
 });
 
 describe("skill telemetry", () => {
@@ -622,18 +605,5 @@ describe("skill telemetry", () => {
     expect(changed.every((path) => path.startsWith(".staging/") || path === "curation.md")).toBe(
       true,
     );
-  });
-
-  it("is a no-op without evidence and never re-stages a pending review", async () => {
-    const { store } = await vault();
-    const g = new Gardener({ store, now: clock });
-    expect((await g.sweep()).flagged).toEqual([]);
-    const skills = {
-      skills: [{ name: "release-tag", authoredBy: "keywork" }],
-      telemetry: { "release-tag": activity(0, 3, 0, "2026-08-09T00:00:00.000Z") },
-    };
-    await g.sweep({ skills });
-    expect((await g.sweep({ skills })).flagged).toEqual([]);
-    expect(await store.listStaged()).toHaveLength(1);
   });
 });

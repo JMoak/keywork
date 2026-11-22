@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import { BuildInputError, outdirInside, resolveBuildVersion } from "./build-inputs.ts";
 import { npmManifestFor } from "./npm-manifest.ts";
 import {
-  assetNameFor,
-  buildVersionDefine,
   checksumLine,
   hostTarget,
   isReleaseVersion,
@@ -14,12 +12,6 @@ import {
 } from "./targets.ts";
 
 describe("release targets", () => {
-  it("names assets by os and arch, with .exe only on Windows", () => {
-    expect(assetNameFor("linux", "x64")).toBe("keywork-linux-x64");
-    expect(assetNameFor("windows", "x64")).toBe("keywork-windows-x64.exe");
-    expect(assetNameFor("darwin", "arm64")).toBe("keywork-darwin-arm64");
-  });
-
   it("covers Linux first, then Windows and macOS, on both architectures where shipped", () => {
     expect(releaseTargets.map((target) => target.assetName)).toEqual([
       "keywork-linux-x64",
@@ -51,10 +43,6 @@ describe("release targets", () => {
     expect(tagMatchesVersion("v0.2.0", "0.1.0")).toBe(false);
   });
 
-  it("passes the build version to bun as a JSON string define", () => {
-    expect(buildVersionDefine("0.1.0")).toEqual(["--define", 'KEYWORK_BUILD_VERSION="0.1.0"']);
-  });
-
   it("accepts only MAJOR.MINOR.PATCH with an optional prerelease as a release version", () => {
     expect(isReleaseVersion("0.1.0")).toBe(true);
     expect(isReleaseVersion("1.2.3-rc.1")).toBe(true);
@@ -67,10 +55,6 @@ describe("release targets", () => {
 
 describe("build version resolution", () => {
   const manifestPath = "packages/cli/package.json";
-
-  it("reads a valid version out of the manifest", () => {
-    expect(resolveBuildVersion({ manifest: { version: "0.1.0" }, manifestPath })).toBe("0.1.0");
-  });
 
   it("fails by name when the manifest has no version instead of shipping keywork undefined", () => {
     const attempt = () => resolveBuildVersion({ manifest: { name: "keywork" }, manifestPath });

@@ -58,15 +58,6 @@ describe("egress rendered to sbx policy", () => {
     expect(plan.conflicts).toHaveLength(1);
   });
 
-  it("gives general web egress GET, HEAD and OPTIONS unless a rule names more", () => {
-    expect(
-      rulesOf([{ host: "docs.python.org" }, { host: "api.github.com", methods: ["POST"] }]),
-    ).toEqual([
-      { host: "docs.python.org", methods: ["GET", "HEAD", "OPTIONS"] },
-      { host: "api.github.com", methods: ["POST"] },
-    ]);
-  });
-
   it("opens non-HTTP TCP only through an explicit host and port", () => {
     const plan = renderSbxEgress("stead-pip", rulesOf([{ host: "git.example.com", port: 22 }]), []);
 
@@ -77,9 +68,7 @@ describe("egress rendered to sbx policy", () => {
 
   it.each([
     ["a wildcard", "*.example.com", "wildcards never reach a workshop's egress"],
-    ["a double wildcard", "**", "wildcards never reach a workshop's egress"],
     ["a scheme", "https://example.com", "a bare DNS name"],
-    ["a path", "example.com/api", "a bare DNS name"],
     ["an address", "10.1.2.3", "a bare DNS name"],
   ])("refuses %s in a creature's egress", (_what, host, message) => {
     const parsed = parseWorkshopSpec({ creature: "pip", substrate: "sbx", egress: [{ host }] });

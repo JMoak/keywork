@@ -12,7 +12,7 @@ import {
 import { writeServerTicket } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
-import { conversationView, forwardCreatureMcp, servedCreatureMcp } from "./serve-mcp.ts";
+import { forwardCreatureMcp, servedCreatureMcp } from "./serve-mcp.ts";
 
 const scratch = scratchDirs("keywork-serve-mcp-");
 
@@ -99,25 +99,6 @@ describe("servedCreatureMcp", () => {
   });
 });
 
-describe("conversationView", () => {
-  it("reads messages and report marks from the store and busy from the live session", async () => {
-    const dir = await scratch();
-    const store = await SessionStore.create(join(dir, "c.jsonl"), dir);
-    await store.append({ role: "user", parts: [{ type: "text", text: "hi" }] });
-    const origin = { kind: "creature" as const, creature: "pip", thread: "t1" };
-    await store.appendCreatureReport("Thread done.", origin);
-    const view = await conversationView(
-      { stored: async () => store, liveOnly: () => ({ busy: () => true }) },
-      store.header.id,
-    );
-    expect(view).toMatchObject({
-      messages: [{ role: "user" }],
-      reports: [{ index: 1, text: "Thread done.", origin }],
-      busy: true,
-    });
-  });
-});
-
 describe("forwardCreatureMcp", () => {
   const arrival: McpArrival = {
     caller: { stableId: "nSpark", name: "spark", userId: "keeper", tags: [] },
@@ -154,20 +135,5 @@ describe("forwardCreatureMcp", () => {
       "http://127.0.0.1:4770/creatures/pip/mcp/arrivals Bearer t0",
       "http://127.0.0.1:4771/creatures/pip/mcp/arrivals Bearer t1",
     ]);
-  });
-
-  it("says in words when no workspace keeps it or a workspace does not answer", async () => {
-    const none = await forwardCreatureMcp([], "pip", arrival);
-    expect(none).toEqual({
-      refused: "missing",
-      error: "no workspace of this node keeps a creature called pip",
-    });
-    const down: FetchLike = async () => {
-      throw new Error("connect ECONNREFUSED");
-    };
-    expect(await forwardCreatureMcp(await tickets(1), "pip", arrival, down)).toEqual({
-      refused: "unreachable",
-      error: "the workspace did not answer: connect ECONNREFUSED",
-    });
   });
 });

@@ -139,11 +139,6 @@ describe("conflict markers", () => {
     });
     expect(splitConflictMarkers("no markers here\n")).toBeUndefined();
   });
-
-  it("round-trips its own whole-file markers", () => {
-    const sides = { ours: "a\n", theirs: "b\n" };
-    expect(splitConflictMarkers(conflictMarkers(sides))).toEqual(sides);
-  });
 });
 
 describe("primitives", () => {

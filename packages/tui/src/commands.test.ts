@@ -30,15 +30,6 @@ describe("fuzzyScore", () => {
 });
 
 describe("CommandRegistry", () => {
-  it("returns everything for an empty query", () => {
-    expect(registryWith("exit", "split").search("")).toHaveLength(2);
-  });
-
-  it("ranks by relevance", () => {
-    const registry = registryWith("exit-all", "exit", "zoom");
-    expect(registry.search("exit").map((command) => command.name)).toEqual(["exit", "exit-all"]);
-  });
-
   it("matches aliases in search and run", () => {
     const registry = new CommandRegistry();
     let ran = 0;

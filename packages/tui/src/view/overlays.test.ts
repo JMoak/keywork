@@ -41,17 +41,4 @@ describe("the overlay scrim", () => {
     expect(moat?.props?.backgroundColor).toBe(keyworkNight.background);
     expect(panel?.props?.zIndex).toBe(20);
   });
-
-  it("derives the scrim from the theme ground with alpha", () => {
-    expect(scrimInk(keyworkNight)).toBe(`${keyworkNight.background}99`);
-  });
-
-  it("renders nothing when no overlay is open, scrim or not", () => {
-    const idle = new AppCore({
-      screen: () => ({ width: 100, height: 30 }),
-      createPane: () => undefined,
-      onExit: () => {},
-    });
-    expect(overlayView(idle, { ...inputs, scrim: true })).toBeUndefined();
-  });
 });

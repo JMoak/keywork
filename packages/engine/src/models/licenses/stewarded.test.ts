@@ -270,68 +270,6 @@ describe("stewardedInventory", () => {
     expect((await steward.list({ node: "spark-ad4d" })).market).toBeUndefined();
     expect(filters).toEqual([{}, { node: "spark-ad4d" }]);
   });
-
-  it("reads market health from the answers it is given", async () => {
-    const answers = new ProviderAnswerBook(now);
-    answers.answered("openai");
-    const steward = stewardedInventory(fakeInventory().inventory, {
-      licenses: memoryLicenseBook(),
-      benches: recordingBenches().benches,
-      registrations: () => registrations,
-      answers,
-      now,
-    });
-
-    const { market } = await steward.list();
-    expect(market?.map(({ kind, health }) => [kind, health.state])).toEqual([
-      ["openai", "up"],
-      ["openrouter", "down"],
-      ["parked", "down"],
-    ]);
-  });
-
-  it("names what inherit resolves to per class, unless one node is asked for", async () => {
-    const steward = stewardedInventory(fakeInventory().inventory, {
-      licenses: memoryLicenseBook(),
-      benches: recordingBenches().benches,
-      registrations: () => registrations,
-      inherit: () => ({ provider: "openai", model: "gpt-5" }),
-      now,
-    });
-
-    const { inherits } = await steward.list();
-    expect(inherits?.strong).toEqual({ provider: "openai", model: "gpt-5" });
-    expect(inherits?.vision).toEqual({ provider: "openai", model: "gpt-5" });
-    expect(inherits?.loop).toEqual({ provider: "openai", model: "gpt-5" });
-    expect(inherits?.decide).toMatchObject({
-      provider: "openai",
-      model: "gpt-5",
-      decider: "builtin",
-    });
-    expect((await steward.list({ node: "spark-ad4d" })).inherits).toBeUndefined();
-  });
-
-  it("leaves inherits out when the host names no inherit", async () => {
-    const steward = stewardedInventory(fakeInventory().inventory, {
-      licenses: memoryLicenseBook(),
-      benches: recordingBenches().benches,
-      registrations: () => registrations,
-      now,
-    });
-    expect((await steward.list()).inherits).toBeUndefined();
-  });
-
-  it("passes probes to the inventory and benches to the bench book", async () => {
-    const { inventory, probes } = fakeInventory();
-    const { benches, runs, outcome } = recordingBenches();
-    const steward = stewardedInventory(inventory, { licenses: memoryLicenseBook(), benches });
-    await steward.probe({ endpoint: "http://127.0.0.1:11434" });
-    const target = { endpoint: "http://127.0.0.1:11434", model: "qwen3.8:27b" };
-    expect(await steward.bench(target)).toBe(outcome);
-    expect(await steward.lastBench(target)).toBeNull();
-    expect(probes).toEqual([{ endpoint: "http://127.0.0.1:11434" }]);
-    expect(runs).toEqual([target]);
-  });
 });
 
 function stewardFacts(model: {

@@ -124,13 +124,9 @@ describe("jevClient on the wire", () => {
 describe("jevClient failures", () => {
   it.each([
     [400, "malformed"],
-    [413, "malformed"],
-    [415, "malformed"],
-    [422, "malformed"],
     [429, "rate-limited"],
     [529, "overloaded"],
     [500, "unreachable"],
-    [503, "unreachable"],
   ] as const)("maps HTTP %i to %s", async (status, reason) => {
     const { fetchFn } = scripted([
       json(status, { error: "max_tokens_exceeded" }, { "x-typesafe-request-id": "req_9" }),

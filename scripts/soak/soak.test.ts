@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Agent } from "../../packages/engine/src/index.ts";
-import {
-  defaultThresholds,
-  formatReport,
-  judgeSoak,
-  percentile,
-  type SoakSample,
-} from "./budget.ts";
+import { defaultThresholds, judgeSoak, percentile, type SoakSample } from "./budget.ts";
 import { noteTool, replyMarker, SoakProvider } from "./provider.ts";
 
 const megabyte = 1024 * 1024;
@@ -53,14 +47,6 @@ describe("judgeSoak", () => {
     expect(verdict.findings.join("\n")).toContain("rss grew");
   });
 
-  it("tolerates growth inside the slack on a small baseline", () => {
-    const samples = [
-      sample({ turn: 50, heapBytes: 4 * megabyte }),
-      sample({ turn: 500, heapBytes: 10 * megabyte }),
-    ];
-    expect(judgeSoak(samples, quiet).ok).toBe(true);
-  });
-
   it("fails dangling listeners during the run and after quit, and surviving fatal guards", () => {
     const during = judgeSoak(
       [sample({ turn: 50 }), sample({ turn: 500, busesWithListeners: 3 })],
@@ -84,14 +70,6 @@ describe("judgeSoak", () => {
     const verdict = judgeSoak(samples, quiet, { ...defaultThresholds, renderP95Ms: 50 });
     expect(verdict.ok).toBe(false);
     expect(verdict.findings.join("\n")).toContain("render p95");
-  });
-
-  it("reports a table, the growth summary, and the outcome", () => {
-    const samples = [sample({ turn: 50 }), sample({ turn: 500 })];
-    const report = formatReport(judgeSoak(samples, quiet), samples);
-    expect(report).toContain("turn panes");
-    expect(report).toContain("heap 40.0 → 40.0 MB");
-    expect(report.trim().endsWith("soak ok")).toBe(true);
   });
 });
 

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../messages.ts";
-import { textMessage } from "../messages.ts";
 import type { ProviderRequest } from "../provider.ts";
 import { toChatRequest } from "./chat-wire.ts";
 
@@ -13,10 +12,6 @@ function wireMessages(messages: Message[]): unknown {
 }
 
 describe("toChatRequest image parts", () => {
-  it("keeps text-only user messages as plain string content", () => {
-    expect(wireMessages([textMessage("user", "hi")])).toEqual([{ role: "user", content: "hi" }]);
-  });
-
   it("maps image parts to image_url data-URL content parts in order", () => {
     const message: Message = {
       role: "user",

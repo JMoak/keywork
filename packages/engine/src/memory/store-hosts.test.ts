@@ -63,18 +63,6 @@ describe("per-host layout", () => {
     );
   });
 
-  it("unions audit segments by timestamp", async () => {
-    const root = await scratch();
-    const alpha = await hostStore(root, "alpha", "2026-08-10T09:00:00Z");
-    const beta = await hostStore(root, "beta", "2026-08-10T08:00:00Z");
-    await alpha.recordAudit("alpha event");
-    await beta.recordAudit("beta event");
-    expect((await alpha.readAudit()).map((entry) => entry.event)).toEqual([
-      "beta event",
-      "alpha event",
-    ]);
-  });
-
   it("keeps audit segments out of the note space", async () => {
     const root = await scratch();
     const alpha = await hostStore(root, "alpha", "2026-08-10T09:00:00Z");

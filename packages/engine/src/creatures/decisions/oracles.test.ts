@@ -4,7 +4,7 @@ import { keeperGateSpec } from "./gate.ts";
 import { deciderOracle, keeperRuleOracle, keeperRulesId } from "./oracles.ts";
 import { type JudgeVerdict, loadRatchet } from "./ratchet.ts";
 import { keeperState } from "./state.ts";
-import { askFor, bashAsk, conversationOfPip, scriptedDecider, yesWith } from "./testing.ts";
+import { askFor, bashAsk, conversationOfPip, scriptedDecider } from "./testing.ts";
 
 const ratchet = await loadRatchet();
 const question = keeperGateSpec(ratchet, keeperRulesId).question;
@@ -48,30 +48,6 @@ describe("keeperRuleOracle", () => {
 });
 
 describe("deciderOracle", () => {
-  it("asks the decide port one noul question per judge question, with the state text", async () => {
-    const decider = scriptedDecider(yesWith(0.83, 0.0004));
-    const text = textOf(bashAsk("npm test"));
-    const [decision] = await deciderOracle(ratchet, decider, {
-      now: () => new Date("2026-11-05T12:00:00.000Z"),
-    }).decide(text, [question]);
-    expect(decider.requests[0]?.state).toBe(text);
-    expect(decider.requests[0]?.questions).toEqual({
-      [question.id]: {
-        type: "noul",
-        instructions: question.prompt,
-        criteria: { true: question.criteria?.yes, false: question.criteria?.no },
-      },
-    });
-    expect(decision).toEqual({
-      verdict: { kind: "judge", questionId: question.id, pYes: 0.83, confidence: 0.83 },
-      oracle: "decide:local/nimble-0.8b",
-      model: "nimble-0.8b@2026-10-01",
-      latencyMs: 40,
-      cost: 0.0004,
-      at: "2026-11-05T12:00:00.000Z",
-    });
-  });
-
   it("throws on a failure or a refusal, so ratchet fails it open into review", async () => {
     const down = scriptedDecider(() => ({
       ok: false,

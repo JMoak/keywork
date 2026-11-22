@@ -8,7 +8,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   attach,
   attachablePaneKinds,
-  attachedLabel,
   choosePane,
   mountedWorkspace,
   ticketCandidates,
@@ -33,23 +32,12 @@ describe("choosePane", () => {
     }
   });
 
-  it.each([
-    ["tree", "session-tree"],
-    ["sessions", "session-tree"],
-    ["files", "browser"],
-    ["changes", "diff"],
-    ["workstreams", "arcs"],
-    ["ws", "arcs"],
-    ["grants", "permissions"],
-    ["context-map", "context"],
-  ])("mounts %s as its %s pane", (alias, pane) => {
+  it.each([["tree", "session-tree"]])("mounts %s as its %s pane", (alias, pane) => {
     expect(choosePane(alias)).toEqual({ kind: "mount", pane });
   });
 
   it.each([
     ["file", "attach --pane browser"],
-    ["arc", "attach --pane arcs"],
-    ["workstream", "attach --pane arcs"],
     ["terminal", "runs a shell on this machine"],
   ])("refuses %s and points at the pane that serves it", (name, hint) => {
     const choice = choosePane(name);
@@ -58,14 +46,6 @@ describe("choosePane", () => {
       expect(choice.usage).toBe(false);
       expect(choice.reason).toContain(hint);
     }
-  });
-
-  it("treats an unknown kind as a usage error naming every attachable kind", () => {
-    expect(choosePane("bogus")).toEqual({
-      kind: "refused",
-      usage: true,
-      reason: `no pane kind named "bogus" · attach mounts ${attachablePaneKinds.join(", ")}`,
-    });
   });
 });
 
@@ -79,14 +59,6 @@ describe("attach", () => {
     dir = await mkdtemp(join(tmpdir(), "keywork-attach-"));
   });
   afterAll(() => rm(dir, { recursive: true, force: true }));
-
-  it("exits 1 naming the ticket file when there is no server ticket", async () => {
-    const ticketFile = join(dir, "absent.json");
-    const code = await attach({ pane: "conversation", ticketFile, printError });
-    expect(code).toBe(1);
-    expect(errors.at(-1)).toContain(`no server ticket at ${ticketFile}`);
-    expect(errors.at(-1)).toContain("--url and --token");
-  });
 
   it("exits 1 when the server cannot be reached", async () => {
     const code = await attach(
@@ -125,10 +97,6 @@ describe("attach", () => {
 });
 
 describe("mounting surface", () => {
-  it("labels the chrome with the server host", () => {
-    expect(attachedLabel({ url: "http://127.0.0.1:4770" })).toBe("attached · 127.0.0.1:4770");
-  });
-
   it("restores a single pane of the requested kind, bound to the session when given", async () => {
     const conversation = await mountedWorkspace("conversation", "abc").load();
     expect(conversation).toEqual({

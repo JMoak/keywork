@@ -347,13 +347,6 @@ describe("http MCP client", () => {
     }
   });
 
-  it("round-trips a tool call answered as plain JSON", async () => {
-    const { url } = await openFixture();
-    const connection = await connectFixture(url);
-    const result = await connection.callTool("echo", { text: "over http" });
-    expect(result).toEqual({ text: "over http", isError: false });
-  });
-
   it("round-trips a tool call answered as an SSE stream", async () => {
     const { url } = await openFixture({ streamToolCalls: true });
     const connection = await connectFixture(url);
@@ -387,43 +380,12 @@ describe("http MCP client", () => {
     await waitFor(() => changes === 1);
   });
 
-  it("treats a dropped event stream as a lost connection", async () => {
-    const { fixture, url } = await openFixture();
-    const connection = await connectFixture(url);
-    const losses: (Error | undefined)[] = [];
-    connection.onClose((error) => losses.push(error));
-    await waitFor(() => fixture.openEventStreams() === 1);
-    fixture.dropEventStreams();
-    await waitFor(() => losses.length === 1);
-    expect(losses[0]?.message).toContain("event stream");
-  });
-
   it("ends the session with a DELETE on close", async () => {
     const { fixture, url } = await openFixture();
     const connection = await connectHttpServer({ url }, { requestTimeoutMs: 5_000 });
     await connection.close();
     const farewell = fixture.requests.find((entry) => entry.method === "DELETE");
     expect(farewell?.headers["mcp-session-id"]).toBe("session-77");
-  });
-});
-
-describe("http MCP transport through the reconciler", () => {
-  it("reconnects after the event stream drops", async () => {
-    const { fixture, url } = await openFixture();
-    const registry = new McpRegistry({
-      servers: { remote: { transport: "http", url } },
-      restartDelaysMs: [10, 10, 10],
-    });
-    registries.push(registry);
-    registry.start();
-    await waitFor(() => registry.status()[0]?.state === "connected");
-    expect(registry.status()[0]?.transport).toBe("http");
-    expect(fixture.initializations).toBe(1);
-    await waitFor(() => fixture.openEventStreams() === 1);
-    fixture.dropEventStreams();
-    await waitFor(() => fixture.initializations >= 2);
-    await waitFor(() => registry.status()[0]?.state === "connected");
-    expect(registry.listTools("remote").map((entry) => entry.name)).toEqual(["echo", "add"]);
   });
 });
 

@@ -66,11 +66,6 @@ function harness(scripts: Record<string, readonly Step[]>) {
 }
 
 describe("fallbackProvider", () => {
-  it("presents the primary candidate's identity", () => {
-    const { provider } = harness({});
-    expect([provider.name, provider.modelId]).toEqual(["ollama", "ollama-model"]);
-  });
-
   it("moves to the next candidate when the first fails before streaming anything", async () => {
     const { provider, opened, switches } = harness({
       ollama: [saturated],

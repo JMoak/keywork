@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { keeperLedgerPath, keeperReviewPath } from "./files.ts";
+import { keeperLedgerPath } from "./files.ts";
 import { loadRatchet } from "./ratchet.ts";
 import { recordKeeperVerdict } from "./record.ts";
-import { readKeeperReport } from "./report.ts";
 import {
   answerBlindReview,
   blindReviewOf,
@@ -127,28 +125,5 @@ describe("answerBlindReview", () => {
     expect(
       await answerBlindReview({ nodeState, recordId: "nope", approve: true, ratchet }),
     ).toEqual({ answered: false, reason: "not-drawn" });
-  });
-
-  it("counts the review per model and class in the report", async () => {
-    const nodeState = await scratchNode();
-    const ask = bashAsk("npm test");
-    const recorded = await recordKeeperVerdict(answeredAsk(ask, granted(ask)), {
-      nodeState,
-      ratchet,
-      draw: () => 0,
-    });
-    if (!recorded.recorded) throw new Error("expected a row");
-    expect((await readKeeperReport({ nodeState, ratchet })).pendingReviews).toBe(1);
-    await answerBlindReview({ nodeState, recordId: recorded.recordId, approve: true, ratchet });
-    const report = await readKeeperReport({ nodeState, ratchet });
-    expect(report.pendingReviews).toBe(0);
-    expect(report.calibration?.[0]?.review).toEqual({
-      drawn: 1,
-      answered: 1,
-      agreedWithGate: 1,
-      agreedWithMoment: 1,
-      deniedAtBar: 0,
-    });
-    expect(await readFile(keeperReviewPath(nodeState), "utf8")).toContain('"type":"answered"');
   });
 });

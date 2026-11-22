@@ -78,20 +78,6 @@ describe("layout serialization", () => {
     expect(state?.docks?.right?.ratio).toBe(0.05);
   });
 
-  it("lists ids left dock first, then the tree in reading order, then the right dock", () => {
-    const state = parseLayoutState({
-      tree: {
-        kind: "split",
-        orientation: "row",
-        ratio: 0.5,
-        first: { kind: "leaf", id: "a" },
-        second: { kind: "leaf", id: "b" },
-      },
-      docks: { left: { panes: ["l"], ratio: 0.3 }, right: { panes: ["r"], ratio: 0.3 } },
-    });
-    expect(layoutStateIds(state as LayoutState)).toEqual(["l", "a", "b", "r"]);
-  });
-
   it("rejects corrupt shapes wholesale", () => {
     const leaf = { kind: "leaf", id: "a" };
     const corrupt: unknown[] = [

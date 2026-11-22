@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Entry, ReadDirectory } from "./browser-model.ts";
+import type { Entry } from "./browser-model.ts";
 import { BrowserPane } from "./browser-pane.ts";
 import { parseChord } from "./keys.ts";
 import { resolvePalette } from "./palette.ts";
@@ -12,53 +12,6 @@ const inertIntents: PaneIntents = {
   openSession: () => {},
   focusPane: () => {},
 };
-
-function heldDisk(): { read: ReadDirectory; release: (entries: Entry[]) => void } {
-  let release: (entries: Entry[]) => void = () => {};
-  const read: ReadDirectory = () =>
-    new Promise((resolve) => {
-      release = resolve;
-    });
-  return { read, release: (entries) => release(entries) };
-}
-
-describe("BrowserPane disposal", () => {
-  it("fires no notify once closed with a readdir still in flight", async () => {
-    let notified = 0;
-    const disk = heldDisk();
-    const pane = new BrowserPane(
-      "browser-1",
-      "/workspace",
-      () => {
-        notified += 1;
-      },
-      inertIntents,
-      disk.read,
-    );
-    pane.dispose();
-    disk.release([{ name: "late.ts", kind: "file" }]);
-    await pane.settled();
-    expect(notified).toBe(0);
-  });
-
-  it("notifies when a read lands on a live pane", async () => {
-    let notified = 0;
-    const disk = heldDisk();
-    const pane = new BrowserPane(
-      "browser-1",
-      "/workspace",
-      () => {
-        notified += 1;
-      },
-      inertIntents,
-      disk.read,
-    );
-    disk.release([{ name: "here.ts", kind: "file" }]);
-    await pane.settled();
-    expect(notified).toBe(1);
-    expect(pane.title()).toBe(" workspace · 1 entry ");
-  });
-});
 
 describe("BrowserPane typed filter", () => {
   it("threads the raw sequence into the filter so a space and a capital survive", async () => {

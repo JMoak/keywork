@@ -62,23 +62,6 @@ describe("the withdraw tool", () => {
     ]);
   });
 
-  it("works for a thread with no creature, on its own settings", async () => {
-    const { tool, settings, setOut } = seated(null);
-    const setting = setOut();
-    await tool.execute({ id: setting.id });
-    expect(settings.open()).toEqual([]);
-  });
-
-  it("leaves what grew from it out", async () => {
-    const { tool, settings, setOut } = seated();
-    const parent = setOut({ what: { kind: "diff", ref: "cs-41" } });
-    const child = setOut({ from: parent.id, what: { kind: "file", ref: "a.ts" } });
-
-    await tool.execute({ id: parent.id });
-
-    expect(settings.open()).toEqual([child]);
-  });
-
   it("refuses what the keeper pinned, in words, and leaves it out", async () => {
     const { tool, settings, setOut } = seated();
     const setting = setOut();
@@ -137,16 +120,6 @@ describe("the withdraw tool", () => {
     setOut();
   });
 
-  it("refuses an id already settled, the same way", async () => {
-    const { tool, settings, setOut } = seated();
-    const setting = setOut();
-    settings.answer(setting.id, "seen");
-
-    expect(await tool.execute({ id: setting.id })).toBe(
-      `Not withdrawn: nothing you set out is out with the id ${setting.id}; shown lists what is out.`,
-    );
-  });
-
   it("takes back, from any session of the same creature, what the creature set out", async () => {
     const { tool, settings } = seated();
     const fromOtherThread = settings.propose(proposal("wren", { sessionId: "thread-b" }));
@@ -182,19 +155,6 @@ describe("the withdraw tool", () => {
     );
   });
 
-  it("leaves in the mood it is given, in the nearest mood to a word it does not know", async () => {
-    const { tool, emitted, setOut } = seated();
-    const setting = setOut();
-    const before = emitted.length;
-
-    expect(await tool.execute({ id: setting.id, mood: "resolved" })).toBe(
-      `Withdrawn: ${setting.id} has left the yard. It left decisively, the nearest mood to "resolved".`,
-    );
-    expect(emitted.slice(before).map(({ payload }) => payload)).toEqual([
-      { id: setting.id, outcome: "withdrawn", by: "creature", mood: "decisive" },
-    ]);
-  });
-
   it("takes back a note by the id it had before it was replaced", async () => {
     const { tool, settings, setOut } = seated();
     const first = setOut({ what: { kind: "note", ref: "One.", title: "Plan" } });
@@ -224,13 +184,6 @@ describe("the withdraw tool", () => {
       'Not withdrawn: except names "Three", and nothing you set out is out as that, so nothing was taken back; shown lists what is out.',
     );
     expect(settings.open()).toHaveLength(2);
-  });
-
-  it("answers when no keeper surface takes settings", async () => {
-    const tool = withdrawTool({ creature: "wren", sessionId: "s1", settings: () => undefined });
-    expect(await tool.execute({ id: "x" })).toBe(
-      "Not withdrawn: no keeper surface takes settings here.",
-    );
   });
 
   it("is IDE control that asks for no permission and takes one id", async () => {

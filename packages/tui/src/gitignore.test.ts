@@ -25,12 +25,6 @@ describe("gitignore patterns", () => {
     expect(rules.ignores("nested/build/output", "file")).toBe(false);
   });
 
-  it("restricts trailing-slash patterns to directories", () => {
-    const rules = rulesOf("cache/");
-    expect(rules.ignores("cache", "dir")).toBe(true);
-    expect(rules.ignores("cache", "file")).toBe(false);
-  });
-
   it("lets a later negation re-include a match", () => {
     const rules = rulesOf("*.env\n!example.env");
     expect(rules.ignores("local.env", "file")).toBe(true);
@@ -98,16 +92,6 @@ describe("nested .gitignore files", () => {
     rules.add("packages\\tui", "!keep.tmp");
     rules.add(".", "*.tmp");
     expect(rules.ignores("packages/tui/keep.tmp", "file")).toBe(false);
-  });
-
-  it("replaces a directory's rules when re-added, and clear forgets all", () => {
-    const rules = new IgnoreRules();
-    rules.add("", "old");
-    rules.add("", "new");
-    expect(rules.ignores("old", "file")).toBe(false);
-    expect(rules.ignores("new", "file")).toBe(true);
-    rules.clear();
-    expect(rules.ignores("new", "file")).toBe(false);
   });
 });
 

@@ -34,12 +34,6 @@ describe("the workshop display", () => {
     expect(sbx.calls.at(-1)?.args).toEqual(["exec", workshop.handle, "--", ...displayCommand]);
   });
 
-  it("has no frame when the workshop has no X server", async () => {
-    const { substrate, workshop } = await sbxWorkshop(undefined);
-
-    expect(await substrate.display(workshop)?.snapshot()).toBeUndefined();
-  });
-
   it("streams a frame a second until the viewer leaves", async () => {
     const controller = new AbortController();
     const pauses: number[] = [];

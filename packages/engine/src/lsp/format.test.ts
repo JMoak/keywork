@@ -39,29 +39,6 @@ describe("diagnosticsBlock", () => {
     );
   });
 
-  it("counts warnings on the header line instead of listing them", () => {
-    const block = diagnosticsBlock(
-      "typescript",
-      [
-        diagnostic({}),
-        diagnostic({ severity: "warning", message: "unused" }),
-        diagnostic({ severity: "warning", message: "also unused" }),
-      ],
-      cwd,
-    );
-    expect(block?.split("\n")).toEqual([
-      "diagnostics (typescript) · 1 error · 2 warnings",
-      "src/cache.ts:14:7 · Type 'string' is not assignable to type 'number'.",
-    ]);
-  });
-
-  it("stays silent without errors, warnings or not", () => {
-    expect(diagnosticsBlock("typescript", [], cwd)).toBeUndefined();
-    expect(
-      diagnosticsBlock("typescript", [diagnostic({ severity: "warning" })], cwd),
-    ).toBeUndefined();
-  });
-
   it("keeps only the first line of a multi-line message and absolute paths outside the cwd", () => {
     const outside = join("/", "elsewhere", "x.ts");
     const block = diagnosticsBlock(

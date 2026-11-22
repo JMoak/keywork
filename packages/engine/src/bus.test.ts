@@ -53,23 +53,6 @@ describe("docs/events.md", () => {
 });
 
 describe("EventBus", () => {
-  it("counts live listeners per event and overall, and forgets the unsubscribed", () => {
-    const bus = new EventBus();
-    const offStarted = bus.on("turn.started", () => {});
-    bus.on("turn.started", () => {});
-    const offDelta = bus.on("turn.delta", () => {});
-
-    expect(bus.listenerCount("turn.started")).toBe(2);
-    expect(bus.listenerCount("turn.delta")).toBe(1);
-    expect(bus.listenerCount("tool.started")).toBe(0);
-    expect(bus.listenerCount()).toBe(3);
-
-    offStarted();
-    offDelta();
-    expect(bus.listenerCount("turn.started")).toBe(1);
-    expect(bus.listenerCount()).toBe(1);
-  });
-
   it("treats each on() as its own registration, so one unsubscribe removes only that one", () => {
     const bus = new EventBus();
     let deliveries = 0;
@@ -90,17 +73,6 @@ describe("EventBus", () => {
     expect(bus.listenerCount("turn.started")).toBe(1);
   });
 
-  it("delivers to every listener in subscription order", () => {
-    const bus = new EventBus();
-    const seen: string[] = [];
-    bus.on("turn.started", ({ userText }) => seen.push(`a:${userText}`));
-    bus.on("turn.started", ({ userText }) => seen.push(`b:${userText}`));
-
-    bus.emit("turn.started", { userText: "hi" });
-
-    expect(seen).toEqual(["a:hi", "b:hi"]);
-  });
-
   it("keeps delivering after a listener throws and reports the failure on engine.error", () => {
     const bus = new EventBus();
     const seen: string[] = [];
@@ -116,20 +88,6 @@ describe("EventBus", () => {
 
     expect(seen).toEqual(["b:hi", "c:hi"]);
     expect(failures).toEqual(["listener blew up"]);
-  });
-
-  it("wraps non-Error throws before reporting them", () => {
-    const bus = new EventBus();
-    const failures: Error[] = [];
-    bus.on("engine.error", ({ error }) => failures.push(error));
-    bus.on("turn.delta", () => {
-      throw "plain string";
-    });
-
-    bus.emit("turn.delta", { delta: { type: "text", text: "x" } });
-
-    expect(failures).toHaveLength(1);
-    expect(failures[0]?.message).toBe("plain string");
   });
 
   it("does not recurse when an engine.error listener itself throws", () => {

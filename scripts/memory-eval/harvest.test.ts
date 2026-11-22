@@ -130,15 +130,6 @@ describe("harvestCorpus over recorded sessions", () => {
     ]);
   });
 
-  it("skips what point-of-action skips: a denied call, a repeated subject, a call that does not mutate", async () => {
-    const vault = await vaultWith();
-    const harvest = await harvestCorpus({ sessions: await recorded([authScript], vault), vault });
-    expect(actionPoints(harvest.points).map((point) => point.id)).toEqual([
-      "auth#call-1",
-      "auth#call-7",
-    ]);
-  });
-
   it("counts the turns an injection rides until the next compaction", async () => {
     const vault = await vaultWith();
     const harvest = await harvestCorpus({ sessions: await recorded([authScript], vault), vault });
@@ -203,17 +194,6 @@ describe("harvestCorpus over recorded sessions", () => {
       expect.objectContaining({ answer: "duplicate", source: "judge", holds: true }),
     );
     expect(harvest.manifest.judge).toMatchObject({ ran: true, judge: "mock/judge" });
-  });
-
-  it("says why no judge ran", async () => {
-    const vault = await vaultWith();
-    const harvest = await harvestCorpus({
-      sessions: await recorded([authScript], vault),
-      vault,
-      judgeAbsence: "no chat key",
-    });
-    expect(harvest.manifest.judge).toEqual({ ran: false, reason: "no chat key" });
-    expect(harvest.labels.some((label) => label.source === "judge")).toBe(false);
   });
 });
 

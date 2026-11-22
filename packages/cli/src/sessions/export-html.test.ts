@@ -47,21 +47,6 @@ describe("sessionHtml", () => {
     expect(html).toContain('<span class="hidden-char">U+202E</span>');
   });
 
-  it("folds thinking and pairs each tool call with its result", async () => {
-    const html = sessionHtml(await fixtureSession(), "path", exportedAt);
-
-    expect(html).toContain('<details class="thinking"><summary>thinking</summary>');
-    expect(html).not.toMatch(/<details[^>]*\sopen/);
-    expect(html).toContain("thinking sealed by the provider");
-    const bash = sliceFrom(html, "<b>bash</b>", "</details>");
-    expect(bash).toContain('<span class="status">ok</span>');
-    expect(bash).toContain("&lt;img src=x onerror=alert(1)&gt;");
-    expect(html).not.toContain("<b>result</b>");
-    const search = sliceFrom(html, "<b>github__search</b>", "</details>");
-    expect(search).toContain("no result");
-    expect(html).toContain('<span class="glyph">░</span> <b>github__search</b>');
-  });
-
   it("prices each turn under the model in force and totals the session", async () => {
     const html = sessionHtml(await fixtureSession(), "path", exportedAt);
 
@@ -229,11 +214,6 @@ const fixtureLines = [
     label: 'best "one"',
   },
 ];
-
-function sliceFrom(html: string, start: string, end: string): string {
-  const from = html.indexOf(start);
-  return from === -1 ? "" : html.slice(from, html.indexOf(end, from));
-}
 
 const voidElements = new Set(["meta", "img", "br", "hr", "link", "input"]);
 

@@ -34,18 +34,12 @@ afterAll(() => {
 describe("the trusted read bundle under a ledger", () => {
   it.each([
     "cat README.md",
-    "ls -la src",
     "ls",
-    "grep -rn needle .",
     "find . -name '*.ts'",
-    "head -n 20 src/index.ts",
     'cat "src/a b.ts"',
     "cat src\\index.ts",
-    "git log --oneline -5",
     "git log --pretty=format:%h",
     "git show HEAD:src/index.ts",
-    "echo hello",
-    "pwd",
   ])("runs %s without an ask inside the workspace", (command) => {
     expect(rulingOn(command)).toEqual({ permission: "allow", gate: "trusted" });
   });

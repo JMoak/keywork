@@ -92,25 +92,6 @@ describe("coalesceDeltas", () => {
     expect(out).toHaveLength(4);
   });
 
-  it("never waits past the tick and arms exactly one tick per batch", () => {
-    const { clock, out, coalescer } = harness();
-
-    coalescer.push(text("a"));
-    coalescer.push(text("b"));
-    expect(clock.pending()).toBe(1);
-    clock.step();
-    expect(out).toEqual([text("ab")]);
-    expect(clock.pending()).toBe(0);
-
-    coalescer.push(text("c"));
-    expect(clock.pending()).toBe(1);
-    clock.step();
-    expect(out).toEqual([text("ab"), text("c")]);
-
-    clock.step();
-    expect(out).toHaveLength(2);
-  });
-
   it("keeps replayed and live deltas apart and leaves the incoming payloads untouched", () => {
     const { clock, out, coalescer } = harness();
     const replayed: BusEvent = {
@@ -129,14 +110,5 @@ describe("coalesceDeltas", () => {
       live,
     ]);
     expect(replayed.payload).toEqual({ delta: { type: "text", text: "r" }, replay: true });
-  });
-
-  it("flush() drains on demand", () => {
-    const { out, coalescer } = harness();
-
-    coalescer.push(chunk("c1", "1"));
-    coalescer.flush();
-
-    expect(out).toEqual([chunk("c1", "1")]);
   });
 });

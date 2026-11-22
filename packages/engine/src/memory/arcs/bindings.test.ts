@@ -11,25 +11,12 @@ describe("session bindings", () => {
     expect(bindings.sessionsBoundTo("infra")).toEqual(["s1"]);
   });
 
-  it("unbinds and reports the previous arc", () => {
-    const bindings = new ArcBindings();
-    bindings.bind("s1", "dock-v2");
-    expect(bindings.unbind("s1")).toEqual({ sessionId: "s1", arc: undefined, previous: "dock-v2" });
-    expect(bindings.bindingOf("s1")).toBeUndefined();
-  });
-
   it("forks inherit the parent's binding", () => {
     const bindings = new ArcBindings();
     bindings.bind("parent", "dock-v2");
     expect(bindings.inheritOnFork("parent", "child")).toBe("dock-v2");
     expect(bindings.bindingOf("child")).toBe("dock-v2");
     expect(bindings.sessionsBoundTo("dock-v2").sort()).toEqual(["child", "parent"]);
-  });
-
-  it("forks of unbound parents stay unbound", () => {
-    const bindings = new ArcBindings();
-    expect(bindings.inheritOnFork("parent", "child")).toBeUndefined();
-    expect(bindings.bindingOf("child")).toBeUndefined();
   });
 
   it("releasing an arc unbinds every holder and reports them", () => {

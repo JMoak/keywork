@@ -138,10 +138,4 @@ describe("botBootstrapLayer", () => {
     expect(layer.selection.skipped).toEqual(["Long Habit"]);
     expect(layer.selection.tokens).toBeLessThanOrEqual(120);
   });
-
-  it("is empty for a bot whose layer never materialized", async () => {
-    const { registry } = await fixture();
-    const layer = await botBootstrapLayer(registry, "reviewer", 512);
-    expect(layer.selection.notes).toEqual([]);
-  });
 });

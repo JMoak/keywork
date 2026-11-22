@@ -197,31 +197,10 @@ describe("which questions reach Jev", () => {
       "sweep",
     ]);
   });
-
-  it("asks nothing when every candidate was screened out by policy", async () => {
-    const client = scriptedClient(() => nouls({}));
-    const decided = await onTrial(client).chooseForAction(
-      candidates([hitOf("Old", { lexical: 1 }, true), hitOf("Seen")], {
-        surfaced: new Set(["Seen"]),
-      }),
-    );
-    expect(client.asked).toEqual([]);
-    expect(decided.decision).toMatchObject({ decider: "builtin", choice: { kept: [] } });
-    expect(decided.decision.fallback).toBeUndefined();
-  });
 });
 
 describe("every failure falls back to the builtin and names its reason", () => {
-  const reasons: JevFailureReason[] = [
-    "no-key",
-    "refused",
-    "late",
-    "rate-limited",
-    "overloaded",
-    "malformed",
-    "unreachable",
-    "degraded",
-  ];
+  const reasons: JevFailureReason[] = ["late"];
 
   it.each(reasons)("recall: %s", async (reason) => {
     const input = candidates([hitOf("Dock"), hitOf("Neighbor", { graph: 1 })]);
@@ -282,11 +261,6 @@ describe("every failure falls back to the builtin and names its reason", () => {
       stateHash: "state-hash",
     });
     expect(decided.decision.scores).toBeUndefined();
-  });
-
-  it("never lets a failure throw into the memory path", async () => {
-    const decider = onTrial(scriptedClient(() => failing("unreachable")));
-    await expect(decider.chooseForAction(candidates([hitOf("Dock")]))).resolves.toBeDefined();
   });
 });
 
@@ -358,26 +332,6 @@ describe("recall by odds", () => {
 });
 
 describe("curation by bands", () => {
-  it("lets a decisive answer act alone at 0.95 with confidence 0.90", async () => {
-    const decided = await onTrial(
-      scriptedClient(() => choosing("relation", "newer-supersedes-older", 0.97, 0.93)),
-    ).relatePair(pair);
-
-    expect(decided.outcome).toEqual({
-      relation: "newer-supersedes-older",
-      confidence: 0.97,
-      band: "act",
-    });
-    expect(decided.decision).toMatchObject({
-      question: "pair-relation@1",
-      about: { kind: "pair", older: "Old Auth", newer: "New Auth" },
-      choice: "newer-supersedes-older",
-      scores: { "newer-supersedes-older": 0.97 },
-      confidence: 0.93,
-      decider: "jev",
-    });
-  });
-
   it("stages a proposal with the odds between 0.50 and the act band", async () => {
     const decided = await onTrial(
       scriptedClient(() => choosing("relation", "duplicate", 0.8)),

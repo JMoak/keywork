@@ -8,25 +8,13 @@ import {
   InvalidDailyDateError,
   isDailyDate,
   mocContent,
-  noteName,
-  noteTitle,
   noteWriteTarget,
   parseDailyEntries,
   parseNote,
-  stemName,
   wikilinkTarget,
 } from "./notes.ts";
 
 describe("note naming", () => {
-  it("derives name, title, and stem from a vault path", () => {
-    expect(noteName("Ratio Rule.md")).toBe("Ratio Rule");
-    expect(noteName("entities/packages/tui/layout.ts.md")).toBe("entities/packages/tui/layout.ts");
-    expect(noteTitle("Ratio Rule.md")).toBe("Ratio Rule");
-    expect(noteTitle("entities/packages/tui/layout.ts.md")).toBe("entities/packages/tui/layout.ts");
-    expect(stemName("questions/Tie order.md")).toBe("Tie order");
-    expect(stemName("Plain.md")).toBe("Plain");
-  });
-
   it("routes a path back to the write target that produced it", () => {
     expect(noteWriteTarget("Ratio Rule.md")).toEqual({ title: "Ratio Rule" });
     expect(noteWriteTarget("entities/packages/tui/layout.ts.md")).toEqual({

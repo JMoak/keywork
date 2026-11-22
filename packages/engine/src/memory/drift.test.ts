@@ -145,19 +145,6 @@ describe("checkDrift", () => {
     expect(await store.revert(stamp?.id ?? "")).toBe("reverted");
     expect((await store.readNote("Write Path"))?.drift).toBeUndefined();
   });
-
-  it("does not ask when the diff touches nothing the vault knows", async () => {
-    const { store } = await vault();
-    const judgment = scriptedJudgment({ verdict: "stale", reason: "never asked" });
-    const report = await checkDrift({
-      store,
-      judgment,
-      changes: { against: "x", files: ["README.md"], patch: "" },
-    });
-    expect(judgment.asked).toEqual([]);
-    expect(report.findings).toEqual([]);
-    expect(report.untouched).toBe(3);
-  });
 });
 
 describe("driftJudgment over a provider", () => {

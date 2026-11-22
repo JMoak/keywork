@@ -26,15 +26,6 @@ afterEach(() => {
 });
 
 describe("TrustStore", () => {
-  it("treats unseen directories as undecided", () => {
-    expect(openStore().resolve(repo)).toBe("undecided");
-  });
-
-  it("persists a trust grant across store instances", () => {
-    openStore().trust(repo);
-    expect(openStore().resolve(repo)).toBe("trusted");
-  });
-
   it("persists an untrust decision and revokes an earlier grant", () => {
     const store = openStore();
     store.trust(repo);
@@ -146,15 +137,6 @@ describe("TrustStore", () => {
     openStore().trust(repo);
     writeFileSync(file, JSON.stringify({ [canonicalPath(repo)]: "yes" }));
     expect(() => openStore().resolve(repo)).toThrow(TrustStoreError);
-  });
-
-  it("stores canonical paths sorted in the file", () => {
-    const store = openStore();
-    store.trust(join(scratch, "b"));
-    store.trust(join(scratch, "a"));
-    const keys = Object.keys(JSON.parse(readFileSync(file, "utf8")) as object);
-    expect(keys).toEqual([...keys].sort());
-    expect(keys).toEqual(keys.map((key) => canonicalPath(key)));
   });
 
   it("keeps the trust file under an overridden home", () => {

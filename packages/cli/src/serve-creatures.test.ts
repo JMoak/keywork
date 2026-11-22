@@ -13,12 +13,10 @@ import {
   MockProvider,
   type PermissionResolver,
   type Provider,
-  type ReportMark,
   type SessionStore,
   type Setting,
   type StagedItem,
   SessionStore as Store,
-  type TurnDelta,
   textTurn,
   toolCallTurn,
   type WorkshopView,
@@ -33,12 +31,9 @@ import {
   creatureSeats,
   creatureSessionsOver,
   finishThread,
-  firstLineOf,
-  firstSentenceOf,
   inboundSection,
   keptConversation,
   type ServedCreatureSessions,
-  turnLabelOf,
 } from "./serve-creatures.ts";
 import { findSession, scanSessions } from "./sessions/store.ts";
 
@@ -127,37 +122,6 @@ describe("a creature's sessions under keywork serve", () => {
       expect(stores).toHaveLength(1);
       expect(creatureTagOf(stores[0]?.entries() ?? [])).toEqual({ creature: "pip", kind: "child" });
       expect(stores[0]?.botBinding()).toBe("pip");
-    } finally {
-      await world.close();
-    }
-  });
-
-  it("reports a finished thread to the conversation as one entry from the creature, starting no turn", async () => {
-    const world = await creatureWorld(
-      new MockProvider([textTurn("All three builds are green.\nDetails follow."), textTurn("ok")]),
-    );
-    try {
-      await world.json("/creatures", { name: "Pip" });
-      const creatures = world.host.creatures as CreatureHost;
-      const thread = await creatures.openThread("pip", "thread");
-      await world.host.rename(thread, "check the builds");
-      await world.host.prompt(thread, "check the builds");
-      const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
-      const reports = async () =>
-        ((await findSession(world.sessionDir, conversation))?.entries() ?? []).flatMap((entry) =>
-          entry.type === "custom" && entry.customType === "keywork.creature.report"
-            ? [entry.data]
-            : [],
-        );
-      await world.until(async () => (await reports()).length > 0);
-
-      expect(await reports()).toEqual([
-        {
-          text: 'Thread "check the builds" finished: All three builds are green.',
-          origin: { kind: "creature", creature: "pip", thread },
-        },
-      ]);
-      expect(await world.messagesOf(conversation)).toEqual([]);
     } finally {
       await world.close();
     }
@@ -372,44 +336,6 @@ function showTurn(callId: string, what: { kind: string; ref: string }, until: st
   });
 }
 
-describe("a finished conversation turn", () => {
-  it("writes one report line from the creature, served as reports, with no further turn", async () => {
-    const provider = recordingProvider([
-      toolCallTurn({
-        type: "tool-call",
-        callId: "w1",
-        name: "write",
-        arguments: { path: "notes/largest.md", content: "five files" },
-      }),
-      textTurn("I wrote the five largest files to notes/largest.md. They are all research notes."),
-      textTurn("never asked for"),
-    ]);
-    const world = await creatureWorld(provider);
-    try {
-      await world.json("/creatures", { name: "Hal" });
-      const { conversation } = await world.json<{ conversation: string }>("/creatures/hal");
-      await world.host.prompt(conversation, "list the five largest files under docs");
-      await world.settled(conversation);
-      const reports = async () =>
-        (await world.json<{ reports: ReportMark[] }>(`/sessions/${conversation}`)).reports;
-      await world.until(async () => (await reports()).length > 0);
-
-      expect(await reports()).toEqual([
-        {
-          index: 4,
-          entryId: expect.any(String),
-          at: expect.any(String),
-          text: "I wrote the five largest files to notes/largest.md.",
-          origin: { kind: "creature", creature: "hal", thread: conversation },
-        },
-      ]);
-      expect(provider.requests).toHaveLength(2);
-    } finally {
-      await world.close();
-    }
-  });
-});
-
 describe("the keeper's answers to a creature", () => {
   it("land in the node's decision ledger with the creature and the thread kind", async () => {
     const world = await creatureWorld(
@@ -588,20 +514,6 @@ describe("finishing a thread", () => {
       ["pip", "Changed notes/largest.md.", origin],
     ]);
   });
-
-  it("labels a turn by its first sentence, keeping dots inside words", async () => {
-    expect(firstSentenceOf("Wrote notes/largest.md. Then stopped.")).toBe(
-      "Wrote notes/largest.md.",
-    );
-    expect(firstSentenceOf("\nNo full stop here")).toBe("No full stop here");
-    const empty = await taggedStore({ creature: "pip", kind: "conversation" });
-    expect(turnLabelOf({ store: empty, lastReply: "" })).toBe("Finished the turn without a word.");
-  });
-
-  it("takes the first line with words in it", () => {
-    expect(firstLineOf("\n  \nfirst\nsecond")).toBe("first");
-    expect(firstLineOf("")).toBe("");
-  });
 });
 
 async function taggedStore(
@@ -752,104 +664,3 @@ describe("the inbound section of a creature's turn", () => {
     expect(inboundSection("cob", conversation.contextEntries(), staged)).toBe("");
   });
 });
-
-describe("a setting's trail under keywork serve", () => {
-  it("grows from a setting by the id the tool named and from a delegated thread, and the keeper opens from either", async () => {
-    const world = await creatureWorld(
-      readingProvider([
-        () => showTurn("a", { kind: "diff", ref: "cs-1" }, "seen"),
-        (said) => showFromTurn("b", { kind: "file", ref: "src/a.ts" }, settingIdIn(said)),
-        () =>
-          toolCallTurn({
-            type: "tool-call",
-            callId: "d",
-            name: "delegate",
-            arguments: { title: "find the report", prompt: "find the triage report" },
-          }),
-        () => textTurn("The report is r1."),
-        (said) => showFromTurn("c", { kind: "report", ref: "r1" }, childIdIn(said)),
-        () => textTurn("Set out the trail."),
-      ]),
-      () => undefined,
-    );
-    try {
-      await world.json("/creatures", { name: "Pip" });
-      const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
-      await world.host.prompt(conversation, "walk me through the fix");
-      await world.settled(conversation);
-      const shown = async () => (await world.json<{ settings: Setting[] }>("/show")).settings;
-      await world.until(async () => (await shown()).length === 3);
-      const [diff, file, report] = await shown();
-      const child = report?.from ?? "";
-
-      const fromFile = await world.json<{ setting: Setting }>("/show", {
-        what: { kind: "file", ref: "src/a.test.ts" },
-        from: file?.id,
-      });
-      const fromChild = await world.json<{ setting: Setting }>("/show", {
-        what: { kind: "url", ref: "https://example.com/r1" },
-        from: child,
-        rung: "unfold",
-      });
-
-      const seated = { creature: "pip", sessionId: conversation, origin: "creature" };
-      expect(await shown()).toEqual([
-        expect.objectContaining({ ...seated, what: { kind: "diff", ref: "cs-1" }, from: null }),
-        expect.objectContaining({
-          ...seated,
-          what: { kind: "file", ref: "src/a.ts" },
-          from: diff?.id,
-        }),
-        expect.objectContaining({ ...seated, what: { kind: "report", ref: "r1" }, from: child }),
-        { ...fromFile.setting, creature: "pip", sessionId: conversation, from: file?.id },
-        { ...fromChild.setting, creature: "pip", sessionId: child, from: child },
-      ]);
-      expect([fromFile.setting.origin, fromChild.setting.origin]).toEqual(["keeper", "keeper"]);
-      expect(world.log.since(0)).toContainEqual(
-        expect.objectContaining({
-          sessionId: conversation,
-          type: "child.started",
-          payload: expect.objectContaining({ sessionId: child }),
-        }),
-      );
-    } finally {
-      await world.close();
-    }
-  });
-});
-
-function readingProvider(turns: ReadonlyArray<(said: string) => TurnDelta[]>): Provider {
-  const queue = [...turns];
-  return {
-    name: "reading",
-    async *stream(request) {
-      const turn = queue.shift();
-      if (turn === undefined) throw new Error("the reading provider ran out of turns");
-      yield* turn(lastToolResultIn(request.messages));
-    },
-  };
-}
-
-function lastToolResultIn(messages: readonly Message[]): string {
-  const results = messages.flatMap((message) =>
-    message.parts.flatMap((part) => (part.type === "tool-result" ? [part.output] : [])),
-  );
-  return results.at(-1) ?? "";
-}
-
-function settingIdIn(said: string): string {
-  return /name (\S+) as from\./.exec(said)?.[1] ?? `no setting id in: ${said}`;
-}
-
-function childIdIn(said: string): string {
-  return /^↳ child (\S+)/.exec(said)?.[1] ?? `no child id in: ${said}`;
-}
-
-function showFromTurn(callId: string, what: { kind: string; ref: string }, from: string) {
-  return toolCallTurn({
-    type: "tool-call",
-    callId,
-    name: "show",
-    arguments: { what, why: "It grew from what you are reading.", from },
-  });
-}

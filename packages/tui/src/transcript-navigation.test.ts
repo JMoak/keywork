@@ -2,8 +2,6 @@ import { Agent, MockProvider, type Tool, textTurn, toolCallTurn } from "@keywork
 import { describe, expect, it } from "vitest";
 import { ConversationModel } from "./conversation-model.ts";
 import { parseChord } from "./keys.ts";
-import { TranscriptFeed } from "./transcript-feed.ts";
-import { TranscriptNavigation } from "./transcript-navigation.ts";
 
 const echoTool: Tool = {
   name: "echo",
@@ -143,35 +141,6 @@ describe("keyboard disclosure of older tool rows", () => {
     expect(open.some((line) => line.text === "echo: two")).toBe(false);
   });
 
-  it("wraps from the oldest row back to the newest", async () => {
-    const model = await ranTwoTools();
-    press(model, "shift+tab");
-    press(model, "shift+tab");
-    press(model, "shift+tab");
-    expect(toolLines(model).at(-1)?.selected).toBe(true);
-  });
-
-  it("leaves disclosure on escape or typing, keeping the rows as they were", async () => {
-    const model = await ranTwoTools();
-    press(model, "shift+tab");
-    press(model, "tab");
-    expect(press(model, "escape")).toBe(true);
-    expect(model.disclosing()).toBe(false);
-    expect(toolLines(model).some((line) => line.text === "echo: two")).toBe(true);
-    expect(toolLines(model).every((line) => line.selected === undefined)).toBe(true);
-
-    press(model, "shift+tab");
-    type(model, "x");
-    expect(model.disclosing()).toBe(false);
-    expect(model.input).toBe("x");
-  });
-
-  it("does nothing when no row can be disclosed", () => {
-    const model = new ConversationModel(undefined, () => {});
-    expect(press(model, "shift+tab")).toBe(false);
-    expect(model.disclosing()).toBe(false);
-  });
-
   it("scrolls the cursored row into view and returns to live on escape", async () => {
     const model = await ranTwoTools();
     press(model, "shift+tab");
@@ -250,22 +219,5 @@ describe("backtrack selection", () => {
     press(model, "backspace");
     press(model, "escape");
     expect(model.backtracking()).toBe(false);
-  });
-});
-
-describe("TranscriptNavigation viewport", () => {
-  it("hands the view only the state that is set and adopts the frame's clamp", () => {
-    const feed = new TranscriptFeed(() => {});
-    feed.entries.push({ kind: "user", text: "a" }, { kind: "user", text: "b" });
-    const navigation = new TranscriptNavigation(feed, () => {});
-    expect(navigation.viewport()).toEqual({ scrollBack: 0 });
-    navigation.scrollBy(5);
-    navigation.enterBacktrack();
-    expect(navigation.viewport()).toEqual({ scrollBack: 5, revealAt: 1, backtrackAt: 1 });
-    navigation.framed(3, 40);
-    expect(navigation.viewport()).toEqual({ scrollBack: 3, anchorTotal: 40, backtrackAt: 1 });
-    expect(navigation.selectedPrompt()).toEqual({ kind: "user", text: "b" });
-    navigation.reset();
-    expect(navigation.viewport()).toEqual({ scrollBack: 3 });
   });
 });

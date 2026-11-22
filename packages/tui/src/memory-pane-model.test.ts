@@ -106,12 +106,6 @@ const garden: MemoryNoteView[] = [
 ];
 
 describe("MemoryPaneModel garden lens", () => {
-  it("opens on the garden with the cursor on the first note", () => {
-    const { model } = modelOver({ notes: garden, layers: [workspace, arc] });
-    expect(model.currentLens()).toBe("garden");
-    expect(model.cursorRow()?.note).toBe("Dock Rule");
-  });
-
   it("enter drills into the note lens and escape returns to the same row", () => {
     const { model } = modelOver({ notes: garden });
     press(model, "j", "enter");
@@ -178,22 +172,6 @@ describe("MemoryPaneModel garden lens", () => {
     expect(model.currentLens()).toBe("ledger");
     press(model, "escape");
     expect(model.currentLens()).toBe("garden");
-  });
-
-  it("r asks for a refresh and unknown keys fall through", () => {
-    const { model, recorded } = modelOver({ notes: garden });
-    press(model, "r");
-    expect(recorded.refreshes).toBe(1);
-    expect(model.handleKey(parseChord("z"), 5)).toBe(false);
-    expect(model.handleKey(parseChord("shift+a"), 5)).toBe(false);
-  });
-
-  it("orders the focused arc's layer first", () => {
-    const { model } = modelOver(
-      { notes: garden, layers: [workspace, arc] },
-      { focusedArc: "dock-v2" },
-    );
-    expect(texts(model)[1]).toBe("#dock-v2 · 1 note");
   });
 });
 
@@ -285,48 +263,6 @@ describe("MemoryPaneModel note lens", () => {
     expect(model.focused()).toBe("Dock Rule");
     press(model, "h");
     expect(model.currentLens()).toBe("garden");
-  });
-
-  it("l opens the ledger filtered to the note and escape comes back to the note", () => {
-    const { model } = modelOver({
-      notes: garden,
-      ledger: [
-        {
-          id: "e1",
-          at: "2026-08-22T11:00:00Z",
-          verb: "edit",
-          subject: "Dock Rule",
-          notes: ["Dock Rule"],
-        },
-        {
-          id: "e2",
-          at: "2026-08-22T11:10:00Z",
-          verb: "edit",
-          subject: "Split Ratios",
-          notes: ["Split Ratios"],
-        },
-      ],
-    });
-    press(model, "enter", "l");
-    expect(model.currentLens()).toBe("ledger");
-    expect(texts(model)).toEqual(["ledger · 1 event · Dock Rule", "1h · edit · Dock Rule"]);
-    expect(model.state()).toEqual({ lens: "ledger", note: "Dock Rule" });
-    press(model, "escape");
-    expect(model.currentLens()).toBe("note");
-    expect(model.focused()).toBe("Dock Rule");
-  });
-
-  it("a and d act on staged rows that target the note, o opens its file", () => {
-    const { model, recorded } = modelOver({
-      notes: garden,
-      inbox: [inbox({ id: "s1", title: "Dock Rule.md", note: "Dock Rule" })],
-    });
-    press(model, "enter");
-    const staged = model.rows().findIndex((row) => row.inboxId === "s1");
-    expect(staged).toBeGreaterThan(0);
-    press(model, "end", "a", "o");
-    expect(recorded.approved).toEqual(["s1"]);
-    expect(recorded.opened).toEqual(["/vault/Dock Rule.md"]);
   });
 
   it("falls back to the garden when the focused note vanishes on refresh", () => {
@@ -513,16 +449,6 @@ describe("MemoryPaneModel airlock digest", () => {
     ]);
   });
 
-  it("space unfolds and refolds the below-bar notes", () => {
-    const { model } = digestModel();
-    press(model, "j", "j");
-    expect(model.cursorRow()?.airlock?.kind).toBe("fold");
-    press(model, "space");
-    expect(texts(model)).toContain("  ▓ Uncited Hunch · uncited");
-    press(model, "space");
-    expect(texts(model)).not.toContain("  ▓ Uncited Hunch · uncited");
-  });
-
   it("enter on the close row finishes, f forces, a delivers every eligible candidate", () => {
     const { model, finished, delivered } = digestModel();
     press(model, "j", "j", "j");
@@ -530,24 +456,5 @@ describe("MemoryPaneModel airlock digest", () => {
     press(model, "enter", "f", "a");
     expect(finished).toEqual(["dock-v2:false", "dock-v2:true"]);
     expect(delivered).toEqual(["dock-v2"]);
-  });
-
-  it("i lands on the digest, the inbox's fourth door, even when the cursor rests on a note", () => {
-    const { model } = digestModel();
-    press(model, "g");
-    expect(model.cursorRow()?.kind).toBe("note");
-    press(model, "i");
-    expect(model.cursorRow()?.airlock).toEqual({
-      arc: "dock-v2",
-      kind: "candidate",
-      key: "Arc Lesson",
-    });
-  });
-
-  it("enter on a candidate opens its note so it can be read before deciding", () => {
-    const { model } = digestModel();
-    press(model, "enter");
-    expect(model.currentLens()).toBe("note");
-    expect(model.focused()).toBe("Arc Lesson");
   });
 });

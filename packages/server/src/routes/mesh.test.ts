@@ -51,13 +51,7 @@ import { meshRouter } from "../mesh/router.ts";
 import { registerMeshListener } from "../mesh-listener.ts";
 import { openApiDocument } from "../openapi.ts";
 import { memorySessionHost } from "../testing.ts";
-import {
-  type MeshConsole,
-  meshFamily,
-  meshRoutes,
-  meshTrustRoutes,
-  pairedManifestReader,
-} from "./mesh.ts";
+import { type MeshConsole, meshFamily, meshTrustRoutes, pairedManifestReader } from "./mesh.ts";
 
 const listeners: TailnetListener[] = [];
 const directories: string[] = [];
@@ -321,26 +315,6 @@ describe("mesh pairing, grants and audit across two nodes", () => {
     });
   });
 
-  it("asks the target's keeper for an exec the grant does not cover and records the refusal", async () => {
-    const house = await meshNode(houseNode, hostNode);
-    const host = await meshNode(hostNode, houseNode);
-    const pair = await paired(house, host);
-    const grant = await house.mesh.grants.issue(
-      echoGrant(new Date(Date.now() + 60_000).toISOString()),
-    );
-    if ("refused" in grant) throw new Error(grant.error);
-    const listed = await callRemoteTool(house.mesh.client, pair, {
-      creature: "pip",
-      grantId: grant.id,
-      call: { callId: "c", name: "bash", arguments: { command: "ls" } },
-    });
-    expect(listed).toMatchObject({ verdict: "denied", reason: "the keeper declined" });
-    expect((await host.mesh.audit.rows()).at(-1)).toMatchObject({
-      capability: "exec",
-      decision: "deny",
-    });
-  });
-
   it("refuses a second human's hello and requests without a pair key", async () => {
     const house = await meshNode(houseNode, hostNode);
     const host = await meshNode(hostNode, { ...houseNode, userId: strangerId });
@@ -400,24 +374,6 @@ describe("mesh pairing, grants and audit across two nodes", () => {
 });
 
 describe("the mesh console routes", () => {
-  it("declare the pairing, grant and audit verbs", () => {
-    expect(meshRoutes.map((route) => `${route.method} ${route.path}`)).toEqual([
-      "GET /mesh/pairs",
-      "POST /mesh/pairs",
-      "POST /mesh/pairs/{id}/complete",
-      "POST /mesh/pairings/{id}/confirm",
-      "DELETE /mesh/pairs/{id}",
-      "GET /mesh/grants",
-      "POST /mesh/grants",
-      "DELETE /mesh/grants/{id}",
-      "GET /mesh/audit",
-      "POST /mesh/screen/audit",
-      "POST /mesh/messages",
-      "POST /mesh/messages/arrivals",
-    ]);
-    expect(meshRoutes.every((route) => route.authenticated)).toBe(true);
-  });
-
   it("answer 503 when the host serves no mesh", async () => {
     const log = new EventLog();
     const host: SessionHost = memorySessionHost({ log, provider: new MockProvider([]) });

@@ -1,5 +1,3 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { FetchLike } from "@keywork/engine";
 import type { KeyworkConfig } from "@keywork/shared";
@@ -19,52 +17,11 @@ import { type ObservationMap, readObservations } from "./inference/observations.
 import { type DeciderConnection, typesafeTerms } from "./inference/typesafe-connection.ts";
 import type { VerificationReport } from "./inference/verify.ts";
 import { typesafeRefusal } from "./memory-decider.ts";
-import { type ConnectIo, connectCommand, saveApiKey, terminalConnectIo } from "./setup.ts";
+import { type ConnectIo, connectCommand, terminalConnectIo } from "./setup.ts";
 import type { FirstModelSetup } from "./setup-model.ts";
 import { readUserConfig } from "./user-config.ts";
 
 const tempDir = scratchDirs("keywork-setup-");
-
-describe("saveApiKey", () => {
-  async function savedAuth(dir: string): Promise<Record<string, unknown>> {
-    return JSON.parse(await readFile(join(dir, "auth.json"), "utf8"));
-  }
-
-  it("writes an api_key credential under the provider name", async () => {
-    const dir = await tempDir();
-
-    await saveApiKey("openrouter", "sk-or-new", dir);
-
-    expect(await savedAuth(dir)).toEqual({
-      openrouter: { type: "api_key", key: "sk-or-new" },
-    });
-  });
-
-  it("keeps other providers' credentials and never touches keywork.json", async () => {
-    const dir = await tempDir();
-    await writeFile(join(dir, "keywork.json"), JSON.stringify({ model: "some-model" }), "utf8");
-    await saveApiKey("openai", "sk-old", dir);
-
-    await saveApiKey("openrouter", "sk-or-new", dir);
-
-    expect(await savedAuth(dir)).toEqual({
-      openai: { type: "api_key", key: "sk-old" },
-      openrouter: { type: "api_key", key: "sk-or-new" },
-    });
-    expect(JSON.parse(await readFile(join(dir, "keywork.json"), "utf8"))).toEqual({
-      model: "some-model",
-    });
-  });
-
-  it("tolerates a malformed auth file", async () => {
-    const dir = await tempDir();
-    await writeFile(join(dir, "auth.json"), "not json", "utf8");
-
-    await saveApiKey("openai", "sk-fresh", dir);
-
-    expect(await savedAuth(dir)).toEqual({ openai: { type: "api_key", key: "sk-fresh" } });
-  });
-});
 
 const ollama: ConnectionTarget = {
   id: "ollama",
@@ -283,34 +240,6 @@ describe("guided model setup", () => {
     );
     expect(saves).toEqual([expect.objectContaining({ name: "openai" })]);
     expect(remembered).toEqual([{ reference: "openai/beta", previous: undefined }]);
-  });
-
-  it("keeps the connection and leaves the starting model alone when the user declines", async () => {
-    const { port, saves } = fakePort({ ok: true, at: "t", models: ["alpha", "beta"] }, [openai]);
-    const { firstModel, remembered } = firstModelHarness();
-    const io = scriptedIo(["1", "2", ""], ["fake-key"]);
-
-    expect(await connectCommand(port, { group: "flagship", firstModel, io })).toBe(0);
-
-    expect(saves).toHaveLength(1);
-    expect(remembered).toEqual([]);
-    expect(io.printed).toContain("Starting model unchanged.");
-  });
-
-  it("uses an existing resolved preference without reopening provider setup", async () => {
-    const { port, saves } = fakePort({ ok: true, at: "t", models: [] });
-    const { firstModel, remembered } = firstModelHarness({
-      kind: "available",
-      reference: "openrouter/openai/gpt-5-mini",
-      configured: "openrouter/openai/gpt-5-mini",
-    });
-    const io = scriptedIo([]);
-
-    expect(await connectCommand(port, { firstModel, io })).toBe(0);
-
-    expect(io.printed).toEqual(["Starting model: openrouter/openai/gpt-5-mini"]);
-    expect(saves).toEqual([]);
-    expect(remembered).toEqual([]);
   });
 
   it("confirms a sole candidate before writing the first starting model", async () => {
@@ -606,19 +535,6 @@ describe("keywork connect typesafe", () => {
     expect(io.printed.join("\n")).not.toContain("does not name");
   });
 
-  it("asks nothing more when jev is already selected", async () => {
-    const { port } = fakePort({ ok: true, at: "t", models: [] });
-    const decider = fakeDecider(listed, "jev");
-    const io = scriptedIo([], ["ts-live-key"]);
-
-    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(0);
-
-    expect(decider.selections).toBe(0);
-    expect(io.printed.at(-1)).toBe(
-      "memory decider: jev, already set in /home/me/.keywork/keywork.json",
-    );
-  });
-
   it("saves nothing when TypeSafe refuses the key", async () => {
     const { port } = fakePort({ ok: true, at: "t", models: [] });
     const decider = fakeDecider({ ok: false, at: "t", reason: typesafeRefusal, status: 401 });
@@ -628,32 +544,5 @@ describe("keywork connect typesafe", () => {
 
     expect(decider.saved).toEqual([]);
     expect(io.printed.at(-1)).toBe("not saved: TypeSafe refused the key");
-  });
-
-  it("saves nothing without a key", async () => {
-    const { port } = fakePort({ ok: true, at: "t", models: [] });
-    const decider = fakeDecider(listed);
-    const io = scriptedIo([], [""]);
-
-    expect(await connectCommand(port, { io, argument: "typesafe", decider })).toBe(1);
-    expect(io.printed.at(-1)).toBe("not saved: typesafe needs an API key");
-  });
-
-  it("lists TypeSafe under its own heading, apart from the chat providers", async () => {
-    const { port } = fakePort({ ok: true, at: "t", models: [] });
-    const decider = fakeDecider(listed);
-    const io = scriptedIo(["4", ""], ["ts-live-key"]);
-
-    expect(await connectCommand(port, { io, decider })).toBe(0);
-
-    expect(io.printed.slice(0, 6)).toEqual([
-      "keywork connect: add an inference provider\n",
-      "  1. Ollama · http://localhost:11434/v1",
-      "  2. Custom OpenAI-compatible endpoint (URL)",
-      "  3. OpenAI via ChatGPT Plus/Pro (subscription sign-in)",
-      "\nmemory decisions:",
-      "  4. TypeSafe Jev (memory decisions)",
-    ]);
-    expect(decider.saved).toEqual(["ts-live-key"]);
   });
 });

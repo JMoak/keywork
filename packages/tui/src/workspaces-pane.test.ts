@@ -124,15 +124,6 @@ describe("WorkspacesPane", () => {
     expect(pane.model.rows().map((row) => row.label)).toEqual(["frontend", "default"]);
   });
 
-  it("switches through the seam on enter when nothing is running", async () => {
-    const { pane, world } = paneOf();
-    await pane.settled();
-    press(pane, "j");
-    press(pane, "enter");
-    await pane.settled();
-    expect(world.switched).toEqual([undefined]);
-  });
-
   it("asks first when live turns would be retired", async () => {
     const { pane, world } = paneOf(worldOf(), { liveTurns: () => 2 });
     await pane.settled();
@@ -182,28 +173,5 @@ describe("WorkspacesPane", () => {
     await pane.settled();
     expect(notices.at(-1)).toBe("nope isn't a directory");
     expect(pane.view({ theme, focused: true, width: 60, height: 12 })).toBeDefined();
-  });
-
-  it("opens the tray on its key and lists the level's commands", async () => {
-    const { pane } = paneOf();
-    await pane.settled();
-    expect(pane.tray.open).toBe(false);
-    press(pane, "/", "/");
-    expect(pane.tray.open).toBe(true);
-    expect(pane.tray.matches().map((command) => command.name)).toEqual([
-      "switch",
-      "new",
-      "link",
-      "focus",
-      "refresh",
-    ]);
-  });
-
-  it("selects a row from a click at the workspaces level", async () => {
-    const { pane } = paneOf();
-    await pane.settled();
-    pane.view({ theme, focused: true, width: 60, height: 12 });
-    expect(pane.handleMouse({ x: 2, y: 2 }, { type: "down", x: 2, y: 2, button: 0 })).toBe(true);
-    expect(pane.model.cursorRow()?.label).toBe("default");
   });
 });

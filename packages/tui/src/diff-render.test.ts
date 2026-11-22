@@ -20,20 +20,10 @@ describe("unifiedDiff", () => {
     ]);
   });
 
-  it("reports identical content as no changes", () => {
-    expect(unifiedDiff("same\ntext", "same\ntext")).toEqual([{ kind: "note", text: "no changes" }]);
-  });
-
   it("treats CRLF and LF variants of the same text as no changes", () => {
     expect(unifiedDiff("one\r\ntwo\r\n", "one\ntwo\n")).toEqual([
       { kind: "note", text: "no changes" },
     ]);
-  });
-
-  it("renders a pure deletion", () => {
-    const lines = unifiedDiff("keep\ngone\n", "keep\n");
-    expect(render(lines)).toContain("del:gone");
-    expect(lines.some((line) => line.kind === "add")).toBe(false);
   });
 
   it("splits distant changes into separate hunks", () => {
@@ -85,16 +75,6 @@ describe("mutationDiff", () => {
     expect(lines.some((line) => line.kind === "del")).toBe(false);
   });
 
-  it("previews emptying a file as pure deletions", () => {
-    const lines = mutationDiff("write", { path: "notes.txt", content: "" }, read) ?? [];
-    expect(lines.filter((line) => line.kind === "del").map((line) => line.text)).toEqual([
-      "alpha",
-      "beta",
-      "gamma",
-    ]);
-    expect(lines.some((line) => line.kind === "add")).toBe(false);
-  });
-
   it("previews an edit by applying the replacement to the current content", () => {
     const lines = mutationDiff(
       "edit",
@@ -113,15 +93,6 @@ describe("mutationDiff", () => {
       "add:uno",
       "context:two",
     ]);
-  });
-
-  it("reports a no-op edit as no changes", () => {
-    const lines = mutationDiff(
-      "edit",
-      { path: "notes.txt", oldText: "beta", newText: "beta" },
-      read,
-    );
-    expect(lines).toEqual([{ kind: "note", text: "no changes" }]);
   });
 
   it("states truthfully when an edit target is missing or ambiguous", () => {

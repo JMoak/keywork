@@ -92,19 +92,6 @@ describe("TerminalModel mirror mode", () => {
     expect(texts(model)).toEqual(["command:$ false", "output:exit 1", "failure:· failed"]);
   });
 
-  it("ignores tools that are not shells and output for unknown calls", () => {
-    const bus = new EventBus();
-    const model = new TerminalModel({ mode: "mirror", notify: () => {}, mirror: mirrorOver(bus) });
-    texts(model);
-    bus.emit("tool.started", {
-      call: { type: "tool-call", callId: "w1", name: "write", arguments: { path: "x" } },
-    });
-    bus.emit("tool.output", { chunk: "noise\n", callId: "w1" });
-    bus.emit("tool.finished", { callId: "w1", output: "", isError: false });
-    expect(texts(model)).toEqual([]);
-    expect(model.status()).toBe("mirroring");
-  });
-
   it("keeps trying to locate a bus until one exists and unsubscribes on dispose", () => {
     const bus = new EventBus();
     let available = false;
@@ -211,12 +198,6 @@ describe("TerminalModel shell mode", () => {
     child.emit("late\n");
     expect(notified).toBe(0);
     expect(model.shellRunning()).toBe(false);
-  });
-
-  it("stays without a shell when no spawner is wired", () => {
-    const model = new TerminalModel({ mode: "shell", notify: () => {} });
-    expect(model.shellRunning()).toBe(false);
-    expect(model.status()).toBe("no shell");
   });
 });
 

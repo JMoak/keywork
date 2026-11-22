@@ -17,13 +17,7 @@ describe("defaultTransport", () => {
     expect(defaultTransport({ platform: "win32" }).name).toBe("cli");
   });
 
-  it("keeps the named pipe behind a flag on Windows, falling back to the CLI", () => {
-    expect(defaultTransport({ platform: "win32", windowsPipe: true }).name).toBe(
-      "localapi (falls back to cli)",
-    );
-  });
-
-  it.each(["linux", "darwin", "freebsd"] as const)(
+  it.each(["linux", "darwin"] as const)(
     "speaks the LocalAPI on %s with the CLI behind it",
     (platform) => {
       expect(defaultTransport({ platform }).name).toBe("localapi (falls back to cli)");

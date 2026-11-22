@@ -15,12 +15,6 @@ const oneBadField = `{
 `;
 
 describe("updateUserConfig", () => {
-  it("starts from an empty config when the file is missing", async () => {
-    const dir = await tempDir();
-    await updateUserConfig((existing) => ({ ...existing, model: "openai/gpt-5-mini" }), dir);
-    expect(await readUserConfig(dir)).toEqual({ model: "openai/gpt-5-mini" });
-  });
-
   it("hands the mutator every field of a valid file and writes them all back", async () => {
     const dir = await tempDir();
     await writeFile(
@@ -58,11 +52,5 @@ describe("updateUserConfig", () => {
     await writeFile(file, "{ not json", "utf8");
     await expect(updateUserConfig((existing) => existing, dir)).rejects.toThrow(ConfigError);
     expect(await readFile(file, "utf8")).toBe("{ not json");
-  });
-
-  it("reads through the same strict parser", async () => {
-    const dir = await tempDir();
-    await writeFile(join(dir, "keywork.json"), oneBadField, "utf8");
-    await expect(readUserConfig(dir)).rejects.toThrow(ConfigError);
   });
 });

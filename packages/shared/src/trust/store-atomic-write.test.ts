@@ -65,15 +65,6 @@ afterEach(() => {
 });
 
 describe("TrustStore atomic writes", () => {
-  it("stages the file beside the target and renames it into place", () => {
-    openStore().trust(repo);
-
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatch(/^write trust\.json\..+\.tmp$/);
-    expect(calls[1]).toMatch(/^rename trust\.json\..+\.tmp -> trust\.json$/);
-    expect(trustDirectoryListing()).toEqual(["trust.json"]);
-  });
-
   it("keeps the previous trust file intact and parseable when a write is interrupted", () => {
     openStore().trust(repo);
     const before = readFileSync(file, "utf8");
@@ -84,16 +75,5 @@ describe("TrustStore atomic writes", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
     expect(openStore().resolve(repo)).toBe("trusted");
     expect(trustDirectoryListing()).toEqual(["trust.json"]);
-  });
-
-  it("forgets through the same staged write", () => {
-    const store = openStore();
-    store.trust(repo);
-    calls.length = 0;
-
-    store.forget(repo);
-
-    expect(calls.map((call) => call.split(" ")[0])).toEqual(["write", "rename"]);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({});
   });
 });

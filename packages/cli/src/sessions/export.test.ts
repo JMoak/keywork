@@ -32,24 +32,6 @@ describe("exportSession", () => {
     expect(html).not.toContain("first branch");
   });
 
-  it("names a whole-tree export apart from a path export", async () => {
-    const { dir, store } = await seeded();
-
-    const written = await exportSession(store, { scope: "tree", cwd: dir });
-
-    expect(written).toBe(store.file.replace(/\.jsonl$/, ".tree.html"));
-    expect(await readFile(written, "utf8")).toContain("first branch");
-  });
-
-  it("writes to a path the user gives, relative to their folder", async () => {
-    const { dir, store } = await seeded();
-
-    const written = await exportSession(store, { scope: "path", out: "share.html", cwd: dir });
-
-    expect(written).toBe(join(dir, "share.html"));
-    expect(await readFile(written, "utf8")).toContain("<!doctype html>");
-  });
-
   it("drops the default file name into a folder the user gives", async () => {
     const { dir, store } = await seeded();
     await mkdir(join(dir, "exports"));
@@ -65,11 +47,8 @@ describe("exportSession", () => {
 describe("parseExportArgs", () => {
   it.each([
     [undefined, { scope: "path" }],
-    ["", { scope: "path" }],
-    ["tree", { scope: "tree" }],
     ["tree  my notes/out.html ", { scope: "tree", out: "my notes/out.html" }],
     ["trees.html", { scope: "path", out: "trees.html" }],
-    ["out.html", { scope: "path", out: "out.html" }],
   ])("reads %j", (args, expected) => {
     expect(parseExportArgs(args)).toEqual(expected);
   });

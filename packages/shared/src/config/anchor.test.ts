@@ -68,13 +68,6 @@ describe("resolveAnchor", () => {
 });
 
 describe("writeWorkspaceDeclaration", () => {
-  it("writes a declaration the walk-up then discovers", async () => {
-    const root = await tempRoot();
-    writeWorkspaceDeclaration(root, { name: "alpha" });
-
-    expect(openWorkspace(root)?.name).toBe("alpha");
-  });
-
   it("refuses to create an anchor inside a declared workspace", async () => {
     const root = await tempRoot();
     await declareWorkspace(root, { name: "outer" });

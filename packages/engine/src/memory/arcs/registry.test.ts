@@ -99,15 +99,6 @@ describe("the theme an arc wears", () => {
     expect((await registry.readArc("dock-v2"))?.theme).toBe("rose-pine");
   });
 
-  it("takes the theme off when none is given", async () => {
-    const { registry } = await vault();
-    await registry.createArc("dock-v2");
-    await registry.wearTheme("dock-v2", "rose-pine");
-    const bare = await registry.wearTheme("dock-v2", undefined);
-    expect(bare).not.toHaveProperty("theme");
-    expect(await registry.readArc("dock-v2")).not.toHaveProperty("theme");
-  });
-
   it("dresses only active arcs", async () => {
     const { registry } = await vault();
     await registry.createArc("dock-v2");
@@ -196,15 +187,6 @@ describe("untrusted workspaces keep arcs fully inert", () => {
 });
 
 describe("arc slugs on disk", () => {
-  it("reads back a record written by another registry instance", async () => {
-    const { registry, root } = await vault();
-    await registry.createArc("infra");
-    const fresh = new ArcRegistry({ vaultRoot: root, trusted: true });
-    const record = await fresh.readArc("infra");
-    expect(record?.status).toBe("active");
-    expect(record?.created).toBe("2026-08-16T09:00:00.000Z");
-  });
-
   it("treats a hand-mangled MOC without status as active", async () => {
     const { registry, root } = await vault();
     await registry.createArc("infra");

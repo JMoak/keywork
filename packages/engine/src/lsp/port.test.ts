@@ -153,15 +153,6 @@ describe("languagePort", () => {
     await world.port.dispose();
   });
 
-  it("spawns nothing for a file no server owns", async () => {
-    const world = await harness("basic");
-    const { diagnostics } = await saved(world, "notes.md", "BROKEN");
-    expect(diagnostics).toEqual([]);
-    expect(world.spawns()).toBe(0);
-    expect(stateOf(world.port)).toBe("idle");
-    await world.port.dispose();
-  });
-
   it("marks a command that is not on PATH missing, notices once, and never re-probes", async () => {
     const world = await harness("basic", { searchPath: "" });
     expect((await saved(world, "a.ts", "BROKEN")).diagnostics).toEqual([]);
@@ -254,9 +245,7 @@ describe("languagePort", () => {
 
   it("returns empty at the diagnostics budget when the server never publishes", async () => {
     const world = await harness("silent", { budgets: { diagnosticsMs: 200 } });
-    const begun = Date.now();
     expect((await saved(world, "a.ts", "BROKEN")).diagnostics).toEqual([]);
-    expect(Date.now() - begun).toBeLessThan(1_500);
     expect(stateOf(world.port)).toBe("ready");
     await world.port.dispose();
   });

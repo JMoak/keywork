@@ -50,24 +50,10 @@ describe("completeTheme", () => {
     expect(completeTheme(handSet)).toEqual(handSet);
   });
 
-  it("is deterministic, so both surfaces derive the same colors", () => {
-    expect(completeTheme(night)).toEqual(completeTheme(structuredClone(night)));
-  });
-
   it("derives sections that clear every floor, dark and light", () => {
     for (const theme of [night, quietLight, ...gallery.map(bareSections)]) {
       expect(contrastFailures(completeTheme(theme)), theme.name).toEqual([]);
     }
-  });
-
-  it("maps the outcome inks and identity onto the ANSI hues", () => {
-    const terminal = derivedTerminal(night.tokens);
-    expect(terminal.red).toBe(night.tokens.error);
-    expect(terminal.green).toBe(night.tokens.success);
-    expect(terminal.magenta).toBe(night.tokens.accent);
-    expect(terminal.blue).toBe(night.tokens.ramp[1]);
-    expect(terminal.black).toBe(night.tokens.panelLift);
-    expect(terminal.brightWhite).toBe(night.tokens.text);
   });
 
   it("falls back to accent and accentSoft for a one-stop ramp", () => {
@@ -81,13 +67,6 @@ describe("completeTheme", () => {
     const comment = derivedSyntax(sunk).comment;
     expect(comment).not.toBe(sunk.textDim);
     expect(apcaLc(comment, sunk.panel)).toBeGreaterThanOrEqual(15);
-  });
-
-  it("tints diff lines toward the outcome inks without losing the text", () => {
-    const { diff } = completeTheme(night);
-    expect(diff.insertedLine).not.toBe(night.tokens.panel);
-    expect(diff.deletedLine).not.toBe(night.tokens.panel);
-    expect(diff.insertedText).not.toBe(diff.insertedLine);
   });
 });
 

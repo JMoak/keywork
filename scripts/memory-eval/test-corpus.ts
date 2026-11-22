@@ -16,7 +16,6 @@ import {
   type Label,
   type LabelSource,
   type OutcomeRecord,
-  type PairPoint,
   pointHash,
 } from "./corpus.ts";
 
@@ -58,17 +57,6 @@ export function entryPoint(id: string, half: Half = "held-out"): EntryPoint {
     question: memoryQuestions.entryDurability,
     half,
     entry: { id, date: "2026-10-08", time: "09:00", provenance: "agent", text: `entry ${id}` },
-  };
-}
-
-export function pairPoint(id: string, half: Half = "held-out"): PairPoint {
-  return {
-    id,
-    question: memoryQuestions.pairRelation,
-    half,
-    a: { name: `${id} older`, title: `${id} older`, provenance: "agent", body: "older body" },
-    b: { name: `${id} newer`, title: `${id} newer`, provenance: "agent", body: "newer body" },
-    similarity: 0.5,
   };
 }
 

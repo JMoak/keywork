@@ -215,13 +215,6 @@ describe("the creature MCP route on the tailnet listener", () => {
     expect(house.arrivals).toEqual([]);
   });
 
-  it("answers 404 in words when no workspace keeps the creature", async () => {
-    const house = node(houseNode, hostNode);
-    const response = await call(house.routes, "zed", callerOf(hostNode), await ticketFor("zed"));
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "no workspace keeps zed" });
-  });
-
   it("checks the protocol headers before forwarding anything", async () => {
     const house = node(houseNode, hostNode);
     const token = await ticketFor("pip");

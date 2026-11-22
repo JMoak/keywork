@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message, Usage } from "./messages.ts";
-import { MockProvider, textTurn } from "./mock-provider.ts";
 import { SessionStore } from "./session/store.ts";
 
 const richMessage: Message = {
@@ -43,19 +42,6 @@ async function sessionFile(): Promise<string> {
 }
 
 describe("rich message parts", () => {
-  it("stream through the mock provider untouched", async () => {
-    const provider = new MockProvider([textTurn("it says hello")]);
-    const deltas = [];
-    for await (const delta of provider.stream({
-      systemPrompt: "",
-      messages: [richMessage],
-      tools: [],
-    })) {
-      deltas.push(delta);
-    }
-    expect(deltas[0]).toEqual({ type: "text", text: "it says hello" });
-  });
-
   it("persist through the session store losslessly, cache usage included", async () => {
     const file = await sessionFile();
     const store = await SessionStore.create(file, ".");

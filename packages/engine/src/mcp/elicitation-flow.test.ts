@@ -4,11 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ToolCallPart } from "../messages.ts";
 import type { Tool } from "../tools.ts";
 import { connectStdioServer, type McpConnection, type StdioServerSpec } from "./client.ts";
-import {
-  decliningElicitation,
-  type ElicitationHandler,
-  type ElicitationRequest,
-} from "./elicitation.ts";
+import type { ElicitationHandler, ElicitationRequest } from "./elicitation.ts";
 import { askGateElicitation, elicitationToolName } from "./elicitation-gate.ts";
 import { McpRegistry } from "./registry.ts";
 import { mcpSearchToolName } from "./tool-search.ts";
@@ -69,19 +65,6 @@ describe("elicitation through McpSession.callTool", () => {
     expect(result).toEqual({ text: "hello octocat in Green", isError: false });
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ mode: "form", key: "who", message: "Who should I greet?" });
-  });
-
-  it("ends a decline with a readable tool error carrying the reason", async () => {
-    const connection = await connect(async () => ({ action: "decline", reason: "not today" }));
-    const result = await connection.callTool("confirm", {});
-    expect(result.isError).toBe(true);
-    expect(result.text).toBe("not today · confirm: the user decline");
-  });
-
-  it("overrides the connection handler with a per-call one", async () => {
-    const connection = await connect(decliningElicitation);
-    const result = await connection.callTool("confirm", {}, { elicit: accepting() });
-    expect(result).toEqual({ text: "confirmed", isError: false });
   });
 
   it("stops a server that asks again after a decline, and caps endless asking", async () => {

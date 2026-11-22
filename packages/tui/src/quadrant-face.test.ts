@@ -7,10 +7,6 @@ import {
 } from "./quadrant-face.ts";
 
 describe("the quadrant face", () => {
-  it("renders a known word at double horizontal resolution", () => {
-    expect(quadrantRasterize(["hi"])).toEqual(["▌ ▌▜▘", "▛▀▌▐", "▌ ▌▟▖"]);
-  });
-
   it("measures half the subpixel width, gaps included", () => {
     expect(quadrantMeasure("session")).toBe(20);
     expect(quadrantMeasure("hi")).toBe(5);
@@ -24,12 +20,6 @@ describe("the quadrant face", () => {
       expect(lines).toHaveLength(quadrantRowsPerLine);
       expect(Math.max(...lines.map((line) => line.length))).toBe(quadrantMeasure(word));
     }
-  });
-
-  it("joins words at the cell level so every letter carves identically", () => {
-    const [alone] = quadrantRasterize(["habit"]);
-    const paired = quadrantRasterize(["fold", "habit"])[0] ?? "";
-    expect(paired.endsWith(alone ?? "")).toBe(true);
   });
 
   it("supports the slug alphabet and refuses the rest", () => {

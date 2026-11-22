@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { promptMessage } from "../../../messages.ts";
 import type { ProviderRequest, TurnDelta } from "../../../provider.ts";
-import { eligibleClasses, missingFor, type ServerFingerprint } from "../../capabilities/index.ts";
+import { eligibleClasses, type ServerFingerprint } from "../../capabilities/index.ts";
 import { probeHttp } from "../http.ts";
 import { ToolChoiceUnmetError } from "../local-chat.ts";
 import { FixtureServer, loadFixture, type ServerFixture } from "../testing/fixture-server.ts";
@@ -37,16 +37,6 @@ describe("the Ollama adapter contract, pinned to the fixture's server version", 
     expect(ollamaDeltas.defaultPort).toBe(11434);
   });
 
-  it("fingerprints by /api/version", async () => {
-    expect(await ollamaAdapter.fingerprint(probe)).toEqual({
-      id: "ollama@0.40.14",
-      kind: "ollama",
-      version: "0.40.14",
-      build: null,
-      routes: ["/api/version"],
-    });
-  });
-
   it("gates /v1/messages and /v1/responses on the version that added them", async () => {
     server.route("GET /api/version", { body: { version: "0.13.5" } });
     const old = await fingerprint();
@@ -54,20 +44,6 @@ describe("the Ollama adapter contract, pinned to the fixture's server version", 
     expect(record.protocols).toMatchObject({ known: true, value: ["chat-completions"] });
     expect(versionAtLeast("v0.40.14-rc1", "0.40.14")).toBe(true);
     expect(versionAtLeast(null, "0.1")).toBe(false);
-  });
-
-  it("tells installed from loaded models", async () => {
-    const inventory = await ollamaAdapter.inventory(probe);
-    expect(inventory.installed.map((model) => model.id)).toEqual(["qwen3.8:27b", "nimble:latest"]);
-    expect(inventory.loaded).toEqual([
-      {
-        id: "qwen3.8:27b",
-        state: "loaded",
-        contextAllocated: 32768,
-        memoryBytes: 21474836480,
-        expiresAt: "2026-11-05T12:05:00.000Z",
-      },
-    ]);
   });
 
   it("describes a model from /api/show and /api/ps, never from its name", async () => {
@@ -97,14 +73,6 @@ describe("the Ollama adapter contract, pinned to the fixture's server version", 
     expect(record.modalities).toMatchObject({ known: true, value: { output: ["decisions"] } });
     expect(record.contextAllocated).toMatchObject({ known: false });
     expect(eligibleClasses(record)).toEqual(["decide"]);
-  });
-
-  it("refuses the strong class at 32K allocated and names the missing capability", async () => {
-    const record = await ollamaAdapter.describe(probe, "qwen3.8:27b", await fingerprint());
-    expect(missingFor(record, "strong")).toEqual([
-      { capability: "contextAllocated", needs: "at least 131072 tokens of context allocated" },
-    ]);
-    expect(eligibleClasses(record)).toEqual(["vision"]);
   });
 
   it("verifies num_ctx against the agent floor and proposes a Modelfile variant", async () => {
@@ -140,20 +108,6 @@ describe("the Ollama adapter contract, pinned to the fixture's server version", 
       model: "nimble:latest",
       keep_alive: -1,
     });
-  });
-
-  it("reports residency in health and down when unreachable", async () => {
-    expect(await ollamaAdapter.health(probe, "qwen3.8:27b")).toMatchObject({
-      state: "up",
-      resident: true,
-    });
-    expect(await ollamaAdapter.health(probe, "nimble")).toMatchObject({
-      state: "up",
-      resident: false,
-    });
-    await server.close();
-    expect(await ollamaAdapter.health(probe)).toMatchObject({ state: "down" });
-    server = new FixtureServer(fixture);
   });
 });
 

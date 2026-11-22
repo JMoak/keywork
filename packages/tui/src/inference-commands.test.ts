@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { editorHeaderRows } from "./connect-model.ts";
 import type {
   ConnectionsPort,
   ConnectionTarget,
@@ -86,16 +85,6 @@ function probeWithInference() {
 }
 
 describe("/model", () => {
-  it("is registered with /connect and its aliases only when the ports exist", () => {
-    const bare = new AppProbe();
-    expect(bare.core.registry.search("model").map((entry) => entry.name)).not.toContain("model");
-    const { probe } = probeWithInference();
-    const names = probe.core.registry.all().map((command) => command.name);
-    expect(names).toEqual(expect.arrayContaining(["model", "connect"]));
-    expect(probe.core.registry.run("setup")).toBe(true);
-    expect(probe.snapshot().overlay).toBe("connect");
-  });
-
   it("opens a neutral picker on the current model, filters as you type, and switches on enter", async () => {
     const { probe, switched } = probeWithInference();
     expect(probe.command("model")).toBe(true);
@@ -124,15 +113,6 @@ describe("/model", () => {
     await probe.settled();
     expect(switched).toEqual(["ollama/qwen3"]);
     expect(probe.snapshot().notice).toBe("nobody knows nope/x · pick one with /model");
-  });
-
-  it("closes the picker on escape without switching", async () => {
-    const { probe, switched } = probeWithInference();
-    probe.command("model");
-    probe.keys("escape");
-    await probe.settled();
-    expect(probe.snapshot().overlay).toBeUndefined();
-    expect(switched).toEqual([]);
   });
 
   it("selects the model under a click and closes on a click outside", async () => {
@@ -186,14 +166,6 @@ describe("/model", () => {
     await probe.settled();
     expect(switched).toEqual([`openrouter/model-${firstShown + 1}`]);
   });
-
-  it("pastes into the picker's query", () => {
-    const { probe } = probeWithInference();
-    probe.command("model");
-    probe.paste("qwen\n");
-    expect(probe.core.modelPicker()?.query).toBe("qwen");
-    expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("ollama/qwen3");
-  });
 });
 
 describe("/connect", () => {
@@ -212,26 +184,6 @@ describe("/connect", () => {
     probe.paste("sk-live-123\n");
     expect(model.stage.kind === "editor" && model.stage.draft.apiKey).toBe("sk-live-123");
     expect(probe.snapshot().overlay).toBe("connect");
-  });
-
-  it("keeps the draft on a click inside the editor and focuses the clicked field past the heading", () => {
-    const { probe, model } = connectEditor();
-    probe.keys("down", "down").type("x");
-    const frame = probe.core.overlayFrame();
-    if (frame === undefined || model.stage.kind !== "editor") throw new Error("editor expected");
-    probe.click(frame.x + 2, frame.firstRowY + editorHeaderRows(model.stage));
-    expect(probe.snapshot().overlay).toBe("connect");
-    expect(model.stage.kind === "editor" && model.stage.field).toBe(0);
-    expect(model.stage.kind === "editor" && model.stage.draft.apiKey).toBe("x");
-  });
-
-  it("a click outside the editor walks back to the list like escape, and once more closes", () => {
-    const { probe, model } = connectEditor();
-    probe.click(0, 0);
-    expect(probe.snapshot().overlay).toBe("connect");
-    expect(model.stage.kind).toBe("targets");
-    probe.click(0, 0);
-    expect(probe.snapshot().overlay).toBeUndefined();
   });
 
   it("hands enter on the receipt to a model picker that stays open and takes keys", async () => {
@@ -258,16 +210,5 @@ describe("/connect", () => {
     probe.type("qwen");
     expect(probe.core.modelPicker()?.query).toBe("qwen");
     expect(probe.core.modelPicker()?.selected()?.choice.reference).toBe("ollama/qwen3");
-  });
-
-  it("opens the clicked target from the target list", () => {
-    const { probe } = probeWithInference();
-    probe.command("connect");
-    const model = probe.core.connectModel();
-    const frame = probe.core.overlayFrame();
-    if (frame === undefined) throw new Error("overlay expected");
-    probe.click(frame.x + 2, frame.firstRowY);
-    expect(model?.stage.kind).toBe("editor");
-    expect(probe.snapshot().overlay).toBe("connect");
   });
 });

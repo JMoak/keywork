@@ -4,19 +4,9 @@ import { buildSystemPrompt } from "./prompt.ts";
 const base = "You are keywork";
 
 describe("buildSystemPrompt", () => {
-  it("returns only the base prompt with no inputs", () => {
-    const prompt = buildSystemPrompt();
-    expect(prompt).toContain(base);
-    expect(prompt).not.toContain("Project instructions:");
-  });
-
   it("appends project instructions after the base prompt", () => {
     const prompt = buildSystemPrompt({ projectInstructions: "use tabs" });
     expect(prompt.indexOf(base)).toBeLessThan(prompt.indexOf("Project instructions:\nuse tabs"));
-  });
-
-  it("ignores blank project instructions", () => {
-    expect(buildSystemPrompt({ projectInstructions: "  \n " })).toBe(buildSystemPrompt());
   });
 
   it("places the global user prompt after project instructions", () => {
@@ -25,14 +15,6 @@ describe("buildSystemPrompt", () => {
       prompts: { system: "always answer tersely" },
     });
     expect(prompt.indexOf("use tabs")).toBeLessThan(prompt.indexOf("always answer tersely"));
-  });
-
-  it("applies the global prompt when no model id is known", () => {
-    const prompt = buildSystemPrompt({
-      prompts: { system: "be terse", models: { "gpt-5*": { prompt: "x", mode: "append" } } },
-    });
-    expect(prompt).toContain("be terse");
-    expect(prompt).not.toContain("\n\nx");
   });
 
   it("appends a matching override after the global prompt", () => {
@@ -109,10 +91,6 @@ describe("buildSystemPrompt", () => {
     });
     expect(prompt.indexOf("use tabs")).toBeLessThan(prompt.indexOf("Repo map"));
     expect(prompt.indexOf("src/core.ts: widelyUsed")).toBeLessThan(prompt.indexOf("be terse"));
-  });
-
-  it("omits the repo map section when the map is blank", () => {
-    expect(buildSystemPrompt({ repoMap: "  \n" })).toBe(buildSystemPrompt());
   });
 
   it("treats regex metacharacters in patterns as literals", () => {

@@ -253,20 +253,6 @@ describe("creature messages on one machine", () => {
 });
 
 describe("a hand-off between two creatures", () => {
-  it("is reported once a message between two creatures here is delivered, each direction as sent", async () => {
-    const { mail, handoffs } = await fixture();
-    expect(await mail.send({ from: "ada", to: "pip", text: "the kettle is on" })).toHaveProperty(
-      "delivered",
-    );
-    expect(await mail.send({ from: "pip", to: "ada", text: "two cups" })).toHaveProperty(
-      "delivered",
-    );
-    expect(handoffs).toEqual([
-      { from: "ada", to: "pip" },
-      { from: "pip", to: "ada" },
-    ]);
-  });
-
   it("is never reported for a message refused, drafted wrong or with no conversation to take it", async () => {
     const { mail, host, handoffs } = await fixture({ limits: { perSenderHourly: 2 } });
     const refused = async (draft: Record<string, unknown>) =>

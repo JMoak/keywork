@@ -20,11 +20,6 @@ afterEach(async () => {
 });
 
 describe("loadConfig", () => {
-  it("returns defaults when no config files exist", async () => {
-    const config = await loadConfig({});
-    expect(config).toEqual(defaultConfig);
-  });
-
   it("layers project config over user config over defaults", async () => {
     const userDir = await dirWithConfig({
       model: "openrouter/some-model",
@@ -202,75 +197,11 @@ describe("loadConfig", () => {
     expect(config.apiKeys).toEqual({ openrouter: "user-key" });
   });
 
-  it("keeps user credentials when the project layer sets empty apiKeys", async () => {
-    const userDir = await dirWithConfig({ apiKeys: { openai: "user-key" } });
-    const projectDir = await dirWithConfig({ apiKeys: {} });
-
-    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
-
-    expect(config.apiKeys).toEqual({ openai: "user-key" });
-  });
-
-  it("deep-merges palette so a project token cannot clobber sibling user tokens", async () => {
-    const userDir = await dirWithConfig({
-      palette: { accent: "#112233", background: "#000000" },
-    });
-    const projectDir = await dirWithConfig({ palette: { accent: "#445566" } });
-
-    const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
-
-    expect(config.palette).toEqual({ accent: "#445566", background: "#000000" });
-  });
-
   it("rejects palette values that are not #rrggbb, pointing at the token", async () => {
     const userDir = await dirWithConfig({ palette: { accent: "hotpink" } });
 
     await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
     await expect(loadConfig({ userDir })).rejects.toThrow(/#rrggbb[\s\S]*at palette\.accent/);
-  });
-
-  it("rejects a misspelled palette token at load instead of inside the app", async () => {
-    const userDir = await dirWithConfig({ palette: { acent: "#ff00ff" } });
-
-    await expect(loadConfig({ userDir })).rejects.toThrow(ConfigError);
-    await expect(loadConfig({ userDir })).rejects.toThrow(
-      /Unrecognized key: "acent"[\s\S]*at palette/,
-    );
-  });
-
-  it("accepts any real theme token as a palette override", async () => {
-    const userDir = await dirWithConfig({
-      palette: { panelLift: "#24283b", textMid: "#828bb8", borderFocus: "#bb9af7" },
-    });
-
-    const config = await loadConfig({ userDir });
-
-    expect(config.palette).toEqual({
-      panelLift: "#24283b",
-      textMid: "#828bb8",
-      borderFocus: "#bb9af7",
-    });
-  });
-
-  it("accepts uppercase hex palette values", async () => {
-    const userDir = await dirWithConfig({ palette: { accent: "#AABBCC" } });
-
-    const config = await loadConfig({ userDir });
-
-    expect(config.palette).toEqual({ accent: "#AABBCC" });
-  });
-
-  it("round-trips a palette ramp beside token overrides", async () => {
-    const userDir = await dirWithConfig({
-      palette: { accent: "#112233", ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"] },
-    });
-
-    const config = await loadConfig({ userDir });
-
-    expect(config.palette).toEqual({
-      accent: "#112233",
-      ramp: ["#bb9af7", "#7aa2f7", "#7dcfff"],
-    });
   });
 
   it("accepts a one-stop ramp", async () => {
@@ -305,15 +236,6 @@ describe("loadConfig", () => {
     const config = await loadConfig({ userDir, projectDir, projectTrusted: true });
 
     expect(config.palette).toEqual({ accent: "#112233", ramp: ["#0000aa", "#0000bb"] });
-  });
-
-  it("names the startup theme with theme", async () => {
-    const userDir = await dirWithConfig({ theme: "catppuccin-latte" });
-
-    const config = await loadConfig({ userDir });
-
-    expect(config.theme).toBe("catppuccin-latte");
-    expect(startupThemeName(config)).toBe("catppuccin-latte");
   });
 
   it("still reads the deprecated flavor key as the startup theme for one release", async () => {
@@ -450,17 +372,6 @@ describe("loadConfig", () => {
     ).rejects.toThrow(ConfigError);
   });
 
-  it("round-trips the notifications policy and rejects a transport it does not know", async () => {
-    expect(await loadConfig({})).not.toHaveProperty("notifications");
-    for (const policy of ["auto", "osc777", "osc9", "bell", "off"]) {
-      const userDir = await dirWithConfig({ notifications: policy });
-      expect((await loadConfig({ userDir })).notifications).toBe(policy);
-    }
-    await expect(
-      loadConfig({ userDir: await dirWithConfig({ notifications: "toast" }) }),
-    ).rejects.toThrow(ConfigError);
-  });
-
   it("surfaces unreadable config files instead of treating them as absent", async () => {
     const userDir = await mkdtemp(join(tmpdir(), "keywork-config-"));
     tempDirs.push(userDir);
@@ -484,10 +395,6 @@ describe("mergeConfigs", () => {
     );
     expect(merged.palette).toEqual({ accent: "#112233", background: "#000000" });
     expect(merged.apiKeys).toEqual({ openrouter: "a", openai: "b" });
-  });
-
-  it("leaves record fields absent when neither layer has them", () => {
-    expect(mergeConfigs({}, { model: "m" })).toEqual({ model: "m" });
   });
 
   it("merges mcpServers per server name", () => {

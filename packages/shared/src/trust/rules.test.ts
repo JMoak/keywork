@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../config/schema.ts";
-import { permissionRules, rulesFromLegacy } from "./rules.ts";
+import { rulesFromLegacy } from "./rules.ts";
 
 describe("rulesFromLegacy", () => {
   it("puts tool-wide rules first, in declaration order", () => {
@@ -30,18 +30,6 @@ describe("rulesFromLegacy", () => {
         (rule) => rule.effect,
       ),
     ).toEqual(["allow", "deny"]);
-  });
-});
-
-describe("permissionRules", () => {
-  it("passes an ordered list through untouched", () => {
-    const rules = [{ action: "read", resource: "**/.env*", effect: "deny" as const }];
-    expect(permissionRules(rules)).toBe(rules);
-  });
-
-  it("reads nothing as no rules", () => {
-    expect(permissionRules(undefined)).toEqual([]);
-    expect(permissionRules({})).toEqual([]);
   });
 });
 

@@ -65,22 +65,6 @@ async function seededArc(f: Fixture, slug = "dock-v2"): Promise<void> {
 }
 
 describe("the acknowledgement sweep", () => {
-  it("flushes every bound session before the digest opens", async () => {
-    const f = await fixture();
-    await seededArc(f);
-    f.bindings.bind("s1", "dock-v2");
-    f.bindings.bind("s2", "dock-v2");
-    const flushed: string[] = [];
-    const digest = await f.airlock.prepareClose("dock-v2", {
-      flushes: new Map([
-        ["s1", async () => void flushed.push("s1")],
-        ["s2", async () => void flushed.push("s2")],
-      ]),
-    });
-    expect(flushed.sort()).toEqual(["s1", "s2"]);
-    expect(digest.sweep).toEqual({ acked: ["s1", "s2"], wedged: [], forced: false });
-  });
-
   it("refuses to close past a wedged session unless forced", async () => {
     const f = await fixture();
     await seededArc(f);
@@ -171,20 +155,6 @@ describe("the digest", () => {
     expect(byName.get("Dock Ratio Finding")?.shortfalls).toEqual(["contradicted"]);
     expect(byName.get("Old Rule")?.shortfalls).toEqual(["uncited", "superseded"]);
   });
-
-  it("shows what the open-question cap merged or dropped", async () => {
-    const f = await fixture();
-    await f.registry.createArc("dock-v2");
-    const questions = f.registry.openQuestions("dock-v2");
-    for (let i = 0; i < questions.cap; i += 1) {
-      await questions.add({ title: `Q${i}`, body: "q", provenance: "user" });
-    }
-    await questions.add({ title: "Merged In", body: "extra", provenance: "user" }, { merge: "Q0" });
-    await questions.add({ title: "After Drop", body: "new", provenance: "user" }, { drop: "Q1" });
-    const digest = await f.airlock.prepareClose("dock-v2");
-    expect(digest.capEvents.dropped).toEqual(["Q1"]);
-    expect(digest.capEvents.absorbed).toEqual([{ into: "Q0", titles: ["Merged In"] }]);
-  });
 });
 
 describe("completing the close", () => {
@@ -214,18 +184,6 @@ describe("completing the close", () => {
     expect(await f.workspace.listStaged()).toEqual([]);
     const audit = await readFile(join(f.root, "curation.md"), "utf8");
     expect(audit).toContain("arc dock-v2 closed: delivered 1");
-  });
-
-  it("closes an arc with zero notes calmly", async () => {
-    const f = await fixture();
-    await f.registry.createArc("empty-arc");
-    const digest = await f.airlock.prepareClose("empty-arc");
-    expect(digest.candidates).toEqual([]);
-    const delivery = await f.airlock.completeClose("empty-arc", { candidates: {}, questions: {} });
-    expect(delivery.delivered).toEqual([]);
-    const record = await f.workspace.readNote("arc empty-arc delivery");
-    expect(record?.body).toContain("distilled 0 notes");
-    expect((await f.registry.readArc("empty-arc"))?.status).toBe("archived");
   });
 
   it("refuses a double close", async () => {

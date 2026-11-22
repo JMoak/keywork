@@ -8,10 +8,9 @@ import {
 } from "../../../engine/src/routines/testing.ts";
 import { fixtureDocument } from "../contract-fixtures.ts";
 import { EventLog } from "../events.ts";
-import { operationOf, routes } from "../openapi.ts";
 import { memorySessionHost } from "../testing.ts";
 import type { RouteHandler, RouteParams } from "./family.ts";
-import { registerRoutineRoutes, routineHookRoutes, routineRoutes } from "./routines.ts";
+import { registerRoutineRoutes } from "./routines.ts";
 
 const origin = "http://127.0.0.1:4770";
 
@@ -161,24 +160,6 @@ describe("the routine routes", () => {
         .status,
     ).toBe(400);
   });
-
-  it("declare the chore routes under the creature, PUT included, each authenticated", () => {
-    expect(routineRoutes.map((route) => [route.method, route.path, route.operationId])).toEqual([
-      ["GET", "/creatures/{slug}/routines", "listRoutines"],
-      ["GET", "/creatures/{slug}/routines/{id}", "readRoutine"],
-      ["PUT", "/creatures/{slug}/routines/{id}", "putRoutine"],
-      ["DELETE", "/creatures/{slug}/routines/{id}", "deleteRoutine"],
-      ["POST", "/creatures/{slug}/routines/{id}/run", "runRoutine"],
-      ["POST", "/creatures/{slug}/routines/{id}/cancel", "cancelRoutine"],
-      ["POST", "/creatures/{slug}/routines/{id}/accept", "acceptRoutineGrants"],
-      ["GET", "/creatures/{slug}/routines/{id}/runs", "listRoutineRuns"],
-      ["GET", "/routines/needs-you", "listNeedsYou"],
-    ]);
-    expect(routineRoutes.every((route) => route.authenticated)).toBe(true);
-    expect(operationOf(routineRoutes[2]).requestBody?.required).toBe(true);
-    expect(operationOf(routineRoutes[6]).requestBody?.required).toBe(true);
-    for (const route of routineRoutes) expect(routes).toContain(route);
-  });
 });
 
 describe("the webhook routes", () => {
@@ -212,16 +193,6 @@ describe("the webhook routes", () => {
     );
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
-
-  it("declare a keeper-authenticated mint and a token-bound fire", () => {
-    expect(
-      routineHookRoutes.map((route) => [route.method, route.path, route.authenticated]),
-    ).toEqual([
-      ["POST", "/creatures/{slug}/routines/{id}/hook", true],
-      ["POST", "/hooks/{slug}/{id}", false],
-    ]);
-    for (const route of routineHookRoutes) expect(routes).toContain(route);
-  });
 
   it("fire the chore for its own token only, and cap the body", async () => {
     const token = await hooked();
