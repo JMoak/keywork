@@ -55,6 +55,16 @@ export {
   validCreatureFile,
 } from "./file.ts";
 export {
+  type CreatureHandoff,
+  type CreatureHandoffChange,
+  type CreatureHandoffChangeKind,
+  type CreatureHandoffs,
+  type CreatureHandoffsOptions,
+  type CreatureHandoffsPort,
+  creatureHandoffs,
+  handoffsFileIn,
+} from "./handoffs.ts";
+export {
   type CreatureChange,
   type CreatureChanged,
   type CreatureDetail,

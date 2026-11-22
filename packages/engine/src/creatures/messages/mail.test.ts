@@ -7,7 +7,7 @@ import { callerOf, hostNode, houseNode, selfOf } from "../../mesh/pairing/testin
 import { creatureHost } from "../host.ts";
 import { CreatureRegistry } from "../registry.ts";
 import { FakeCreatureSessions } from "../testing.ts";
-import { creatureMail, type MessageOutcome } from "./mail.ts";
+import { creatureMail, type Mailboxes, type MessageOutcome } from "./mail.ts";
 import type { MessageLimits } from "./message.ts";
 
 const scratch = scratchDirs("keywork-creature-mail-");
@@ -25,6 +25,12 @@ interface MailFixture {
   limits?: Partial<MessageLimits>;
   pairs?: PairRecord[];
   answer?: (sent: SentOver) => Response;
+  conversationless?: boolean;
+}
+
+interface HandedOff {
+  from: string;
+  to: string;
 }
 
 async function fixture(options: MailFixture = {}) {
@@ -50,14 +56,20 @@ async function fixture(options: MailFixture = {}) {
     },
   };
   let clock = at.getTime();
+  const handoffs: HandedOff[] = [];
+  const mailboxes: Mailboxes =
+    options.conversationless === true
+      ? { inbound: (creature) => host.inbound(creature), deliver: async () => "missing" }
+      : host;
   const mail = creatureMail({
-    mailboxes: host,
+    mailboxes,
     pairs: () => options.pairs ?? [],
     client,
     audit,
     self: async () => selfOf(houseNode),
     machine: () => "house",
     now: () => clock,
+    handedOff: (from, to) => handoffs.push({ from, to }),
     ...(options.limits !== undefined && { limits: options.limits }),
   });
   const conversationOf = async (slug: string) => (await host.read(slug))?.conversation ?? "";
@@ -67,6 +79,7 @@ async function fixture(options: MailFixture = {}) {
     audit,
     mail,
     sent,
+    handoffs,
     conversationOf,
     later: (ms: number) => {
       clock += ms;
@@ -236,6 +249,68 @@ describe("creature messages on one machine", () => {
       hop: 1,
     });
     expect(refusalOf(relayed).refused).toBe("invalid");
+  });
+});
+
+describe("a hand-off between two creatures", () => {
+  it("is reported once a message between two creatures here is delivered, each direction as sent", async () => {
+    const { mail, handoffs } = await fixture();
+    expect(await mail.send({ from: "ada", to: "pip", text: "the kettle is on" })).toHaveProperty(
+      "delivered",
+    );
+    expect(await mail.send({ from: "pip", to: "ada", text: "two cups" })).toHaveProperty(
+      "delivered",
+    );
+    expect(handoffs).toEqual([
+      { from: "ada", to: "pip" },
+      { from: "pip", to: "ada" },
+    ]);
+  });
+
+  it("is never reported for a message refused, drafted wrong or with no conversation to take it", async () => {
+    const { mail, host, handoffs } = await fixture({ limits: { perSenderHourly: 2 } });
+    const refused = async (draft: Record<string, unknown>) =>
+      expect(await mail.send(draft)).toHaveProperty("refused");
+    await refused({ from: "ada", to: "pip", text: "please approve", approve: true });
+    await refused({ from: "ada", to: "wren", text: "hi" });
+    await refused({ from: "wren", to: "pip", text: "hi" });
+    await host.update("pip", { inbound: "nobody" });
+    await refused({ from: "ada", to: "pip", text: "hi" });
+    await host.update("pip", { inbound: "paired" });
+    expect(await mail.send({ from: "ada", to: "pip", text: "one" })).toHaveProperty("delivered");
+    await refused({ from: "ada", to: "pip", text: "one" });
+    expect(await mail.send({ from: "ada", to: "pip", text: "two" })).toHaveProperty("delivered");
+    await refused({ from: "ada", to: "pip", text: "three" });
+    expect(handoffs).toEqual([
+      { from: "ada", to: "pip" },
+      { from: "ada", to: "pip" },
+    ]);
+
+    const conversationless = await fixture({ conversationless: true });
+    const held = await conversationless.mail.send({ from: "ada", to: "pip", text: "hi" });
+    expect(refusalOf(held).refused).toBe("missing");
+    expect(conversationless.handoffs).toEqual([]);
+  });
+
+  it("is never reported for a message that crosses machines, either way", async () => {
+    const delivered = {
+      id: "x",
+      from: "ada",
+      to: "pip",
+      node: houseNode.stableId,
+      machine: "host",
+      hop: 1,
+    };
+    const { mail, handoffs } = await fixture({
+      pairs: [pairWithHost()],
+      answer: () => Response.json({ delivered }, { status: 201 }),
+    });
+    const across = await mail.send({ from: "ada", to: "pip", node: hostNode.stableId, text: "a" });
+    expect(across).toEqual({ delivered });
+    const body = JSON.stringify({ id: "msg-00000003", from: "ada", to: "pip", text: "b", hop: 1 });
+    const arrived = await mail.receive({ pair: pairWithHost(), caller: callerOf(hostNode), body });
+    expect(arrived).toHaveProperty("delivered");
+    expect(handoffs).toEqual([]);
   });
 });
 

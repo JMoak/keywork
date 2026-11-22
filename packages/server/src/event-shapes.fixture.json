@@ -445,6 +445,15 @@
       "change": "string",
       "slug": "string"
     },
+    "creature.handoff": {
+      "change": "string",
+      "handoff": {
+        "count": "number",
+        "from": "string",
+        "lastAt": "string",
+        "to": "string"
+      }
+    },
     "routine.fired": {
       "attempt": "number",
       "catchUp": "boolean",

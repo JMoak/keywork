@@ -345,6 +345,16 @@ const samples: Samples = {
     },
   ],
   "creature.changed": [{ slug: "pip", change: "created" }],
+  "creature.handoff": [
+    {
+      change: "counted",
+      handoff: { from: "wren", to: "pip", count: 3, lastAt: "2026-11-05T09:02:00.000Z" },
+    },
+    {
+      change: "dropped",
+      handoff: { from: "pip", to: "wren", count: 1, lastAt: "2026-11-05T08:40:00.000Z" },
+    },
+  ],
   "routine.fired": [
     {
       runId: "wren:triage:1762329600000:1",

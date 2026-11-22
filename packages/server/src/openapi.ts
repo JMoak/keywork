@@ -18,6 +18,7 @@ import type {
 import { fileFamily } from "./routes/files.ts";
 import { flushFamily } from "./routes/flush.ts";
 import { forgetFamily } from "./routes/forget.ts";
+import { handoffFamily } from "./routes/handoffs.ts";
 import { lifecycleFamily } from "./routes/lifecycle.ts";
 import { creatureMcpFamily } from "./routes/mcp.ts";
 import { memoryFamily } from "./routes/memory.ts";
@@ -65,6 +66,7 @@ export const routeFamilies = [
   spillFamily,
   creatureFamily,
   creatureProjectFamily,
+  handoffFamily,
   creatureMcpFamily((host) => host.creatureMcp),
   registerRoutineRoutes(({ host }) => host.routines),
   modelFamilyFor(({ host }) => host.models),

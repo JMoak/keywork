@@ -10,6 +10,7 @@ import type {
   ContextEditEntry,
   ContextEditMark,
   CostRollup,
+  CreatureHandoffsPort,
   CreatureMcpPort,
   CreatureProjectsPort,
   CreatureProjectWorkPort,
@@ -391,6 +392,7 @@ export interface SessionHost {
   creatureProjects?: CreatureProjectsPort;
   creatureProjectWork?: CreatureProjectWorkPort;
   creatureMcp?: CreatureMcpPort;
+  handoffs?: CreatureHandoffsPort;
   routines?: RoutineService;
   campaigns?: CampaignService;
   models?: ModelsPort;

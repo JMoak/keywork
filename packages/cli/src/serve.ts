@@ -17,6 +17,7 @@ import {
   claimSession,
   compactionDue,
   contextMeasureOf,
+  creatureHandoffs,
   creatureMail,
   creatureTagOf,
   decideForKeeper,
@@ -24,6 +25,7 @@ import {
   flushMemoryNow,
   formatReference,
   type GrantRule,
+  handoffsFileIn,
   hostWorkshop,
   type InferenceBinding,
   isEffortLevel,
@@ -151,6 +153,7 @@ import {
 import type { CreatureSeat } from "./compose.ts";
 import type { MemoryDeciderSetup } from "./memory-decider.ts";
 import type { HouseMeshConsole } from "./node/compose.ts";
+import { workspaceStateDir } from "./node/paths.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
 import { servedCampaigns } from "./serve-campaigns.ts";
 import { cataloguedInventory, catalogueFileOf, openRouterCatalogue } from "./serve-catalogue.ts";
@@ -545,8 +548,11 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     const workspace = composition.memory();
     return workspace?.store.trusted === true ? workspace.store : undefined;
   };
+  const handoffs = creatureHandoffs({ file: workspaceHandoffsFile(place), creatures, notice });
   const mail =
-    node.mesh === undefined ? undefined : servedMail(node.mesh, creatures, trustedMemory);
+    node.mesh === undefined
+      ? undefined
+      : servedMail(node.mesh, creatures, trustedMemory, handoffs.handedOff);
   const finishThreadQuietly = (thread: SettledThread) =>
     finishThread(creatures, thread).catch((cause: unknown) =>
       notice(`thread ${thread.id.slice(0, 8)} did not report back: ${toError(cause).message}`),
@@ -610,6 +616,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     }),
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
     creatures,
+    handoffs,
     ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh, settings: shown.settings }),
     ...(routines !== undefined && { routines: routines.service }),
     models: refreshableModels(node.models, options.refreshInference),
@@ -619,6 +626,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     show: shown.settings,
     close: async () => {
       unhosted();
+      handoffs.close();
       if (ownsSettings) shown.close();
       routines?.stop();
       const closingCampaigns = campaigns.close();
@@ -2357,10 +2365,17 @@ export function decidedForYouLine(tool: string, ruleClass: string, recordId: str
   return `decided for you: ${tool} (${ruleClass}) · overturn it with POST /creatures/{slug}/overturn { recordId: "${recordId}" }`;
 }
 
+function workspaceHandoffsFile(
+  place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
+): string {
+  return handoffsFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
+}
+
 function servedMail(
   mesh: HouseMeshConsole,
   creatures: Pick<CreatureHost, "inbound" | "deliver">,
   memory: () => MemoryStore | undefined,
+  handedOff: (from: string, to: string) => void,
 ): CreatureMail {
   return creatureMail({
     mailboxes: stagingMailboxes(creatures, memory),
@@ -2369,6 +2384,7 @@ function servedMail(
     audit: mesh.audit,
     self: mesh.self,
     machine: mesh.machine,
+    handedOff,
   });
 }
 

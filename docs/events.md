@@ -737,6 +737,32 @@ port notifies its subscribers. Since contract 1.8.
 | `slug` | `string` | The creature. |
 | `change` | `"created" \| "updated" \| "paused" \| "resumed" \| "removed" \| "conversation" \| "threads"` | Why: `created` after `POST /creatures`; `updated` after `PATCH /creatures/{slug}` (a rename, a body or a policy change, since contract 1.14); `paused` and `resumed` after `POST /creatures/{slug}/pause` and `/resume` (since contract 1.14); `removed` after a confirmed `DELETE /creatures/{slug}`; `conversation` when the first `GET /creatures/{slug}` opened the conversation (a read with one idempotent side effect, kept for milestone one); `threads` when a thread was opened or finished (its summary entry reached the conversation). |
 
+### creature.handoff
+
+Fires when the tally of how often one creature handed work to another changed, so a console that
+draws which creatures work together updates one pair without re-fetching
+`GET /creature-handoffs`, which serves the whole tally for a cold start. A hand-off is a creature
+message (the `message` tool, or `POST /mesh/messages`) from one creature in the workspace to
+another on this machine that was delivered into the receiver's conversation. Nothing else
+counts: not a message refused (its shape, the receiver's inbound policy, a missing receiver or
+conversation, a repeat, the hourly limits), not one to or from a creature on another machine,
+not a creature's message to itself, not an agent's `ask` over MCP, and not a thread reporting
+back to its own creature. The two directions of a pair are separate rows. The server counts each hand-off as it is delivered and
+keeps the tally for the workspace under the node's state, saved on every change, so it outlives
+a restart; it is never rebuilt from history and began empty with contract 1.36. Removing a
+creature (a confirmed `DELETE /creatures/{slug}`) drops every pair that names it, with one
+`dropped` event each, so a creature made again under the same slug starts from none. The tally
+is a count for display: it grants, widens and implies nothing about what any creature may do.
+Since contract 1.36; an older server sends none and serves no `GET /creature-handoffs`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"counted" \| "dropped"` | `counted` when a hand-off was delivered; `dropped` when the pair left the tally with a removed creature. |
+| `handoff.from` | `string` | The slug of the creature that handed the work over. |
+| `handoff.to` | `string` | The slug of the creature it was handed to. |
+| `handoff.count` | `number` | Hand-offs from `from` to `to` so far, at least 1; on `dropped`, the count the pair had when it went. |
+| `handoff.lastAt` | `string` | When the latest of them was delivered (ISO 8601). |
+
 ### routine.fired
 
 A chore (code name `routine`) is scheduled or triggered work a creature does on its own: a file at

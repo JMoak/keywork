@@ -33,6 +33,7 @@ export interface CreatureMailOptions {
   machine(): string;
   limits?: Partial<MessageLimits> | undefined;
   now?: (() => number) | undefined;
+  handedOff?: ((from: string, to: string) => void) | undefined;
 }
 
 export interface DeliveredMessage {
@@ -108,6 +109,7 @@ export function creatureMail(options: CreatureMailOptions): CreatureMail {
 
   const sentHere = async (envelope: Envelope, self: SelfIdentity): Promise<MessageOutcome> => {
     const outcome = await admitted(envelope, true);
+    if ("delivered" in outcome) options.handedOff?.(envelope.sender.creature, envelope.to);
     const actor = selfActor(self);
     await audit.append(rowOf(actor, self.stableId, "message.send", envelope, outcome));
     await audit.append(rowOf(actor, self.stableId, "message.receive", envelope, outcome));
