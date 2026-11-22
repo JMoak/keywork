@@ -746,13 +746,131 @@
           },
           "why": "string"
         }
+      },
+      {
+        "setting": {
+          "at": "string",
+          "creature": "string",
+          "from": "string",
+          "id": "string",
+          "mood": "string",
+          "origin": "string",
+          "replaces": "null",
+          "rung": "string",
+          "seat": {
+            "h": "number",
+            "w": "number",
+            "x": "number",
+            "y": "number"
+          },
+          "sessionId": "string",
+          "size": "string",
+          "state": "string",
+          "until": "string",
+          "weight": "string",
+          "what": {
+            "kind": "string",
+            "ref": "string",
+            "title": "string"
+          },
+          "where": "string",
+          "why": "string"
+        }
       }
     ],
-    "show.settled": {
-      "by": "string",
-      "id": "string",
-      "outcome": "string"
+    "show.changed": {
+      "setting": {
+        "agent": {
+          "color": "string",
+          "name": "string"
+        },
+        "at": "string",
+        "creature": "string",
+        "from": "null",
+        "id": "string",
+        "mark": "string",
+        "origin": "string",
+        "replaces": "null",
+        "rung": "string",
+        "sessionId": "string",
+        "state": "string",
+        "until": "string",
+        "what": {
+          "kind": "string",
+          "ref": "string",
+          "title": "string"
+        },
+        "where": "string",
+        "why": "string"
+      }
     },
+    "show.settled": [
+      {
+        "by": "string",
+        "id": "string",
+        "outcome": "string"
+      },
+      {
+        "by": "string",
+        "id": "string",
+        "mood": "string",
+        "outcome": "string"
+      }
+    ],
+    "show.arranged": [
+      {
+        "arrangement": {
+          "at": "string",
+          "creature": "string",
+          "id": "string",
+          "panes": ["string"],
+          "sessionId": "string"
+        }
+      },
+      {
+        "arrangement": {
+          "at": "string",
+          "creature": "null",
+          "id": "string",
+          "lead": "string",
+          "mood": "string",
+          "over": "string",
+          "panes": ["string"],
+          "sessionId": "string",
+          "shape": "string"
+        }
+      },
+      {
+        "arrangement": {
+          "at": "string",
+          "creature": "string",
+          "id": "string",
+          "panes": ["string"],
+          "relation": "string",
+          "sessionId": "string"
+        }
+      },
+      {
+        "arrangement": {
+          "at": "string",
+          "creature": "string",
+          "id": "string",
+          "panes": ["string"],
+          "seats": [
+            {
+              "id": "string",
+              "seat": {
+                "h": "number",
+                "w": "number",
+                "x": "number",
+                "y": "number"
+              }
+            }
+          ],
+          "sessionId": "string"
+        }
+      }
+    ],
     "workspace.changed": {
       "paths": ["string"],
       "truncated": "boolean"

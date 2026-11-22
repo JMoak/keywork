@@ -1,22 +1,52 @@
 import { randomUUID } from "node:crypto";
-import { type Cancel, type Clock, hourMs, isoOf, systemClock } from "../routines/clock.ts";
-import { type Heard, HeardOutcomes } from "./heard.ts";
+import {
+  type Cancel,
+  type Clock,
+  hourMs,
+  isoOf,
+  minuteMs,
+  systemClock,
+} from "../routines/clock.ts";
+import { AgentColors } from "./agents.ts";
+import {
+  type Arrangement,
+  type ArrangementAsk,
+  arrangementBodyOf,
+  arrangementsPerMinute,
+  arrangementsRemembered,
+  earlierBodyOf,
+  type OwnPane,
+  outsideAtOnce,
+  placementWaitMs,
+  type SeatedPane,
+} from "./arrangement.ts";
+import { type Heard, HeardOutcomes, keeperMoveOf, type PlacedNote } from "./heard.ts";
 import type { KeeperOpening } from "./input.ts";
 import { type KeptSettings, memorySettingStorage, type SettingStorage } from "./kept.ts";
 import { ownerOf, type SettingSeat, sameOwner, sees, type ThreadLookup } from "./lineage.ts";
+import { ConsoleReports, PlacementBook, type PlacementsReport, standsAs } from "./placements.ts";
+import { nothingOfYoursOut, refused, type ShowRefusal } from "./refusal.ts";
+import { type Seat, seatProblemOf } from "./seat.ts";
 import type {
+  Mood,
   Rung,
   Setting,
+  SettingAgent,
   SettingAnswer,
   SettingOrigin,
+  SettingPlace,
   SettingSize,
   SettingState,
   SettingUntil,
+  SettingWeight,
   SettingWhat,
   SettledBy,
   SettledOutcome,
   ShowEventSink,
 } from "./setting.ts";
+import { askedOf, type StandingPicture, type Stood, stoodOf } from "./standing.ts";
+
+export { type ShowRefusal, type ShowRefusalKind, showRefusalStatus } from "./refusal.ts";
 
 export interface ShowProposal {
   creature: string | null;
@@ -28,6 +58,25 @@ export interface ShowProposal {
   from: string | null;
   origin: SettingOrigin;
   size?: SettingSize | undefined;
+  where?: SettingPlace | undefined;
+  seat?: Seat | undefined;
+  weight?: SettingWeight | undefined;
+  mood?: Mood | undefined;
+  agent?: SettingAgent | undefined;
+  mark?: string | undefined;
+  lastsMs?: number | undefined;
+  keeps?: Keeps | undefined;
+}
+
+export interface Keeps {
+  rung?: boolean;
+  why?: boolean;
+  until?: boolean;
+}
+
+export interface Marking {
+  id: string;
+  mark: string | undefined;
 }
 
 export interface SetOut {
@@ -35,21 +84,9 @@ export interface SetOut {
   replaced: Setting | undefined;
 }
 
-export type ShowRefusalKind = "invalid" | "missing" | "conflict" | "limited";
+export const settingsPerHour = 100;
 
-export interface ShowRefusal {
-  refused: ShowRefusalKind;
-  error: string;
-}
-
-export const showRefusalStatus: Readonly<Record<ShowRefusalKind, number>> = {
-  invalid: 400,
-  missing: 404,
-  conflict: 409,
-  limited: 429,
-};
-
-export const settingsPerHour = 30;
+export type StandingReader = "owner" | "another";
 
 export interface SettingStoreOptions {
   emit: ShowEventSink;
@@ -66,7 +103,12 @@ export class SettingStore {
   private readonly out = new Map<string, Setting>();
   private readonly timers = new Map<string, Cancel>();
   private readonly setOutAt = new Map<string, number[]>();
+  private readonly arrangedAt = new Map<string, number[]>();
+  private readonly arrangedBefore = new Map<string, SeatedPane[][]>();
   private readonly outcomes = new HeardOutcomes();
+  private readonly placements = new PlacementBook();
+  private readonly agents = new AgentColors();
+  private readonly reports: ConsoleReports;
   private readonly emit: ShowEventSink;
   private readonly clock: Clock;
   private readonly hourlyLimit: number;
@@ -82,19 +124,31 @@ export class SettingStore {
   constructor(options: SettingStoreOptions) {
     this.emit = options.emit;
     this.clock = options.clock ?? systemClock;
+    this.reports = new ConsoleReports(this.clock, placementWaitMs);
     this.hourlyLimit = options.hourlyLimit ?? settingsPerHour;
     this.threadOf = options.threads ?? noThreads;
   }
 
-  propose(proposal: ShowProposal): SetOut | ShowRefusal {
+  propose(asked: ShowProposal): SetOut | ShowRefusal {
     const now = this.clock.now();
-    const refusal = this.refusalOf(proposal, now);
+    const { lastsMs, keeps, ...named } = asked;
+    const timed = lastsMs === undefined ? named : { ...named, until: isoOf(now + lastsMs) };
+    const replaced = this.outWithSameWhat(timed);
+    const proposal = keptFrom(
+      timed,
+      replaced,
+      lastsMs === undefined ? keeps : { ...keeps, until: false },
+    );
+    const placing = this.placingOf(proposal, replaced);
+    const refusal = this.refusalOf(proposal, placing, replaced, now);
     if (refusal !== undefined) return refusal;
     if (spendsTheHour(proposal)) this.remember(ownerOf(proposal), now);
-    const replaced = this.outWithSameWhat(proposal);
     if (replaced !== undefined) this.withdraw(replaced, proposal.origin);
-    const setting = settingOf(randomUUID(), proposal, replaced, isoOf(now));
-    this.seat(setting);
+    const { agent } = proposal;
+    const shownBy =
+      agent === undefined ? proposal : { ...proposal, agent: this.agents.coloured(agent) };
+    const setting = settingOf(randomUUID(), shownBy, placing, replaced, isoOf(now));
+    this.setDown(setting);
     this.emit(setting.sessionId, "show.proposed", { setting });
     this.keep();
     return { setting, replaced };
@@ -102,10 +156,54 @@ export class SettingStore {
 
   async keeperOpens(opening: KeeperOpening): Promise<SetOut | ShowRefusal> {
     const { what, from, rung } = opening;
-    const seat = await this.seatOf(from);
-    if (seat === undefined)
+    const owner = await this.ownerAt(from);
+    if (owner === undefined)
       return refused("missing", `no setting out and no thread has the id ${from}`);
-    return this.propose({ ...seat, what, rung, why: "", until: "seen", from, origin: "keeper" });
+    return this.propose({ ...owner, what, rung, why: "", until: "seen", from, origin: "keeper" });
+  }
+
+  arrange(caller: SettingSeat, ask: ArrangementAsk): Arrangement | ShowRefusal {
+    const now = this.clock.now();
+    const history = this.arrangedBefore.get(caller.sessionId) ?? [];
+    const own = this.ownPanesOf(caller);
+    const standing = this.seatedOutside(caller);
+    const body = ask.back === true ? earlierBodyOf(ask, history, own) : arrangementBodyOf(ask, own);
+    if ("refused" in body) return body;
+    const recent = this.arrangedWithinTheMinute(caller.sessionId, now);
+    if (recent.length >= arrangementsPerMinute)
+      return refused("limited", arrangementLimitWords(recent, now));
+    const { creature, sessionId } = caller;
+    const arrangement = { id: randomUUID(), creature, sessionId, at: isoOf(now), ...body };
+    this.arrangedAt.set(sessionId, [...recent, now]);
+    const grown = standing.length === 0 ? history : [...history, standing];
+    const remembered = ask.back === true ? history.slice(0, -1) : grown;
+    this.arrangedBefore.set(sessionId, remembered.slice(-arrangementsRemembered));
+    this.askOutside(arrangement);
+    this.emit(sessionId, "show.arranged", { arrangement });
+    this.keep();
+    return arrangement;
+  }
+
+  async placed(sessionId: string, report: PlacementsReport): Promise<ShowRefusal | undefined> {
+    if (!(await this.hasThread(sessionId)))
+      return refused("missing", `no session has the id ${sessionId}`);
+    this.placements.report(sessionId, report);
+    this.reports.heard(report);
+    return undefined;
+  }
+
+  reportNaming(
+    names: (report: PlacementsReport) => boolean,
+  ): Promise<PlacementsReport | undefined> {
+    return this.reports.next(names);
+  }
+
+  standingFor(caller: SettingSeat, readBy: StandingReader = "owner"): StandingPicture {
+    const out = this.open()
+      .filter((setting) => sameOwner(setting, caller))
+      .map((setting) => this.stood(setting));
+    if (readBy === "owner") this.placements.lookedAt(out.map(({ setting }) => setting.id));
+    return { out, stage: this.placements.stage() };
   }
 
   async canGrowFrom(caller: SettingSeat, from: string): Promise<boolean> {
@@ -128,19 +226,42 @@ export class SettingStore {
     return settled;
   }
 
-  takeBack(caller: SettingSeat, id: string): Setting | ShowRefusal {
+  takeBack(caller: SettingSeat, id: string, mood?: Mood): Setting | ShowRefusal {
     const setting = this.out.get(id);
     if (setting === undefined || !sameOwner(setting, caller))
       return refused("missing", nothingOfYoursOut(id));
     const held = heldByTheKeeper(setting);
     if (held !== undefined) return refused("conflict", held);
-    const settled = this.withdraw(setting, "creature");
+    const settled = this.withdraw(setting, "creature", mood);
     this.keep();
     return settled;
   }
 
+  mark(
+    caller: SettingSeat,
+    marks: readonly Marking[],
+    spends: boolean,
+  ): readonly Setting[] | ShowRefusal {
+    const now = this.clock.now();
+    const recent = this.arrangedWithinTheMinute(caller.sessionId, now);
+    if (spends && recent.length >= arrangementsPerMinute)
+      return refused("limited", arrangementLimitWords(recent, now));
+    const stranger = marks.find(({ id }) => {
+      const setting = this.out.get(id);
+      return setting === undefined || !sameOwner(setting, caller) || setting.origin !== "creature";
+    });
+    if (stranger !== undefined) return refused("missing", nothingOfYoursOut(stranger.id));
+    if (spends) this.arrangedAt.set(caller.sessionId, [...recent, now]);
+    const marked = marks.flatMap(({ id, mark }) => this.markedAs(id, mark));
+    if (marked.length > 0) this.keep();
+    return marks.flatMap(({ id }) => this.out.get(id) ?? []);
+  }
+
   takeHeardBy(sessionId: string): Heard | undefined {
-    return this.outcomes.take(sessionId);
+    const settled = this.outcomes.take(sessionId);
+    const placed = this.placedByTheKeeper(sessionId);
+    if (placed.length === 0) return settled;
+    return { told: settled?.told ?? [], earlier: settled?.earlier ?? 0, placed };
   }
 
   rested(sessionId: string): void {
@@ -153,11 +274,15 @@ export class SettingStore {
   removed(sessionId: string): void {
     this.withdrawLive((setting) => setting.sessionId === sessionId, "keeper");
     this.outcomes.forget(sessionId);
+    this.placements.forgetSession(sessionId);
+    this.arrangedAt.delete(sessionId);
+    this.arrangedBefore.delete(sessionId);
   }
 
   close(): void {
     for (const cancel of this.timers.values()) cancel();
     this.timers.clear();
+    this.reports.close();
   }
 
   private async restore(storage: SettingStorage): Promise<void> {
@@ -167,7 +292,7 @@ export class SettingStore {
     const missing = await this.missingThreadsOf(kept.settings.filter(isLive));
     const back = kept.settings.filter((setting) => !withdrawnByTheStop(setting, now, missing));
     for (const { owner, at } of spent) this.remember(owner, Date.parse(at));
-    for (const setting of back) this.seat(setting);
+    for (const setting of back) this.setDown(setting);
     this.storage = storage;
     if (back.length < kept.settings.length || spent.length < kept.spent.length) this.keep();
   }
@@ -188,7 +313,23 @@ export class SettingStore {
     }
   }
 
-  private seat(setting: Setting): void {
+  private async hasThread(sessionId: string): Promise<boolean> {
+    if (this.open().some((setting) => setting.sessionId === sessionId)) return true;
+    return !(await this.knownGone(sessionId));
+  }
+
+  private markedAs(id: string, mark: string | undefined): Setting[] {
+    const setting = this.out.get(id);
+    if (setting === undefined || setting.mark === mark) return [];
+    const { mark: _before, ...unmarked } = setting;
+    const changed: Setting = mark === undefined ? unmarked : { ...unmarked, mark };
+    this.out.set(id, changed);
+    this.emit(changed.sessionId, "show.changed", { setting: changed });
+    return [changed];
+  }
+
+  private setDown(setting: Setting): void {
+    this.agents.remember(setting.agent);
     this.out.set(setting.id, setting);
     if (isLive(setting)) this.withdrawAtItsTime(setting);
   }
@@ -205,7 +346,7 @@ export class SettingStore {
     return { settings: this.open(), spent };
   }
 
-  private async seatOf(from: string): Promise<SettingSeat | undefined> {
+  private async ownerAt(from: string): Promise<SettingSeat | undefined> {
     const parent = this.out.get(from);
     if (parent !== undefined) return { creature: parent.creature, sessionId: parent.sessionId };
     const thread = await this.threadOf(from);
@@ -218,17 +359,65 @@ export class SettingStore {
     return thread !== undefined && sees(caller, thread);
   }
 
-  private refusalOf(proposal: ShowProposal, now: number): ShowRefusal | undefined {
+  private stood(setting: Setting): Stood {
+    return stoodOf(setting, this.placements.of(setting.id));
+  }
+
+  private seatedOutside(caller: SettingSeat): SeatedPane[] {
+    return this.open()
+      .filter((setting) => sameOwner(setting, caller) && setting.origin === "creature")
+      .flatMap((setting) => {
+        const { where, seat, by } = this.stood(setting);
+        const reported = where === "outside" && seat !== undefined && by !== undefined;
+        return reported ? [{ id: setting.id, seat }] : [];
+      });
+  }
+
+  private ownPanesOf(caller: SettingSeat): OwnPane[] {
+    return this.open()
+      .filter((setting) => sameOwner(setting, caller) && setting.origin === "creature")
+      .map((setting) => ({ setting, outside: this.stood(setting).where === "outside" }));
+  }
+
+  private placingOf(proposal: ShowProposal, replaced: Setting | undefined): Placing {
+    const { where, seat, origin } = proposal;
+    if (seat !== undefined) return { where: where ?? "outside", seat };
+    if (where !== undefined) return { where };
+    if (origin !== "creature" || replaced === undefined) return {};
+    const stands = this.stood(replaced);
+    return stands.where === "outside" ? { where: "outside", ...seated(stands.seat) } : {};
+  }
+
+  private refusalOf(
+    proposal: ShowProposal,
+    placing: Placing,
+    replaced: Setting | undefined,
+    now: number,
+  ): ShowRefusal | undefined {
     const ends = endOf(proposal.until);
     if (Number.isNaN(ends))
       return refused("invalid", `until is seen, rests or an ISO 8601 time, not ${proposal.until}`);
     if (ends <= now) return refused("invalid", `until ${proposal.until} has already passed`);
+    const unseated = seatRefusal(placing);
+    if (unseated !== undefined) return unseated;
     if (
       spendsTheHour(proposal) &&
       this.setOutWithinTheHour(ownerOf(proposal), now) >= this.hourlyLimit
     )
       return refused("limited", limitWords(proposal.creature, this.hourlyLimit));
-    return undefined;
+    return this.roomRefusal(proposal, placing, replaced);
+  }
+
+  private roomRefusal(
+    proposal: ShowProposal,
+    placing: Placing,
+    replaced: Setting | undefined,
+  ): ShowRefusal | undefined {
+    if (placing.where !== "outside" || proposal.origin !== "creature") return undefined;
+    const outside = this.ownPanesOf(proposal).filter(
+      (pane) => pane.outside && pane.setting.id !== replaced?.id,
+    ).length;
+    return outside < outsideAtOnce ? undefined : refused("limited", outsideLimitWords(outside));
   }
 
   private setOutWithinTheHour(owner: string, now: number): number {
@@ -241,13 +430,42 @@ export class SettingStore {
     this.setOutAt.set(owner, [...(this.setOutAt.get(owner) ?? []), now]);
   }
 
+  private arrangedWithinTheMinute(sessionId: string, now: number): number[] {
+    return (this.arrangedAt.get(sessionId) ?? []).filter((at) => at > now - minuteMs);
+  }
+
+  private askOutside(arrangement: Arrangement): void {
+    const composed = new Map(arrangement.seats?.map(({ id, seat }) => [id, seat]));
+    for (const id of arrangement.panes) {
+      const setting = this.out.get(id);
+      if (setting === undefined || this.placements.of(id)?.by === "keeper") continue;
+      const seat = arrangement.seats === undefined ? undefined : (composed.get(id) ?? setting.seat);
+      this.out.set(id, askedOutside(setting, seat));
+    }
+  }
+
+  private placedByTheKeeper(sessionId: string): PlacedNote[] {
+    const mine = this.open().filter(
+      (setting) => setting.sessionId === sessionId && setting.origin === "creature",
+    );
+    const placings = this.placements.takeKeeperPlacings(mine.map(({ id }) => id));
+    return placings.flatMap(({ id, before, now }) => {
+      const setting = mine.find((candidate) => candidate.id === id);
+      if (setting === undefined) return [];
+      const stood = before ?? askedOf(setting);
+      if (standsAs(stood, now)) return [];
+      const move = keeperMoveOf(stood, now);
+      return [{ id, what: setting.what, move, ...(now.where === "outside" && seated(now.seat)) }];
+    });
+  }
+
   private outWithSameWhat(proposal: ShowProposal): Setting | undefined {
     const { what } = proposal;
     return [...this.out.values()].find(
       (setting) =>
         sameOwner(setting, proposal) &&
         setting.what.kind === what.kind &&
-        setting.what.ref === what.ref,
+        (setting.what.ref === what.ref || sameNote(setting.what, what)),
     );
   }
 
@@ -266,8 +484,8 @@ export class SettingStore {
     if (withdrawn.length > 0) this.keep();
   }
 
-  private withdraw(setting: Setting, by: SettledBy): Setting {
-    return this.settle(setting, "withdrawn", by, "withdrawn");
+  private withdraw(setting: Setting, by: SettledBy, mood?: Mood): Setting {
+    return this.settle(setting, "withdrawn", by, "withdrawn", mood);
   }
 
   private settle(
@@ -275,12 +493,14 @@ export class SettingStore {
     outcome: SettledOutcome,
     by: SettledBy,
     state: SettingState,
+    mood?: Mood,
   ): Setting {
     const settled = { ...setting, state };
     if (isOut(state)) this.out.set(setting.id, settled);
     else this.takeIn(setting.id);
     this.outcomes.note(setting, outcome, by);
-    this.emit(setting.sessionId, "show.settled", { id: setting.id, outcome, by });
+    const leaving = { id: setting.id, outcome, by, ...(mood !== undefined && { mood }) };
+    this.emit(setting.sessionId, "show.settled", leaving);
     return settled;
   }
 
@@ -288,7 +508,13 @@ export class SettingStore {
     this.out.delete(id);
     this.timers.get(id)?.();
     this.timers.delete(id);
+    this.placements.forgetSetting(id);
   }
+}
+
+interface Placing {
+  where?: SettingPlace;
+  seat?: Seat;
 }
 
 const keeperMoves: Readonly<
@@ -310,6 +536,28 @@ function limitWords(creature: string | null, limit: number): string {
     : `${creature} has set out ${limit} settings this hour, the most a creature may set out; try again later`;
 }
 
+function outsideLimitWords(outside: number): string {
+  return `${outside} of your settings already stand outside, the most that may at once; withdraw one that has gone stale, or leave where out and this sets out beside the conversation`;
+}
+
+function arrangementLimitWords(recent: readonly number[], now: number): string {
+  const wait = Math.ceil(((recent[0] ?? now) + minuteMs - now) / 1000);
+  return `this thread has arranged ${recent.length} times in the last minute, the most it may; the next may go in ${wait} seconds, and one arrange can seat every pane at once`;
+}
+
+function seatRefusal({ where, seat }: Placing): ShowRefusal | undefined {
+  if (seat === undefined) return undefined;
+  if (where !== "outside")
+    return refused(
+      "invalid",
+      "a seat is a place outside, so it cannot go with where beside; leave one of them out",
+    );
+  const problem = seatProblemOf(seat);
+  return problem === undefined
+    ? undefined
+    : refused("invalid", `the seat does not fit: ${problem}`);
+}
+
 function lineageOf({ from }: ShowProposal, replaced: Setting | undefined): string | null {
   return from === null || from === replaced?.id ? (replaced?.from ?? null) : from;
 }
@@ -317,12 +565,15 @@ function lineageOf({ from }: ShowProposal, replaced: Setting | undefined): strin
 function settingOf(
   id: string,
   proposal: ShowProposal,
+  placing: Placing,
   replaced: Setting | undefined,
   at: string,
 ): Setting {
-  const { creature, sessionId, what, rung, why, until, origin } = proposal;
+  const { creature, sessionId, what, rung, why, until, origin, mood, agent } = proposal;
   const lineage = { from: lineageOf(proposal, replaced), origin, replaces: replaced?.id ?? null };
-  const size = sizeOf(proposal, replaced);
+  const size = keptByAReplacement(proposal.size, replaced?.size, origin);
+  const weight = keptByAReplacement(proposal.weight, replaced?.weight, origin);
+  const mark = keptByAReplacement(proposal.mark, replaced?.mark, origin);
   return {
     id,
     creature,
@@ -335,14 +586,42 @@ function settingOf(
     state: "live",
     ...lineage,
     ...(size !== undefined && { size }),
+    ...placing,
+    ...(weight !== undefined && { weight }),
+    ...(mood !== undefined && { mood }),
+    ...(agent !== undefined && { agent }),
+    ...(mark !== undefined && { mark }),
   };
 }
 
-function sizeOf(
-  { size, origin }: ShowProposal,
+function keptFrom<Asked extends Omit<ShowProposal, "lastsMs" | "keeps">>(
+  asked: Asked,
   replaced: Setting | undefined,
-): SettingSize | undefined {
-  return size ?? (origin === "creature" ? replaced?.size : undefined);
+  keeps: Keeps | undefined,
+): Asked {
+  if (replaced === undefined || keeps === undefined || asked.origin !== "creature") return asked;
+  return {
+    ...asked,
+    ...(keeps.rung === true && { rung: replaced.rung }),
+    ...(keeps.why === true && { why: replaced.why }),
+    ...(keeps.until === true && { until: replaced.until }),
+  };
+}
+
+function keptByAReplacement<Named>(
+  named: Named | undefined,
+  before: Named | undefined,
+  origin: SettingOrigin,
+): Named | undefined {
+  return named ?? (origin === "creature" ? before : undefined);
+}
+
+function seated(seat: Seat | undefined): { seat?: Seat } {
+  return seat === undefined ? {} : { seat };
+}
+
+function askedOutside({ seat: _before, ...setting }: Setting, seat: Seat | undefined): Setting {
+  return { ...setting, where: "outside", ...seated(seat) };
 }
 
 function endOf(until: SettingUntil): number {
@@ -374,10 +653,6 @@ function isOut(state: SettingState): boolean {
   return state === "live" || state === "pinned";
 }
 
-function nothingOfYoursOut(id: string): string {
-  return `nothing you set out is out with the id ${id}; shown lists what is out`;
-}
-
 function heldByTheKeeper(setting: Setting): string | undefined {
   if (setting.origin === "keeper")
     return `the keeper opened ${setting.id} themselves, so it is theirs to put away`;
@@ -392,6 +667,6 @@ function conflictOf(setting: Setting): string {
     : `setting ${setting.id} is not pinned, so there is nothing to unpin`;
 }
 
-function refused(refusal: ShowRefusalKind, error: string): ShowRefusal {
-  return { refused: refusal, error };
+function sameNote(one: SettingWhat, other: SettingWhat): boolean {
+  return one.kind === "note" && one.title !== undefined && one.title === other.title;
 }

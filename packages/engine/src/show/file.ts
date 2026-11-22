@@ -4,7 +4,20 @@ import { basename, dirname, join } from "node:path";
 import { type HeldFilePacingSync, renameOverSync, toError } from "@keywork/shared";
 import { z } from "zod";
 import { type KeptSettings, nothingKept, type SettingStorage } from "./kept.ts";
-import { rungs, type Setting, settingKinds, settingOrigins, settingSizes } from "./setting.ts";
+import { seatSpanInput } from "./seat.ts";
+import {
+  agentColors,
+  agentNameLength,
+  markLength,
+  moods,
+  rungs,
+  type Setting,
+  settingKinds,
+  settingOrigins,
+  settingPlaces,
+  settingSizes,
+  settingWeights,
+} from "./setting.ts";
 
 export type SettingDisk = Pick<
   typeof fs,
@@ -85,6 +98,18 @@ const keptSetting = z.object({
   origin: z.enum(settingOrigins),
   replaces: z.string().nullable(),
   size: z.enum(settingSizes).optional(),
+  where: z.enum(settingPlaces).optional(),
+  seat: seatSpanInput.optional(),
+  weight: z.enum(settingWeights).optional(),
+  mood: z.enum(moods).optional(),
+  agent: z
+    .object({
+      name: z.string().min(1).max(agentNameLength).optional(),
+      color: z.enum(agentColors).optional(),
+    })
+    .strict()
+    .optional(),
+  mark: z.string().min(1).max(markLength).optional(),
 });
 
 const keptFile = z.object({
@@ -94,13 +119,23 @@ const keptFile = z.object({
 });
 
 function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
-  const { size, ...setting } = kept;
+  const { size, where, seat, weight, mood, agent, mark, ...setting } = kept;
   const { kind, ref, title } = setting.what;
   return {
     ...setting,
     what: title === undefined ? { kind, ref } : { kind, ref, title },
     ...(size !== undefined && { size }),
+    ...(where !== undefined && { where }),
+    ...(seat !== undefined && { seat }),
+    ...(weight !== undefined && { weight }),
+    ...(mood !== undefined && { mood }),
+    ...(agent !== undefined && { agent: keptAgentOf(agent) }),
+    ...(mark !== undefined && { mark }),
   };
+}
+
+function keptAgentOf({ name, color }: NonNullable<z.infer<typeof keptSetting>["agent"]>) {
+  return { ...(name !== undefined && { name }), ...(color !== undefined && { color }) };
 }
 
 function firstIssueOf(error: z.ZodError): string {

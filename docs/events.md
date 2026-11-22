@@ -975,8 +975,9 @@ Carries no decision, so no audit row. Since contract 1.12.
 Something was set out for the keeper to see: a file, a diff, a report, a thread, a chore, a link
 or a note. The model working a session sets things out with the `show` tool, which every session
 `keywork serve` runs carries: a plain conversation, a creature's conversation, a delegated child
-and a chore run alike (with `shown`, which lists what is out, and `withdraw`, which takes back what
-it set out). The keeper's own openings from inside a setting or a thread (a file from a
+and a chore run alike (with `shown`, which lists what is out and where it stands, `arrange`, which
+places what it has outside, and `withdraw`, which takes back what it set out). The keeper's own
+openings from inside a setting or a thread (a file from a
 diff, a test from a file, a link) arrive the same way, through `POST /show`, so every surface
 agrees on the trail. It is IDE control: it arranges the console's own space around the conversation, never
 the computer, and it changes nothing in the world, so it asks no permission and spends the keeper's
@@ -991,8 +992,8 @@ only carries the proposal. Since contract 1.27.
 A setting belongs to its creature when the session has one, and to its thread otherwise. Showing
 the same thing again (the same owner, `what.kind` and `what.ref`) replaces the earlier setting:
 `show.settled` with `outcome: "withdrawn"` and `by: "creature"` for the earlier one comes first,
-then `show.proposed` with a new id that names the earlier one in `replaces`. An owner sets out at most thirty settings an hour, replacements
-included; the tool answers the thirty-first with a sentence, as creature mail answers its limits,
+then `show.proposed` with a new id that names the earlier one in `replaces`. An owner sets out at most a hundred settings an hour, replacements
+included; the tool answers the hundred-and-first with a sentence, as creature mail answers its limits,
 and nothing fires.
 
 Settings are kept for the workspace on disk, in the node's state beside its chores
@@ -1034,6 +1035,28 @@ out, once, at the start of its next model request (the keeper's and the clock's 
 never its own withdrawals or replacements and never anything the keeper opened); that note is
 engine-internal and adds nothing to this stream.
 
+A setting may stand outside the console window, in a pane of its own (since contract 1.33). `where`
+is `beside`, today's behaviour and what its absence means, or `outside`. Outside, the console gives a
+session's panes a stage: the free area beside the console when there is one, otherwise the far side
+of the console, otherwise the whole display. The stage is a 12 by 12 lattice, and `seat` is a
+rectangle on it, `{ x, y, w, h }` in whole twelfths with `x + w` and `y + h` at most 12, never
+pixels; a setting outside with no `seat` leaves the place to the console. The tool takes a seat by
+name (`full`, `left-half`, `right-half`, `top-half`, `bottom-half`, `left-third`, `middle-third`,
+`right-third`, `left-two-thirds`, `right-two-thirds`, `top-left`, `top-right`, `bottom-left`,
+`bottom-right`, and the plain ways of saying them), as lattice lines (`columns 4 to 8, rows 0 to 6`)
+or as the rectangle, and the engine expands and checks it before anything is stored or sent, so the
+wire only ever carries the rectangle. The console turns a seat into a window rectangle with its own
+gap and may correct it. `weight` is `lead`, `support` or `aside`: who should have the large seat when
+several stand together. `from` is also choreography outside: a setting whose `from` names a setting
+that stands outside arises from that pane, and with `weight: "lead"` it drills in, taking the larger
+seat while its parent steps down beside it until the setting is withdrawn. `mood` is `calm`, `brisk`,
+`eager`, `playful` or `urgent`: how the pane arrives, motion only, which the engine carries without
+judging and the console may ignore. `size` gains `card`. A replacement keeps where its predecessor
+stands and its `weight` unless the call names others; `mood` belongs to one arrival and is never
+carried over. `why` is empty when the session gave none. One owner has at most twelve settings
+standing outside at once, and the tool answers the thirteenth with a sentence. A 1.32 server sends
+none of these fields; a 1.32 console ignores them and sets everything beside the conversation.
+
 | Field | Type | Meaning |
 |---|---|---|
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
@@ -1041,14 +1064,32 @@ engine-internal and adds nothing to this stream.
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
 | `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
-| `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening. |
+| `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening and, since contract 1.33, when the session gave none. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |
 | `setting.until` | `"seen" \| "rests" \| string` | When it goes: once the keeper has seen it (the default), when its thread rests (`rests`), or at an ISO 8601 time. |
 | `setting.state` | `"live"` | Always `live` here; `GET /show` also serves `pinned`. |
 | `setting.from` | `string \| null` | The id of the setting or the session it grew from, or `null` for one that starts a trail. Since contract 1.28. |
 | `setting.origin` | `"creature" \| "keeper"` | `creature` for what the model working a session set out, `keeper` for the keeper's own openings through `POST /show`. Since contract 1.28. |
 | `setting.replaces` | `string \| null` | The id of the setting this one replaced (the same owner and the same thing, whoever set either out), withdrawn just before by the `show.settled` that precedes this event; `null` when it replaced nothing. Since contract 1.28. |
-| `setting.size` | `"readable" \| "working"`, optional | The size the session proposed it opens at; absent when none was named. Honoured the first time it opens, and a console may still show less. A keeper's opening carries none. Since contract 1.29. |
+| `setting.size` | `"card" \| "readable" \| "working"`, optional | The size the session proposed it opens at; absent when none was named. Honoured the first time it opens, and a console may still show less. A keeper's opening carries none. Since contract 1.29; `card` since 1.33. |
+| `setting.where` | `"beside" \| "outside"`, optional | Where the session asked for it: beside the conversation, or outside in a pane of its own. Absent means `beside`. Since contract 1.33. |
+| `setting.seat` | `{ x, y, w, h }`, optional | The seat asked for on the stage's 12 by 12 lattice: `x` and `y` from 0 to 11, `w` and `h` from 1 to 12, `x + w` and `y + h` at most 12, all integers. Only with `where: "outside"`; absent when the console chooses. Since contract 1.33. |
+| `setting.weight` | `"lead" \| "support" \| "aside"`, optional | Who should have the large seat when several stand together. With a `from` that stands outside, `lead` drills in. Since contract 1.33. |
+| `setting.mood` | `"calm" \| "brisk" \| "eager" \| "playful" \| "urgent" \| "decisive" \| "tentative"`, optional | How the pane arrives, motion only; absent means the console's own way. `decisive` moves everything at once and lands firmly; `tentative` moves one pane at a time with pauses and lands lightly. Since contract 1.33. |
+| `setting.mark` | `string`, optional | A word or two, at most 24 characters, the session asked the keeper to read on the setting for as long as it is out (`chosen`, `draft`, `done`); absent when it has none. A replacement keeps it unless it names another, and `show.changed` follows a change. Since contract 1.33. |
+| `setting.agent` | `{ name?, color? }`, optional | Present when an agent outside the session set this out through a creature's MCP server; `name` is the name its client gave, at most 40 characters, and is absent when it gave none. `color` is `cyan`, `magenta`, `green`, `yellow` or `blue` (never red, which a console keeps for errors): the engine gives each agent name one colour, picks a free one while one is free, and keeps it for that name while the server runs and across a restart for as long as one of its settings is kept, so a console draws the agent's square in it. The setting is still the creature's (`origin: "creature"`, the creature's limits, the creature may withdraw it), and a console marks it as the agent's rather than the creature's. Since contract 1.33. |
+
+### show.changed
+
+A setting that is still out changed in place: the session set, changed or cleared its `mark` with
+its `arrange` tool. The payload is the whole setting as it now stands, under the id it already had,
+so a client replaces the one it holds and keeps everything else about it (its place, its rung, what
+the keeper has done with it). Nothing arrives and nothing leaves. Scoped to the session that set the
+thing out, like `show.proposed`. Since contract 1.33; a 1.32 console ignores the event.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `setting` | `Setting` | The setting as it now is, with every field `show.proposed` carries. |
 
 ### show.settled
 
@@ -1059,13 +1100,68 @@ keeper pinned or opened. Withdrawal only touches a
 `live` setting: a pinned one stays out until the keeper unpins or dismisses it. What the server
 withdraws as it starts, after a stop, settles without this event (see `show.proposed`). A setting that
 settles takes nothing with it: the settings that grew from it stay out, and the payload stays
-`{ id, outcome, by }`, since a client already holds the setting and its `from`. Since contract 1.27.
+`{ id, outcome, by }`, since a client already holds the setting and its `from`, with `mood` added
+when the session named how the pane should leave. Since contract 1.27.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `string` | The setting. |
 | `outcome` | `"seen" \| "pinned" \| "unpinned" \| "dismissed" \| "withdrawn"` | `seen`, `unpinned` and `dismissed` take it out of the yard; `pinned` keeps it out until the keeper unpins or dismisses it; `withdrawn` takes it out without the keeper. |
+| `mood` | `"calm" \| "brisk" \| "eager" \| "playful" \| "urgent" \| "decisive" \| "tentative"`, optional | How the pane leaves, motion only, when the session named one in `withdraw`; absent, it leaves in the mood it arrived with. Since contract 1.33. |
 | `by` | `"keeper" \| "creature" \| "time"` | `keeper` for every answer, for a live setting withdrawn because its session was removed (`DELETE /sessions/{id}`, or its creature removed), and for one a keeper's opening of the same thing replaced; `creature` when the model working the thread replaced it (a creature's, or a plain session's) or its `rests` thread came to rest (a turn ended with nothing queued); `time` when its `until` time came. |
+
+### show.arranged
+
+The model working a session asked the console to arrange panes it has outside, with its `arrange`
+tool. Like the two events above it is scoped to a session: the envelope's `sessionId` is the thread
+that asked. `panes` only ever names settings that owner set out itself and that are still out, in
+the order the model gave; the engine answers anything else with a sentence and nothing fires. At
+most one of `shape`, `relation` and `seats` says how: a shape by name, a hint of how the panes
+relate that leaves the shape to the console, or a seat for each pane composed outright, any sizes in
+any combination; with none of them the console chooses. A setting named here that still stands
+beside the conversation is moved outside by the arrangement, and the record follows: `GET /show`
+then serves it with `where: "outside"` and the seat it was given, or with none when the console was
+left to choose. The console snaps what it is given to the lattice, keeps it on the display, skips a
+pane the keeper has placed since the session last placed it, never takes focus, and says what it
+did in its placements report. An owner has at most twelve settings outside at once and a session
+arranges at most twelve times a minute; the tool answers past either with a sentence. Since
+contract 1.33; a 1.32 console ignores the event.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `arrangement.id` | `string` | Minted by the engine; the console names it in the placements report that answers it. |
+| `arrangement.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
+| `arrangement.sessionId` | `string` | The thread that asked. |
+| `arrangement.at` | `string` | When it was asked (ISO 8601). |
+| `arrangement.panes` | `string[]` | Setting ids, in the order the model gave; never empty. |
+| `arrangement.shape` | `"grid" \| "columns" \| "rows" \| "lead-and-cards" \| "lead-and-stack" \| "split" \| "board"`, optional | Equal seats; tall panes side by side; wide panes stacked; one large pane with the rest as cards around it; one large pane beside a column of the rest; two large panes side by side with the rest as cards beneath; columns of cards, for tasks. |
+| `arrangement.relation` | `"sequence" \| "alternatives" \| "tasks" \| "notes"`, optional | How the panes relate, leaving the shape to the console. |
+| `arrangement.seats` | `{ id, seat }[]`, optional | A seat for each pane the model placed itself, `seat` as in `show.proposed`; every `id` is among `panes`. |
+| `arrangement.lead` | `string`, optional | The setting, among `panes`, that should have the large seat. |
+| `arrangement.side` | `"left" \| "right" \| "top" \| "bottom"`, optional | Where the large seat stands when the console lays the panes out, the rest taking the other side; absent means left. Never with `seats`. |
+| `arrangement.over` | `"room" \| "display"`, optional | `room`, the default, arranges on the stage; `display` takes the whole work area, console included. |
+| `arrangement.mood` | `"calm" \| "brisk" \| "eager" \| "playful" \| "urgent" \| "decisive" \| "tentative"`, optional | How the panes move into it, motion only. |
+| `arrangement.rest` | `"beside"`, optional | Present when the session's other panes outside, the ones `panes` does not name, should step back beside the conversation as cards, still out, so the named panes stand alone. Absent, a console leaves them as its arrangement finds them. |
+
+The console answers through `PUT /sessions/{sessionId}/settings/placements`, authenticated like the
+`/show` routes, with `{ stage, placements, arrangement? }`: the whole current picture for that
+session, replacing its last report. `stage` is `{ room, cardsAcross, cardsDown, consoleMaximised }`,
+where `room` is `beside` (the free area beside the console), `over` (its far side) or `display`, and
+the two counts are how many card-size panes fit side by side and one above another. Each placement
+is `{ id, where, seat?, by }`: `where` is `beside`, `outside` or `inside` (the keeper brought the
+pane into the console), `seat` is where it stands outside, and `by` is who put it there last,
+`creature`, `keeper` or `console`. `arrangement` is `{ id, said }` when the report answers an
+arrangement, `said` being one or two plain sentences on what was done and what was corrected. A
+console sends a report after an arrangement has played, after a session's pane arrives or leaves,
+and after the keeper moves, resizes, re-deals, brings inside or sends outside one of them, coalesced
+so a drag does not flood the server. The server answers 204, keeps the latest report of each session
+in memory only, and fires no event. The reports are what the tools speak from: `arrange` waits about
+a second and a half for the report naming its arrangement and answers with where everything now
+stands and what the console said, or says the arrangement was asked for and that `shown` will tell;
+`show` waits the same way for a setting it put outside; `shown` gives each setting's `where`, its
+`seat` outside and `by`, and the stage once. At the start of its next model request a session also
+hears, once, what the keeper has done to its panes since it last looked: moved or resized, brought
+inside, sent outside, or re-dealt when three or more changed seats.
 
 ### workspace.changed
 

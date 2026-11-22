@@ -5,6 +5,8 @@ import type {
   RoutineFinished,
   RoutineFired,
   RoutineNeedsYou,
+  ShowArranged,
+  ShowChanged,
   ShowProposed,
   ShowSettled,
   WorkshopChange,
@@ -55,7 +57,9 @@ export interface ServerEvents {
   "mesh.walked": MeshWalk;
   "mesh.peers": MeshPeersChange;
   "show.proposed": ShowProposed;
+  "show.changed": ShowChanged;
   "show.settled": ShowSettled;
+  "show.arranged": ShowArranged;
   "workspace.changed": WorkspaceChanged;
 }
 
@@ -82,7 +86,9 @@ export const serverEventTypes = [
   "mesh.walked",
   "mesh.peers",
   "show.proposed",
+  "show.changed",
   "show.settled",
+  "show.arranged",
   "workspace.changed",
 ] as const satisfies readonly (keyof ServerEvents)[];
 

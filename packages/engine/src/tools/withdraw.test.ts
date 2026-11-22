@@ -51,9 +51,7 @@ describe("the withdraw tool", () => {
 
     const said = await tool.execute({ id: setting.id });
 
-    expect(said).toBe(
-      `Withdrawn: ${setting.id} has left the yard, and what grew from it stays out.`,
-    );
+    expect(said).toBe(`Withdrawn: ${setting.id} has left the yard.`);
     expect(settings.open()).toEqual([]);
     expect(emitted.slice(before)).toEqual([
       {
@@ -145,6 +143,75 @@ describe("the withdraw tool", () => {
     await tool.execute({ id: fromOtherThread.setting.id });
 
     expect(settings.open()).toEqual([]);
+  });
+
+  it("takes back by title, several at once, and everything but what except names", async () => {
+    const { tool, settings, setOut } = seated();
+    const note = (title: string) => setOut({ what: { kind: "note", ref: `${title}.`, title } });
+    const [plan, risks, tests, calls] = ["Plan", "Risks", "Tests", "On call"].map(note);
+
+    expect(await tool.execute({ id: "risks" })).toBe(`Withdrawn: ${risks?.id} has left the yard.`);
+    expect(await tool.execute({ id: ["Tests", "Nothing like it"] })).toBe(
+      `Withdrawn 1: "Tests" (${tests?.id}) has left the yard. Not withdrawn: nothing you set out is out with the id Nothing like it; shown lists what is out. Still out: "Plan" (${plan?.id}) and "On call" (${calls?.id}).`,
+    );
+    expect(await tool.execute({ id: "all", except: "Plan" })).toBe(
+      `Withdrawn 1: "On call" (${calls?.id}) has left the yard. Still out: "Plan" (${plan?.id}).`,
+    );
+    expect(settings.open().map(({ id }) => id)).toEqual([plan?.id]);
+  });
+
+  it("names what grew from it and stays out, and only then", async () => {
+    const { tool, setOut } = seated();
+    const parent = setOut({ what: { kind: "diff", ref: "cs-41" } });
+    const child = setOut({ from: parent.id, what: { kind: "file", ref: "a.ts" } });
+
+    expect(await tool.execute({ id: parent.id })).toBe(
+      `Withdrawn: ${parent.id} has left the yard. What grew from it stays out: "a.ts" (${child.id}).`,
+    );
+  });
+
+  it("leaves in the mood it is given, in the nearest mood to a word it does not know", async () => {
+    const { tool, emitted, setOut } = seated();
+    const setting = setOut();
+    const before = emitted.length;
+
+    expect(await tool.execute({ id: setting.id, mood: "resolved" })).toBe(
+      `Withdrawn: ${setting.id} has left the yard. It left decisively, the nearest mood to "resolved".`,
+    );
+    expect(emitted.slice(before).map(({ payload }) => payload)).toEqual([
+      { id: setting.id, outcome: "withdrawn", by: "creature", mood: "decisive" },
+    ]);
+  });
+
+  it("takes back a note by the id it had before it was replaced", async () => {
+    const { tool, settings, setOut } = seated();
+    const first = setOut({ what: { kind: "note", ref: "One.", title: "Plan" } });
+    const second = setOut({ what: { kind: "note", ref: "Two.", title: "Plan" } });
+
+    expect(await tool.execute({ id: first.id })).toBe(`Withdrawn: ${second.id} has left the yard.`);
+    expect(settings.open()).toEqual([]);
+  });
+
+  it("says so when two settings share the title it was given", async () => {
+    const { tool, settings, setOut } = seated();
+    const one = setOut({ what: { kind: "file", ref: "a.md", title: "Plan" } });
+    const other = setOut({ what: { kind: "file", ref: "b.md", title: "Plan" } });
+
+    expect(await tool.execute({ id: "Plan" })).toBe(
+      `Not withdrawn: 2 of your settings are called "Plan", so name the one you mean by its id: ${one.id} or ${other.id}.`,
+    );
+    expect(settings.open()).toHaveLength(2);
+  });
+
+  it("takes nothing back when except names something that is not out", async () => {
+    const { tool, settings, setOut } = seated();
+    setOut({ what: { kind: "note", ref: "One.", title: "One" } });
+    setOut({ what: { kind: "note", ref: "Two.", title: "Two" } });
+
+    expect(await tool.execute({ id: "all", except: "Three" })).toBe(
+      'Not withdrawn: except names "Three", and nothing you set out is out as that, so nothing was taken back; shown lists what is out.',
+    );
+    expect(settings.open()).toHaveLength(2);
   });
 
   it("answers when no keeper surface takes settings", async () => {

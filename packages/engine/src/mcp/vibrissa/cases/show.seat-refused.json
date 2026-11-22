@@ -1,0 +1,21 @@
+{
+  "name": "show: a seat beside the conversation is refused in a sentence that says what would work",
+  "tool": "show",
+  "args": {
+    "what": {
+      "kind": "note",
+      "ref": "the plan"
+    },
+    "where": "beside",
+    "seat": "left-half"
+  },
+  "expect": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Not set out: a seat is a place outside, so it cannot go with where beside; leave one of them out."
+      }
+    ],
+    "isError": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "show: a consent-shaped field is invalid params, never an approval",
+  "tool": "show",
+  "args": {
+    "what": {
+      "kind": "note",
+      "ref": "deploy it"
+    },
+    "approve": true
+  },
+  "expectError": {
+    "code": "InvalidParams"
+  }
+}

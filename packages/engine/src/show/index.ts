@@ -1,4 +1,19 @@
 export {
+  type Arrangement,
+  type ArrangementAsk,
+  type ArrangementReach,
+  type ArrangementRelation,
+  type ArrangementShape,
+  arrangementReaches,
+  arrangementRelations,
+  arrangementShapes,
+  arrangementsPerMinute,
+  outsideAtOnce,
+  placementWaitMs,
+  type SeatedPane,
+  type ShowArranged,
+} from "./arrangement.ts";
+export {
   keptSettingsOf,
   keptSettingsText,
   type SettingDisk,
@@ -6,7 +21,14 @@ export {
   settingFile,
   settingsFileIn,
 } from "./file.ts";
-export { type Heard, outcomeNoteOf, outcomesPerNote, type SettledNote } from "./heard.ts";
+export {
+  type Heard,
+  type KeeperMove,
+  outcomeNoteOf,
+  outcomesPerNote,
+  type PlacedNote,
+  type SettledNote,
+} from "./heard.ts";
 export { type KeeperOpening, keeperOpeningJsonSchema, keeperOpeningOf } from "./input.ts";
 export {
   type KeptSettings,
@@ -18,18 +40,49 @@ export {
 } from "./kept.ts";
 export type { SettingSeat, ShowThread, ThreadLookup } from "./lineage.ts";
 export {
+  type ArrangementAnswer,
+  type Placement,
+  type PlacementMover,
+  type PlacementPlace,
+  type PlacementsReport,
+  placementMovers,
+  placementPlaces,
+  placementsReportJsonSchema,
+  placementsReportOf,
+  type Stage,
+  type StageRoom,
+  stageRooms,
+} from "./placements.ts";
+export {
+  latticeSpan,
+  namedSeats,
+  type Seat,
+  type SeatName,
+  seatNames,
+  seatRead,
+  seatWords,
+} from "./seat.ts";
+export {
+  type AgentColor,
+  agentColors,
+  type Mood,
+  markLength,
+  moods,
   type Rung,
   rungs,
   type Setting,
   type SettingAnswer,
   type SettingKind,
   type SettingOrigin,
+  type SettingPlace,
   type SettingSize,
   type SettingState,
   type SettingUntil,
+  type SettingWeight,
   type SettingWhat,
   type SettledBy,
   type SettledOutcome,
+  type ShowChanged,
   type ShowEventSink,
   type ShowEvents,
   type ShowEventType,
@@ -38,8 +91,11 @@ export {
   settingAnswers,
   settingKinds,
   settingOrigins,
+  settingPlaces,
   settingSizes,
+  settingWeights,
 } from "./setting.ts";
+export type { StandingPicture, Stood } from "./standing.ts";
 export {
   type KeptSettingStoreOptions,
   type SetOut,

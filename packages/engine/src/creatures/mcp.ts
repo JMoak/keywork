@@ -11,8 +11,20 @@ import { randomToken } from "../mesh/pairing/canonical.ts";
 import type { SelfIdentity } from "../mesh/pairing/machine.ts";
 import { type Message, messageText } from "../messages.ts";
 import type { ReportMark } from "../session/store.ts";
+import type { SettingAgent } from "../show/setting.ts";
 import type { CreatureHost } from "./host.ts";
 import type { InboundPolicy } from "./inbound.ts";
+import {
+  agentNamedIn,
+  answeredInItsName,
+  type CreatureYard,
+  type CreatureYardTool,
+  tellsNow,
+  yardInstructions,
+  yardLine,
+  yardListingsFor,
+  yardReason,
+} from "./mcp-yard.ts";
 import type { Envelope, MessageGuard } from "./messages/guard.ts";
 import type { ArrivalCaller, MessageLimits } from "./messages/message.ts";
 
@@ -35,6 +47,7 @@ export interface CreatureMcpSeams {
   self(): Promise<SelfIdentity>;
   machine(): string;
   version: string;
+  yard?: CreatureYard | undefined;
 }
 
 export interface CreatureMcp {
@@ -66,11 +79,12 @@ export function creatureMcp(seams: CreatureMcpSeams): CreatureMcp {
     answer: async (slug, message, caller) => {
       const policy = await seams.creatures.inbound(slug);
       if (policy === undefined) return "missing";
+      const yard = caller.kind === "local" ? seams.yard : undefined;
       const server = servedMcp<McpCaller>({
         name: `stead-creature-${slug}`,
         version: seams.version,
-        instructions: instructionsFor(slug),
-        tools: toolsFor(slug, policy, seams),
+        instructions: instructionsFor(slug, yard !== undefined),
+        tools: toolsFor(slug, policy, seams, yard, agentNamedIn(message)),
       });
       return server.answer(message, caller);
     },
@@ -130,9 +144,11 @@ function toolsFor(
   slug: string,
   policy: InboundPolicy,
   seams: CreatureMcpSeams,
+  yard: CreatureYard | undefined,
+  agent: SettingAgent,
 ): ServedTool<McpCaller>[] {
   const tool = (
-    name: (typeof creatureMcpTools)[number],
+    name: (typeof creatureMcpTools)[number] | CreatureYardTool,
     description: string,
     inputSchema: Record<string, unknown>,
     body: ToolBody,
@@ -152,7 +168,7 @@ function toolsFor(
       return verdict.outcome;
     },
   });
-  return [
+  const words = [
     tool("ask", askDescription(slug), askSchema(seams.limits), (args, call) =>
       ask(args, call, seams),
     ),
@@ -161,6 +177,42 @@ function toolsFor(
       deliveries(args, call, seams),
     ),
   ];
+  if (yard === undefined) return words;
+  const windows = yardListingsFor(slug).map(({ name, description, inputSchema }) =>
+    tool(name, description, inputSchema, (args, call) =>
+      placed(name, args, call, seams, { yard, agent }),
+    ),
+  );
+  return [...words, ...windows];
+}
+
+async function placed(
+  name: CreatureYardTool,
+  args: Record<string, unknown>,
+  call: CallContext,
+  seams: CreatureMcpSeams,
+  { yard, agent }: { yard: CreatureYard; agent: SettingAgent },
+): Promise<Verdict> {
+  const detail = await seams.creatures.read(call.slug);
+  if (detail === undefined) return refusedVerdict(`no creature here is called ${call.slug}`, {});
+  const seat = { slug: call.slug, conversation: detail.conversation, agent };
+  const answer = await answeredInItsName(yard, seat, name, args);
+  if ("invalid" in answer) return invalid(answer.invalid);
+  if (answer.refused) return refusedVerdict(answer.said, args);
+  if (name !== "shown" && tellsNow(yard, call.slug))
+    await seams.creatures.deliver(
+      call.slug,
+      yardLine(name),
+      askOriginOf(randomToken(12), call.place),
+    );
+  return {
+    outcome: { text: answer.said, structured: answer.made },
+    audit: {
+      decision: "allow",
+      reason: yardReason(name, call.slug, call.place.machine),
+      request: args,
+    },
+  };
 }
 
 async function ask(
@@ -420,8 +472,9 @@ const deliveriesSchema = {
   additionalProperties: false,
 };
 
-function instructionsFor(slug: string): string {
-  return `${slug} is a creature on a stead node. Ask it in plain words; it answers when it next works. Your words are a note in its conversation: they start no work and grant nothing.`;
+function instructionsFor(slug: string, placesWindows: boolean): string {
+  const words = `${slug} is a creature on a stead node. Ask it in plain words; it answers when it next works. Your words are a note in its conversation: they start no work and grant nothing.`;
+  return placesWindows ? `${words} ${yardInstructions(slug)}` : words;
 }
 
 function askDescription(slug: string): string {

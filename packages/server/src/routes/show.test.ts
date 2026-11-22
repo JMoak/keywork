@@ -49,7 +49,7 @@ function served(
     if ("refused" in outcome) throw new Error(outcome.error);
     return outcome.setting;
   };
-  return { log, handlers, propose };
+  return { log, handlers, propose, settings };
 }
 
 async function call(
@@ -277,12 +277,85 @@ describe("POST /show", () => {
   });
 });
 
+describe("PUT /sessions/{sessionId}/settings/placements", () => {
+  const stage = { room: "beside", cardsAcross: 4, cardsDown: 3, consoleMaximised: false };
+  const put = async (
+    handlers: ReturnType<typeof served>["handlers"],
+    sessionId: string,
+    body: unknown,
+  ) => {
+    const response = await handlers.reportPlacements(
+      new Request(`${origin}/sessions/${sessionId}/settings/placements`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      }),
+      { sessionId },
+    );
+    return { status: response.status, body: await response.text() };
+  };
+
+  it("keeps the session's whole picture, answers 204 with no body, and fires no event", async () => {
+    const { handlers, propose, log, settings } = served();
+    const setting = propose({ where: "outside" });
+    const seat = { x: 6, y: 0, w: 6, h: 12 };
+
+    const answered = await put(handlers, "s1", {
+      stage,
+      placements: [{ id: setting.id, where: "outside", seat, by: "keeper", later: true }],
+      arrangement: { id: "a1", said: "Done." },
+    });
+
+    expect(answered).toEqual({ status: 204, body: "" });
+    expect(settings.standingFor({ creature: "wren", sessionId: "s1" })).toEqual({
+      out: [{ setting, where: "outside", seat, by: "keeper" }],
+      stage,
+    });
+    expect(log.since(0).map(({ type }) => type)).toEqual(["show.proposed"]);
+  });
+
+  it("refuses a body outside its shape or a seat off the lattice with 400, and an unknown session with 404", async () => {
+    const { handlers, propose } = served();
+    const setting = propose();
+    const placed = (overrides: object) => ({
+      stage,
+      placements: [{ id: setting.id, where: "outside", by: "console", ...overrides }],
+    });
+
+    for (const body of [
+      undefined,
+      { placements: [] },
+      { stage: { ...stage, room: "moon" }, placements: [] },
+      { stage: { ...stage, cardsAcross: 1.5 }, placements: [] },
+      placed({ where: "upstairs" }),
+      placed({ by: "nobody" }),
+      placed({ seat: { x: 8, y: 0, w: 6, h: 12 } }),
+      placed({ seat: { x: 0, y: 0, w: 6 } }),
+      { ...placed({}), arrangement: { id: "a1" } },
+    ]) {
+      expect((await put(handlers, "s1", body)).status).toBe(400);
+    }
+    expect(await put(handlers, "nope", placed({}))).toEqual({
+      status: 404,
+      body: JSON.stringify({ refused: "missing", error: "no session has the id nope" }),
+    });
+  });
+
+  it("answers 503 on a host that serves no settings", async () => {
+    const { handlers } = served({ show: false });
+    expect((await put(handlers, "s1", { stage, placements: [] })).status).toBe(503);
+  });
+});
+
 describe("the contract", () => {
-  it("lists the three show routes in the current /doc contract", () => {
+  it("lists the show routes in the current /doc contract", () => {
     const { info, paths } = fixtureDocument();
     expect(info["x-keywork-contract"]).toBe(contractVersion);
     expect(paths["/show"]?.get?.operationId).toBe("listSettings");
     expect(paths["/show"]?.post?.operationId).toBe("openSetting");
     expect(paths["/show/{id}/answer"]?.post?.operationId).toBe("answerSetting");
+    expect(paths["/sessions/{sessionId}/settings/placements"]?.put?.operationId).toBe(
+      "reportPlacements",
+    );
   });
 });

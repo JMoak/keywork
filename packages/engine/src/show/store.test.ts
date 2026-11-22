@@ -277,21 +277,22 @@ describe("the engine withdraws", () => {
 });
 
 describe("the hourly limit", () => {
-  it("refuses a creature's thirty-first setting in the hour in words, and lets it set out again an hour on", async () => {
+  it("refuses a creature's hundred-and-first setting in the hour in words, and lets it set out again an hour on", async () => {
     const { store, heard, advanceTo } = board();
     const note = (index: number) => ({ kind: "note" as const, ref: `note ${index}` });
-    for (let index = 0; index < 30; index++) setOut(store.propose(proposal({ what: note(index) })));
+    for (let index = 0; index < 100; index++)
+      setOut(store.propose(proposal({ what: note(index) })));
 
-    expect(store.propose(proposal({ what: note(30) }))).toEqual({
+    expect(store.propose(proposal({ what: note(100) }))).toEqual({
       refused: "limited",
       error:
-        "wren has set out 30 settings this hour, the most a creature may set out; try again later",
+        "wren has set out 100 settings this hour, the most a creature may set out; try again later",
     });
-    setOut(store.propose(proposal({ creature: "hal", what: note(30) })));
-    expect(heard.filter(({ type }) => type === "show.proposed")).toHaveLength(31);
+    setOut(store.propose(proposal({ creature: "hal", what: note(100) })));
+    expect(heard.filter(({ type }) => type === "show.proposed")).toHaveLength(101);
 
     await advanceTo(t0 + hourMs + 1);
-    setOut(store.propose(proposal({ what: note(31) })));
+    setOut(store.propose(proposal({ what: note(101) })));
   });
 
   it("counts per thread for a session with no creature, and refuses in the thread's words", () => {
@@ -687,3 +688,79 @@ function expectedUnderTheLimit(calls: readonly Caller[], limit: number): string[
     return spent > limit ? "limited" : "creature";
   });
 }
+
+describe("an agent's colour", () => {
+  const by = (store: SettingStore, name: string | undefined, ref: string) =>
+    setOut(
+      store.propose(
+        proposal({ what: { kind: "note", ref }, agent: name === undefined ? {} : { name } }),
+      ),
+    ).setting.agent;
+
+  it("is its own while one is free, and the same for the same agent every time", () => {
+    const { store } = board();
+    const names = ["claude-code", "cursor", "codex", "goose", "aider"];
+
+    const colours = names.map((name, at) => by(store, name, `note ${at}`)?.color);
+    expect(new Set(colours).size).toBe(names.length);
+    expect(by(store, "Claude-Code", "again")?.color).toBe(colours[0]);
+    expect(by(store, undefined, "nameless")?.color).toBeDefined();
+  });
+
+  it("stays off a setting no agent set out", () => {
+    const { store } = board();
+    expect(setOut(store.propose(proposal())).setting).not.toHaveProperty("agent");
+  });
+});
+
+describe("a setting's mark", () => {
+  const caller = { creature: "wren", sessionId: "s1" };
+
+  it("is carried on the record, kept by a replacement, and changed in place on show.changed", () => {
+    const { store, heard } = board();
+    const first = setOut(store.propose(proposal({ mark: "draft" }))).setting;
+    const second = setOut(store.propose(proposal({ why: "Again." }))).setting;
+    expect([first.mark, second.mark]).toEqual(["draft", "draft"]);
+
+    const before = heard.length;
+    expect(store.mark(caller, [{ id: second.id, mark: "chosen" }], true)).toMatchObject([
+      { id: second.id, mark: "chosen" },
+    ]);
+    store.mark(caller, [{ id: second.id, mark: "chosen" }], true);
+    store.mark(caller, [{ id: second.id, mark: undefined }], true);
+
+    expect(heard.slice(before).map(({ type, payload }) => [type, payload])).toEqual([
+      ["show.changed", { setting: expect.objectContaining({ id: second.id, mark: "chosen" }) }],
+      ["show.changed", { setting: expect.not.objectContaining({ mark: expect.anything() }) }],
+    ]);
+  });
+
+  it("is refused on what is not the caller's own, the keeper's openings among them", async () => {
+    const { store } = board();
+    const mine = setOut(store.propose(proposal())).setting;
+    const keepers = setOut(
+      await store.keeperOpens({
+        what: { kind: "file", ref: "a.ts" },
+        from: mine.id,
+        rung: "unfold",
+      }),
+    ).setting;
+
+    for (const id of [keepers.id, "no-such-id"]) {
+      expect(store.mark(caller, [{ id, mark: "chosen" }], true)).toMatchObject({
+        refused: "missing",
+      });
+    }
+  });
+});
+
+describe("a setting that lasts a time from now", () => {
+  it("goes at that time by the store's own clock", async () => {
+    const { store, advanceTo } = board();
+    const { setting } = setOut(store.propose(proposal({ lastsMs: 10 * minuteMs })));
+    expect(setting.until).toBe("2026-11-08T09:10:00.000Z");
+
+    await advanceTo(t0 + 10 * minuteMs);
+    expect(store.open()).toEqual([]);
+  });
+});

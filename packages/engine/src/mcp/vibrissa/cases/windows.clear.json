@@ -1,0 +1,78 @@
+{
+  "name": "windows: several are withdrawn by title in one call, and a misnamed except takes nothing back",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "show one",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "note",
+          "ref": "first to go",
+          "title": "Drop me"
+        }
+      },
+      "expect": {
+        "$partial": true,
+        "isError": false
+      }
+    },
+    {
+      "name": "show another",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "note",
+          "ref": "second to go",
+          "title": "Drop me too"
+        }
+      },
+      "expect": {
+        "$partial": true,
+        "isError": false
+      }
+    },
+    {
+      "name": "a misnamed except takes nothing back",
+      "tool": "withdraw",
+      "args": {
+        "id": "all",
+        "except": "No such thing"
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Not withdrawn: except names \"No such thing\", and nothing you set out is out as that, so nothing was taken back; shown lists what is out."
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "name": "withdraw both by title",
+      "tool": "withdraw",
+      "args": {
+        "id": ["Drop me", "drop me too"]
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Withdrawn 2: \"Drop me\" [(][0-9a-f-]{36}[)] and \"Drop me too\" [(][0-9a-f-]{36}[)] have left the yard[.] Still out: "
+            }
+          }
+        ],
+        "structuredContent": {
+          "$partial": true,
+          "id": {
+            "$type": "string"
+          }
+        },
+        "isError": false
+      }
+    }
+  ]
+}
