@@ -1,6 +1,8 @@
 export {
   type AnswerOutcome,
   type AskDecider,
+  type AskEnding,
+  type AskFollower,
   AskQueue,
   type AskQueueOptions,
   type AskVerdict,

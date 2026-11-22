@@ -454,6 +454,89 @@
         "to": "string"
       }
     },
+    "creature.ledger": [
+      {
+        "change": "string",
+        "creature": "string",
+        "entry": {
+          "about": {
+            "callId": "string",
+            "kind": "string",
+            "tool": "string"
+          },
+          "answer": "null",
+          "closedAt": "null",
+          "directory": "string",
+          "id": "string",
+          "kind": "string",
+          "openedAt": "string",
+          "session": "string",
+          "state": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "creature": "string",
+        "entry": {
+          "about": {
+            "kind": "string",
+            "routineId": "string"
+          },
+          "answer": "string",
+          "closedAt": "string",
+          "directory": "string",
+          "id": "string",
+          "kind": "string",
+          "openedAt": "string",
+          "session": "null",
+          "state": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "creature": "string",
+        "entry": {
+          "about": {
+            "kind": "string",
+            "routineId": "string",
+            "runId": "string"
+          },
+          "answer": "null",
+          "closedAt": "string",
+          "directory": "string",
+          "id": "string",
+          "kind": "string",
+          "openedAt": "string",
+          "session": "string",
+          "state": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "creature": "string",
+        "entry": {
+          "about": {
+            "kind": "string"
+          },
+          "answer": "null",
+          "closedAt": "string",
+          "directory": "string",
+          "id": "string",
+          "kind": "string",
+          "openedAt": "string",
+          "session": "null",
+          "state": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      }
+    ],
     "routine.fired": {
       "attempt": "number",
       "catchUp": "boolean",

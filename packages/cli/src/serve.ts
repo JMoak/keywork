@@ -10,6 +10,7 @@ import {
   type ChangedPath,
   type Checkpoints,
   type CreatureHost,
+  type CreatureLedger,
   type CreatureMail,
   CreatureProjectError,
   type CreatureSessionTag,
@@ -18,6 +19,7 @@ import {
   compactionDue,
   contextMeasureOf,
   creatureHandoffs,
+  creatureLedger,
   creatureMail,
   creatureTagOf,
   decideForKeeper,
@@ -36,6 +38,7 @@ import {
   keeperContextOf,
   knownCostNanos,
   latestSessionTotals,
+  ledgerFileIn,
   type Mailboxes,
   type MemoryStore,
   type Message,
@@ -72,6 +75,7 @@ import {
   type StagedItem,
   scopeContains,
   sessionPosture,
+  type Tailnet,
   type ThreadOutcome,
   type ToolGuard,
   type ToolPosture,
@@ -170,6 +174,13 @@ import {
   type SettledThread,
   servedCreatures,
 } from "./serve-creatures.ts";
+import {
+  type CreatureSessionFacts,
+  choreFactsOver,
+  followAsks,
+  followLedgerEvents,
+  ledgeredCreatures,
+} from "./serve-ledger.ts";
 import { type LifecycleSessions, servedLifecycle, trashSession } from "./serve-lifecycle.ts";
 import { servedCreatureMcp } from "./serve-mcp.ts";
 import { servedMemory, stagedInbox } from "./serve-memory.ts";
@@ -270,6 +281,8 @@ export interface HostOptions {
   notice?: ((text: string) => void) | undefined;
   recompose?: (() => Promise<void>) | undefined;
   modelProbe?: ProbeHttp | undefined;
+  // The tailnet the mesh reads this machine's identity from; its own tailscaled when left out.
+  tailnet?: Tailnet | undefined;
 }
 
 export function serverTicketFile(userRoot?: string): string {
@@ -454,6 +467,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     log,
     notice,
     modelProbe: options.modelProbe,
+    tailnet: options.tailnet,
     inventory:
       inventory === undefined
         ? undefined
@@ -536,7 +550,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     notice,
   });
   stagedOf = stagedInbox(composition.memory);
-  const creatures = servedCreatures({
+  const hosted = servedCreatures({
     registry,
     sessions: creatureSessionsOf(sessions, gate, log),
     workshops,
@@ -544,6 +558,18 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     spentToday: async (slug, date) => node.usage.spentOn(slug, date),
     notice,
   });
+  const ledger = creatureLedger({
+    file: workspaceLedgerFile(place),
+    creatures: hosted,
+    exists: async (slug) => (await registry.read(slug)) !== undefined,
+    chore: choreFactsOver(() => routines?.service, options.cwd),
+    notice,
+  });
+  const unfollowLedger = [
+    followAsks(gate.asks, ledger, (id) => sessions.creatureSessionOf(id)),
+    followLedgerEvents(log, ledger, notice),
+  ];
+  const creatures = ledgeredCreatures(hosted, ledger, options.cwd);
   const trustedMemory = (): MemoryStore | undefined => {
     const workspace = composition.memory();
     return workspace?.store.trusted === true ? workspace.store : undefined;
@@ -566,12 +592,13 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     ? await servedRoutines({
         state: node.routines,
         workspace: options.cwd,
-        sessions: routineSessionsOf(sessions, verbs, creatures, gate),
+        sessions: routineSessionsOf(sessions, verbs, creatures, gate, ledger),
         creatures,
         directory: creatureDirectoryOver(registry),
         log,
       })
     : undefined;
+  if (routines !== undefined) await ledger.choresNeeding(routines.service.needsYou());
   gate.asks.decideWith(
     keeperDecider({
       nodeState: node.state,
@@ -617,6 +644,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
     creatures,
     handoffs,
+    ledger,
     ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh, settings: shown.settings }),
     ...(routines !== undefined && { routines: routines.service }),
     models: refreshableModels(node.models, options.refreshInference),
@@ -634,6 +662,8 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       await closingCampaigns;
       await routines?.close();
       await node.usage.flush();
+      for (const unfollow of unfollowLedger) unfollow();
+      ledger.close();
     },
   };
 }
@@ -1017,6 +1047,22 @@ class LiveSessions {
 
   liveOnly(id: string): LiveSession | undefined {
     return this.live.get(id);
+  }
+
+  creatureSessionOf(id: string): CreatureSessionFacts | undefined {
+    const store = this.runningStoreOf(id);
+    if (store === undefined) return undefined;
+    const parent = store.header.spawnedBy?.sessionId ?? null;
+    const parentStore = parent === null ? undefined : this.runningStoreOf(parent);
+    const tag =
+      creatureTagOf(store.entries()) ??
+      (parentStore === undefined ? undefined : creatureTagOf(parentStore.entries()));
+    if (tag === undefined) return undefined;
+    return { creature: tag.creature, directory: store.header.cwd, parent };
+  }
+
+  private runningStoreOf(id: string): SessionStore | undefined {
+    return this.live.get(id)?.served().store ?? this.runningChildren.get(id)?.store;
   }
 
   stored(id: string): Promise<SessionStore | undefined> {
@@ -2304,11 +2350,22 @@ function routineSessionsOf(
   verbs: SessionHost,
   creatures: { openThread(creature: string, kind: "routine"): Promise<string> },
   { asks }: ServedGate,
+  ledger: Pick<CreatureLedger, "threadOpened">,
 ): RoutineSessions {
   return {
     openThread: async (thread) => {
       const id = await creatures.openThread(thread.creature, thread.kind);
       await verbs.rename(id, thread.title);
+      const opened = sessions.creatureSessionOf(id);
+      if (opened !== undefined) {
+        ledger.threadOpened({
+          creature: thread.creature,
+          session: id,
+          directory: opened.directory,
+          title: thread.title,
+          about: { kind: "chore", routineId: thread.routineId, runId: thread.runId },
+        });
+      }
       return id;
     },
     confine: async (id, posture, grants) => sessions.confine(id, posture, grants),
@@ -2369,6 +2426,12 @@ function workspaceHandoffsFile(
   place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
 ): string {
   return handoffsFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
+}
+
+function workspaceLedgerFile(
+  place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
+): string {
+  return ledgerFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
 }
 
 function servedMail(

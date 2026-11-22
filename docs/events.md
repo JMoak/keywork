@@ -763,6 +763,54 @@ Since contract 1.36; an older server sends none and serves no `GET /creature-han
 | `handoff.count` | `number` | Hand-offs from `from` to `to` so far, at least 1; on `dropped`, the count the pair had when it went. |
 | `handoff.lastAt` | `string` | When the latest of them was delivered (ISO 8601). |
 
+### creature.ledger
+
+Fires when an entry in a creature's ledger opened, changed or left the kept list, so the keeper's
+console updates one row of its per-creature panel without re-fetching
+`GET /creatures/{slug}/ledger`, which serves the whole ledger for a cold start. The ledger is the
+creature's questions for the keeper and its tasks, kept as history after their sessions are
+cleared. Not the keeper ledger behind `GET /creatures/{slug}/report`, nor the memory ledger.
+
+A question is `waiting`, then `answered`. It is a permission ask on one of the creature's sessions
+(its conversation, a chore run, a thread, or a sub-agent of one), waiting from when it joins
+`GET /asks` until it leaves it, or a chore held on a write or act grant set the keeper has not
+accepted, waiting while `GET /routines/needs-you` lists its `grants` item. A task is `running`,
+then `finished` until the keeper looks (`POST /creatures/{slug}/ledger/{id}/seen`), then `done`;
+or `blocked` when it failed, timed out, ran over budget or could not deliver. A task is a chore run,
+from its thread's opening to its `routine.finished`, or a thread of kind `thread`, until its first
+report reaches the conversation. The conversation's own turns are not tasks, and a sub-agent's work
+belongs to the session that delegated it.
+
+The server writes every change as it happens and keeps the ledger for the workspace under the
+node's state (`creatures/ledger.json` beside the hand-off tally), so it outlives a restart and
+the sessions it names. It is never rebuilt from history and began empty with contract 1.37; the
+one thing read back is which chores are held on grants, from the chore journal at every start. No
+ask or turn outlives the server, so a question about an ask a stopped server left waiting is
+answered `lapsed`, and a task it left running is `blocked`, when the next server starts; those
+settle without an event. Each creature keeps its 50 most recent closed entries; an older one
+leaves the list with `change: "folded"` and adds to `folded`. Open entries are always kept.
+Removing a creature (a confirmed `DELETE /creatures/{slug}`) drops its ledger with no event of
+its own beside `creature.changed`, so a creature made again under the same slug starts from none.
+The ledger is a record for display: it grants, widens and implies nothing about what any creature
+may do, and a question is answered only where it was asked. Since contract 1.37; an older server
+sends none and serves no `GET /creatures/{slug}/ledger`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `creature` | `string` | The creature's slug. |
+| `change` | `"opened" \| "changed" \| "folded"` | `opened` for a new entry; `changed` when its state, title or session changed; `folded` when it left the kept list. |
+| `entry.id` | `string` | Stable for the life of the entry. |
+| `entry.kind` | `"question" \| "task"` | What it is. |
+| `entry.state` | `"waiting" \| "answered" \| "running" \| "finished" \| "done" \| "blocked"` | The first two for a question, the rest for a task. |
+| `entry.title` | `string` | Plain words: `Allow bash git push origin main?`, `May the chore "Morning triage" write?`, or the chore's or thread's title. |
+| `entry.directory` | `string` | The working directory of the session the work lives in; the workspace for a chore held on grants. |
+| `entry.session` | `string \| null` | That session while it is in the session directory; `null` while it is in the trash (it comes back with `POST /trash/{id}/restore`) or when there never was one. |
+| `entry.openedAt` | `string` | When it opened (ISO 8601). |
+| `entry.closedAt` | `string \| null` | When it was answered, finished or blocked; `null` while it is open. Marking a task seen leaves it as it was. |
+| `entry.answer` | `"granted" \| "denied" \| "lapsed" \| null` | On an answered question: what the answer was, or `lapsed` when nobody answered (the ask timed out, its session or the server closed first, or the chore stopped needing the acceptance some other way). `null` otherwise. |
+| `entry.about` | `object` | `{ kind: "ask", callId, tool }` (answer it with `POST /asks/{callId}`), `{ kind: "grants", routineId }` (accept it on the chore), `{ kind: "chore", routineId, runId }` or `{ kind: "thread" }`. |
+| `folded` | `number` | How many of the creature's closed entries have left the list so far. |
+
 ### routine.fired
 
 A chore (code name `routine`) is scheduled or triggered work a creature does on its own: a file at

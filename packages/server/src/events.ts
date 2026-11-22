@@ -1,6 +1,7 @@
 import type {
   CreatureChanged,
   CreatureHandoffChange,
+  CreatureLedgerChange,
   EngineEvents,
   EventBus,
   RoutineFinished,
@@ -46,6 +47,7 @@ export interface ServerEvents {
   "session.settled": SessionSettlement;
   "creature.changed": CreatureChanged;
   "creature.handoff": CreatureHandoffChange;
+  "creature.ledger": CreatureLedgerChange;
   "routine.fired": RoutineFired;
   "routine.finished": RoutineFinished;
   "routine.needs": RoutineNeedsYou;
@@ -76,6 +78,7 @@ export const serverEventTypes = [
   "session.settled",
   "creature.changed",
   "creature.handoff",
+  "creature.ledger",
   "routine.fired",
   "routine.finished",
   "routine.needs",

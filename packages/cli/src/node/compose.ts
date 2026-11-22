@@ -156,6 +156,9 @@ export interface MeshConsoleOptions {
   userRoot: string;
   headless: boolean;
   port: number;
+  // Where this machine's identity is read: its own tailscaled when left out. A test gives a
+  // recorded one, because a machine without Tailscale has no identity to send a message under.
+  tailnet?: Tailnet | undefined;
   onPairing: (event: PairingEvent) => void;
   onGrant: (event: GrantEvent) => void;
   onLanes?: ((change: MeshPeersChange) => void) | undefined;
@@ -171,7 +174,7 @@ interface ConsoleTrust extends MeshConsole {
 }
 
 export async function houseMeshConsole(options: MeshConsoleOptions): Promise<HouseMeshConsole> {
-  const tailnet = createTailnet(defaultTransport());
+  const tailnet = options.tailnet ?? createTailnet(defaultTransport());
   const self = selfOn(tailnet);
   const trust = await meshConsoleOver(meshStores(options.stateDir), self, options);
   if (options.onLanes !== undefined) {

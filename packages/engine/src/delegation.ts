@@ -13,6 +13,7 @@ import { knownCostNanos } from "./pricing.ts";
 import { childDepthOf, childSessionFile } from "./session/children.ts";
 import { type AskRule, type PermissionAsk, tapJournal } from "./session/journal.ts";
 import { SessionStore } from "./session/store.ts";
+import { toolActivityOf } from "./tool-activity.ts";
 import { defineTool } from "./tools/define.ts";
 import type { Tool } from "./tools.ts";
 
@@ -289,9 +290,9 @@ function watchChild(child: OpenedChild, report: (line: string) => void): ChildWa
     child.store === undefined ? undefined : recordMessages(child.agent, child.store, child.bus);
   const journal = child.store === undefined ? undefined : tapJournal(child.bus, child.store);
   const stops = [
-    child.bus.on("tool.started", ({ call }) => report(activityOf(call.name, call.arguments))),
+    child.bus.on("tool.started", ({ call }) => report(toolActivityOf(call.name, call.arguments))),
     child.bus.on("gate.ask", ({ ask }) =>
-      report(`needs you · ${activityOf(ask.tool, ask.arguments)}`),
+      report(`needs you · ${toolActivityOf(ask.tool, ask.arguments)}`),
     ),
     child.bus.on("gate.permission", ({ decision }) => {
       if (decision.gate === "headless" && decision.verdict === "denied") {
@@ -424,26 +425,7 @@ function refusalNote(refused: readonly RefusedCall[]): string {
   return `the child stopped at a call no one could approve: ${tools}`;
 }
 
-const favoredSubjects = ["path", "command", "query", "pattern", "url", "name"];
-
-function activityOf(tool: string, args: unknown): string {
-  const subject = subjectOf(args);
-  return subject === "" ? tool : `${tool} ${subject}`;
-}
-
 function isControl(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
   return code < 32 || code === 127;
-}
-
-function subjectOf(args: unknown): string {
-  if (typeof args !== "object" || args === null) return "";
-  const record = args as Record<string, unknown>;
-  const key =
-    favoredSubjects.find((candidate) => typeof record[candidate] === "string") ??
-    Object.keys(record).find((candidate) => typeof record[candidate] === "string");
-  const value = key === undefined ? undefined : record[key];
-  if (typeof value !== "string") return "";
-  const flat = value.replace(/\s+/g, " ").trim();
-  return flat.length > 60 ? `${flat.slice(0, 59)}…` : flat;
 }

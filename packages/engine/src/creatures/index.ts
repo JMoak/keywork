@@ -93,6 +93,28 @@ export {
   type NamedSenders,
 } from "./inbound.ts";
 export {
+  askTitleOf,
+  type ChoreFacts,
+  type CreatureLedger,
+  type CreatureLedgerAbout,
+  type CreatureLedgerChange,
+  type CreatureLedgerChangeKind,
+  type CreatureLedgerEntry,
+  type CreatureLedgerKind,
+  type CreatureLedgerOptions,
+  type CreatureLedgerPort,
+  type CreatureLedgerState,
+  type CreatureLedgerView,
+  creatureLedger,
+  grantsTitleOf,
+  type LedgerAsk,
+  type LedgerSeenOutcome,
+  type LedgerThread,
+  ledgerFileIn,
+  ledgerKeepsClosed,
+  type QuestionAnswer,
+} from "./ledger.ts";
+export {
   askLine,
   askOrigin,
   type ConversationView,

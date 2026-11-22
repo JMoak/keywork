@@ -31,6 +31,13 @@ export type { Denial, DenyReason } from "@keywork/engine";
 
 export type AnswerOutcome = "settled" | "missing" | "already-settled" | GrantRefusal;
 
+export type AskEnding = "granted" | "denied" | "lapsed";
+
+export interface AskFollower {
+  asked(ask: PendingAsk): void;
+  settled(ask: PendingAsk, ending: AskEnding): void;
+}
+
 export interface GrantSink {
   record(sessionId: string, scope: GrantedScope, rules: readonly PermissionRule[]): void;
   grantsQuietly?(sessionId: string, call: ToolCallPart, rule: AskRule): boolean;
@@ -56,6 +63,7 @@ export class AskQueue {
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   private readonly grants: GrantSink | undefined;
+  private readonly followers = new Set<AskFollower>();
   private decider: AskDecider | undefined;
 
   constructor(options: AskQueueOptions = {}) {
@@ -67,6 +75,11 @@ export class AskQueue {
 
   decideWith(decider: AskDecider | undefined): void {
     this.decider = decider;
+  }
+
+  follow(follower: AskFollower): () => void {
+    this.followers.add(follower);
+    return () => this.followers.delete(follower);
   }
 
   guardFor(sessionId: string, options: { decide?: boolean } = {}): ToolGuard {
@@ -97,6 +110,7 @@ export class AskQueue {
       const timer = setTimeout(() => this.settle(call.callId, "timed-out"), this.timeoutMs);
       timer.unref?.();
       this.pending.set(call.callId, { ask, resolve, timer });
+      for (const follower of [...this.followers]) follower.asked(ask);
       if (decide) void this.decide(ask, announced);
     });
   }
@@ -144,6 +158,7 @@ export class AskQueue {
     clearTimeout(waiting.timer);
     this.remember(ask.callId);
     waiting.resolve(decided);
+    this.ended(ask, approves(decided) ? "granted" : "denied");
   }
 
   private settle(
@@ -167,6 +182,11 @@ export class AskQueue {
             ...(outcome === "denied" && denial),
           },
     );
+    this.ended(waiting.ask, isUnanswered(outcome) ? "lapsed" : outcome);
+  }
+
+  private ended(ask: PendingAsk, ending: AskEnding): void {
+    for (const follower of [...this.followers]) follower.settled(ask, ending);
   }
 
   private remember(callId: string): void {
@@ -186,6 +206,10 @@ const unansweredConfirmations: Readonly<Record<Unanswered, Confirmation>> = {
 
 function isUnanswered(outcome: AskVerdict | Unanswered): outcome is Unanswered {
   return outcome in unansweredConfirmations;
+}
+
+function approves(confirmation: Confirmation): boolean {
+  return typeof confirmation === "boolean" ? confirmation : confirmation.approved;
 }
 
 interface Waiting {
