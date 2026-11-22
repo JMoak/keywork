@@ -92,6 +92,36 @@ describe("the show tool", () => {
     ]);
   });
 
+  it("sets out one of the console's own panes by the name the keeper knows it by", async () => {
+    const { tool, proposed } = seated();
+    await tool.execute({ what: { kind: "pane", ref: "sessions" } });
+    await tool.execute({ what: { kind: "pane", ref: "the session list" } });
+    await tool.execute({ what: { kind: "pane", ref: "File Browser", title: "Where it lives" } });
+    await tool.execute({ what: { kind: "pane", ref: "needs you" } });
+    expect(proposed.map(({ what }) => what)).toEqual([
+      { kind: "pane", ref: "sessions" },
+      { kind: "pane", ref: "sessions" },
+      { kind: "pane", ref: "files", title: "Where it lives" },
+      { kind: "pane", ref: "needs-you" },
+    ]);
+  });
+
+  it("says which panes are near when it is asked for one the console does not have", async () => {
+    const { tool, proposed } = seated();
+    expect(await tool.execute({ what: { kind: "pane", ref: "terminal" } })).toMatch(
+      /^Not set out: no pane is called "terminal"; the nearest are /,
+    );
+    expect(
+      await tool.execute({
+        what: [
+          { kind: "note", ref: "First." },
+          { kind: "pane", ref: "spreadsheet" },
+        ],
+      }),
+    ).toMatch(/^Not set out: no pane is called "spreadsheet"/);
+    expect(proposed).toEqual([]);
+  });
+
   it("answers the hourly limit and a time gone by in words instead of setting out", async () => {
     const { tool, settings } = seated({ hourlyLimit: 1 });
 
@@ -164,6 +194,59 @@ describe("the show tool", () => {
       until: "2026-11-08T09:10:00.000Z",
       mark: "needs review",
     });
+  });
+
+  it("signals in the keeper's words, keeps one form on the wire, and says what the keeper sees", async () => {
+    const { tool, proposed } = seated();
+
+    expect(
+      await tool.execute({ what: { ...plan, title: "The plan" }, signal: "waiting on you" }),
+    ).toBe(
+      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. The keeper sees it outlined in amber, as needing them, until they answer it or you lower it with arrange and signal null. It reads needs-you, the nearest signal to "waiting on you". ${growsFrom(proposed.at(-1))}`,
+    );
+    expect(proposed.at(-1)).toMatchObject({ signal: "needs-you" });
+    expect(await tool.execute({ what: plan, signal: "loud" })).toBe(
+      'Not set out: signal is needs-you, critical or none, not "loud".',
+    );
+    expect(await tool.execute({ what: plan, signal: null })).toBe(
+      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. It replaces what you set out for this before. Its signal is lowered: the keeper no longer sees it outlined. ${growsFrom(proposed.at(-1))}`,
+    );
+    expect(proposed.at(-1)).not.toHaveProperty("signal");
+  });
+
+  it("raises critical only with a reason, holds it past a time, and allows one at a time", async () => {
+    const { tool, proposed } = seated();
+    const deploy = { kind: "note", ref: "Deploy to prod stopped at step 3.", title: "Deploy" };
+
+    expect(await tool.execute({ what: deploy, signal: "critical" })).toBe(
+      'Not set out: critical needs a reason: give why, one sentence the keeper reads on "Deploy" saying what is wrong.',
+    );
+    expect(
+      await tool.execute({
+        what: deploy,
+        signal: "critical",
+        why: "The release is half applied.",
+        until: "10 minutes",
+      }),
+    ).toBe(
+      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. It is critical: the keeper sees it outlined in red with your reason, and it is the one critical you may hold; only you or the keeper lower it. Critical holds it out until then, past the time you gave. ${growsFrom(proposed.at(-1))}`,
+    );
+    expect(proposed.at(-1)).toMatchObject({ signal: "critical", until: "seen" });
+    expect(await tool.execute({ what: plan, signal: "red", why: "The disk is full." })).toBe(
+      'Not set out: you may hold one critical at a time, and "Deploy" is critical already; lower it with signal null first, or give this one needs-you.',
+    );
+  });
+
+  it("signals each of several things, and names them", async () => {
+    const { tool, proposed } = seated();
+    const said = await tool.execute({
+      what: [
+        { kind: "note", ref: "Ship the larger change.", title: "Option A", signal: "needs-you" },
+        { kind: "note", ref: "Ship the smaller fix.", title: "Option B" },
+      ],
+    });
+    expect(said).toContain('Signalled: "Option A" as needs-you.');
+    expect(proposed.map(({ signal }) => signal)).toEqual(["needs-you", undefined]);
   });
 
   it("works for a session with no creature, which owns its settings and its hourly count", async () => {

@@ -1,0 +1,65 @@
+{
+  "name": "show: one of the console's own panes is set out by name, in the caller's words, and an unknown pane is refused with the nearest names",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "the sessions pane, asked for in other words",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "pane",
+          "ref": "the session list",
+          "title": "Every session"
+        }
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Set out as a card; the yard decides whether it unfolds[.] It stays until the keeper has seen it[.]"
+            }
+          }
+        ],
+        "structuredContent": {
+          "id": {
+            "$type": "string"
+          }
+        },
+        "isError": false
+      }
+    },
+    {
+      "name": "a pane the console does not have",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "pane",
+          "ref": "terminal"
+        }
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Not set out: no pane is called \"terminal\"; the nearest are "
+            }
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "name": "take it back",
+      "tool": "withdraw",
+      "args": {
+        "id": "Every session"
+      },
+      "expect": {
+        "$partial": true,
+        "isError": false
+      }
+    }
+  ]
+}

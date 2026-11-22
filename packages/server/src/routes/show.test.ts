@@ -166,6 +166,49 @@ describe("POST /show/{id}/answer", () => {
   });
 });
 
+describe("DELETE /show/{id}/signal", () => {
+  const clear = (handlers: ReturnType<typeof served>["handlers"], id: string) =>
+    call(handlers.clearSignal, "DELETE", `/show/${id}/signal`, { id });
+
+  it("clears the signal, leaves the setting out and fires show.changed on its thread", async () => {
+    const { handlers, propose, log } = served();
+    const setting = propose({ sessionId: "s7", signal: "critical" });
+    const { signal: _signal, ...quiet } = setting;
+
+    expect(await clear(handlers, setting.id)).toEqual({ status: 200, body: { setting: quiet } });
+    expect(
+      log.since(0).map(({ sessionId, type, payload }) => ({ sessionId, type, payload })),
+    ).toEqual([
+      { sessionId: "s7", type: "show.proposed", payload: { setting } },
+      { sessionId: "s7", type: "show.changed", payload: { setting: quiet } },
+    ]);
+    expect((await call(handlers.listSettings, "GET", "/show")).body).toEqual({ settings: [quiet] });
+  });
+
+  it("refuses an id not out with 404 and a setting with no signal with 409, firing nothing", async () => {
+    const { handlers, propose, log } = served();
+    const setting = propose();
+
+    expect(await clear(handlers, "nope")).toEqual({
+      status: 404,
+      body: { refused: "missing", error: "no setting out has the id nope" },
+    });
+    expect(await clear(handlers, setting.id)).toEqual({
+      status: 409,
+      body: {
+        refused: "conflict",
+        error: `setting ${setting.id} carries no signal, so there is nothing to clear`,
+      },
+    });
+    expect(log.since(0).map(({ type }) => type)).toEqual(["show.proposed"]);
+  });
+
+  it("answers 503 on a host that serves no settings", async () => {
+    const { handlers } = served({ show: false });
+    expect((await clear(handlers, "x")).status).toBe(503);
+  });
+});
+
 describe("POST /show", () => {
   const plan = { kind: "file", ref: "docs/plan.md" };
   const open = (handlers: ReturnType<typeof served>["handlers"], body: unknown) =>
@@ -354,6 +397,7 @@ describe("the contract", () => {
     expect(paths["/show"]?.get?.operationId).toBe("listSettings");
     expect(paths["/show"]?.post?.operationId).toBe("openSetting");
     expect(paths["/show/{id}/answer"]?.post?.operationId).toBe("answerSetting");
+    expect(paths["/show/{id}/signal"]?.delete?.operationId).toBe("clearSignal");
     expect(paths["/sessions/{sessionId}/settings/placements"]?.put?.operationId).toBe(
       "reportPlacements",
     );

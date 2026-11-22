@@ -15,6 +15,7 @@ import {
   settingKinds,
   settingOrigins,
   settingPlaces,
+  settingSignals,
   settingSizes,
   settingWeights,
 } from "./setting.ts";
@@ -110,6 +111,7 @@ const keptSetting = z.object({
     .strict()
     .optional(),
   mark: z.string().min(1).max(markLength).optional(),
+  signal: z.enum(settingSignals).optional(),
 });
 
 const keptFile = z.object({
@@ -119,7 +121,7 @@ const keptFile = z.object({
 });
 
 function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
-  const { size, where, seat, weight, mood, agent, mark, ...setting } = kept;
+  const { size, where, seat, weight, mood, agent, mark, signal, ...setting } = kept;
   const { kind, ref, title } = setting.what;
   return {
     ...setting,
@@ -131,6 +133,7 @@ function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
     ...(mood !== undefined && { mood }),
     ...(agent !== undefined && { agent: keptAgentOf(agent) }),
     ...(mark !== undefined && { mark }),
+    ...(signal !== undefined && { signal }),
   };
 }
 

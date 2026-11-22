@@ -155,6 +155,80 @@ describe("the arrange tool", () => {
     expect(changed).toEqual([]);
   });
 
+  it("raises and lowers a signal in the keeper's words, moving nothing", async () => {
+    const { tool, settings, arranged, setOut } = staged();
+    setOut({ where: "outside" });
+    const signals = () => settings.open().map(({ signal }) => signal);
+
+    expect(await tool.execute({ signal: { "The plan": "needs you" } })).toBe(
+      '"The plan" needs the keeper now: it is outlined in amber until they answer it. Nothing else moved.',
+    );
+    expect(signals()).toEqual(["needs-you"]);
+    expect(await tool.execute({ signal: { "The plan": "waiting" } })).toBe(
+      '"The plan" needs the keeper already (needs-you, the nearest signal to "waiting"). Nothing moved.',
+    );
+    expect(await tool.execute({ signal: { "The plan": null } })).toBe(
+      '"The plan" no longer needs the keeper. Nothing else moved.',
+    );
+    expect(signals()).toEqual([undefined]);
+    expect(await tool.execute({ signal: { "The plan": "off" } })).toBe(
+      '"The plan" carries no signal, so there was nothing to lower. Nothing moved.',
+    );
+    expect(await tool.execute({ signal: { "No such pane": "critical" } })).toBe(
+      'Not arranged: signal names "No such pane", and nothing you set out is out as that; shown lists what is out.',
+    );
+    expect(await tool.execute({ signal: { "The plan": "loud" } })).toBe(
+      'Not arranged: signal is needs-you, critical or none, not "loud".',
+    );
+    expect(arranged).toEqual([]);
+  });
+
+  it("raises critical with why, which becomes the pane's why, and lowers it again", async () => {
+    const { tool, settings, setOut } = staged();
+    setOut({ where: "outside" });
+
+    expect(await tool.execute({ signal: { "The plan": "critical" } })).toBe(
+      'Not arranged: critical needs a reason: give why, one sentence the keeper reads on "The plan" saying what is wrong.',
+    );
+    expect(await tool.execute({ why: "The tests wait on you." })).toBe(
+      "Not arranged: why goes with signal, as the sentence the keeper reads on a pane you raise; name the signal, or leave why out.",
+    );
+    expect(
+      await tool.execute({ signal: { "The plan": "critical" }, why: "The plan lost its tests." }),
+    ).toBe(
+      '"The plan" is critical now: the keeper sees it outlined in red with your reason, and it stays out until they have seen it. Nothing else moved.',
+    );
+    expect(settings.open()[0]).toMatchObject({
+      signal: "critical",
+      why: "The plan lost its tests.",
+      until: "seen",
+    });
+    expect(await tool.execute({ signal: { "The plan": "needs-you" } })).toBe(
+      '"The plan" is no longer critical, and needs the keeper now, outlined in amber. Nothing else moved.',
+    );
+    expect(await tool.execute({ signal: { "The plan": null } })).toBe(
+      '"The plan" no longer needs the keeper. Nothing else moved.',
+    );
+  });
+
+  it("signals in the same call that arranges, and says when the signal was refused", async () => {
+    const { tool, setOut, answers } = staged();
+    const plan = setOut({ where: "outside" });
+
+    const answering = tool.execute({
+      seats: { "The plan": "center" },
+      signal: { "The plan": "critical" },
+      why: "Lost.",
+    });
+    await answers(
+      [{ id: plan.id, where: "outside", seat: { x: 3, y: 3, w: 6, h: 6 }, by: "creature" }],
+      "",
+    );
+    expect(await answering).toBe(
+      `Arranged 1 pane in the seats you composed. Outside now: "The plan" (${plan.id}) in the center. "The plan" is critical now: the keeper sees it outlined in red with your reason, and it stays out until they have seen it.`,
+    );
+  });
+
   it("marks in the same call that arranges", async () => {
     const { tool, settings, setOut, answers } = staged();
     const plan = setOut({ where: "outside" });

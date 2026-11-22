@@ -1,0 +1,115 @@
+{
+  "name": "windows: a signal is raised, critical only with a reason, listed and lowered again",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "show a note that needs the keeper",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "note",
+          "ref": "Deploy to prod stopped at step 3.",
+          "title": "Deploy"
+        },
+        "signal": "needs-you"
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "The keeper sees it outlined in amber, as needing them, until they answer it or you lower it with arrange and signal null[.]"
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "critical without a reason is refused",
+      "tool": "arrange",
+      "args": {
+        "signal": {
+          "Deploy": "critical"
+        }
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Not arranged: critical needs a reason: give why, one sentence the keeper reads on \"Deploy\" saying what is wrong."
+          }
+        ],
+        "isError": true
+      }
+    },
+    {
+      "name": "critical with its reason, moving nothing",
+      "tool": "arrange",
+      "args": {
+        "signal": {
+          "Deploy": "critical"
+        },
+        "why": "The release is half applied."
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": "\"Deploy\" is critical now: the keeper sees it outlined in red with your reason, and it stays out until they have seen it. Nothing else moved."
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "the signal is listed",
+      "tool": "shown",
+      "args": {},
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "\"title\":\"Deploy\".*\"why\":\"The release is half applied[.]\".*\"signal\":\"critical\""
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "lowered again",
+      "tool": "arrange",
+      "args": {
+        "signal": {
+          "Deploy": null
+        }
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": "\"Deploy\" is no longer critical. Nothing else moved."
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "take it back",
+      "tool": "withdraw",
+      "args": {
+        "id": "Deploy"
+      },
+      "expect": {
+        "$partial": true,
+        "isError": false
+      }
+    }
+  ]
+}

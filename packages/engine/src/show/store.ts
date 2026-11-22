@@ -35,6 +35,7 @@ import type {
   SettingAnswer,
   SettingOrigin,
   SettingPlace,
+  SettingSignal,
   SettingSize,
   SettingState,
   SettingUntil,
@@ -44,9 +45,23 @@ import type {
   SettledOutcome,
   ShowEventSink,
 } from "./setting.ts";
+import {
+  criticalAlready,
+  criticalOfAnother,
+  criticalsAtOnce,
+  criticalWithoutReason,
+  loweredByAnother,
+  raisedByTheCaller,
+  type SignalCaller,
+  type Signalled,
+  type Signalling,
+  severalCriticals,
+} from "./signals.ts";
 import { askedOf, type StandingPicture, type Stood, stoodOf } from "./standing.ts";
+import { noSignal, type SignalSaid } from "./vocabularies.ts";
 
 export { type ShowRefusal, type ShowRefusalKind, showRefusalStatus } from "./refusal.ts";
+export type { SignalCaller, Signalled, Signalling } from "./signals.ts";
 
 export interface ShowProposal {
   creature: string | null;
@@ -64,6 +79,7 @@ export interface ShowProposal {
   mood?: Mood | undefined;
   agent?: SettingAgent | undefined;
   mark?: string | undefined;
+  signal?: SignalSaid | undefined;
   lastsMs?: number | undefined;
   keeps?: Keeps | undefined;
 }
@@ -132,22 +148,30 @@ export class SettingStore {
   propose(asked: ShowProposal): SetOut | ShowRefusal {
     const now = this.clock.now();
     const { lastsMs, keeps, ...named } = asked;
-    const timed = lastsMs === undefined ? named : { ...named, until: isoOf(now + lastsMs) };
-    const replaced = this.outWithSameWhat(timed);
+    const replaced = this.outWithSameWhat(named);
+    const signal = signalAfter(named, replaced);
+    const held = signal === "critical";
+    const timed = held
+      ? { ...named, until: "seen" }
+      : lastsMs === undefined
+        ? named
+        : { ...named, until: isoOf(now + lastsMs) };
     const proposal = keptFrom(
       timed,
       replaced,
-      lastsMs === undefined ? keeps : { ...keeps, until: false },
+      held || lastsMs !== undefined ? { ...keeps, until: false } : keeps,
     );
     const placing = this.placingOf(proposal, replaced);
-    const refusal = this.refusalOf(proposal, placing, replaced, now);
+    const refusal =
+      this.signalRefusal(named, signal, replaced) ??
+      this.refusalOf(proposal, placing, replaced, now);
     if (refusal !== undefined) return refusal;
     if (spendsTheHour(proposal)) this.remember(ownerOf(proposal), now);
     if (replaced !== undefined) this.withdraw(replaced, proposal.origin);
     const { agent } = proposal;
     const shownBy =
       agent === undefined ? proposal : { ...proposal, agent: this.agents.coloured(agent) };
-    const setting = settingOf(randomUUID(), shownBy, placing, replaced, isoOf(now));
+    const setting = settingOf(randomUUID(), shownBy, placing, replaced, isoOf(now), signal);
     this.setDown(setting);
     this.emit(setting.sessionId, "show.proposed", { setting });
     this.keep();
@@ -226,15 +250,49 @@ export class SettingStore {
     return settled;
   }
 
-  takeBack(caller: SettingSeat, id: string, mood?: Mood): Setting | ShowRefusal {
+  takeBack(caller: SignalCaller, id: string, mood?: Mood): Setting | ShowRefusal {
     const setting = this.out.get(id);
     if (setting === undefined || !sameOwner(setting, caller))
       return refused("missing", nothingOfYoursOut(id));
     const held = heldByTheKeeper(setting);
     if (held !== undefined) return refused("conflict", held);
+    if (setting.signal === "critical" && !raisedByTheCaller(setting, caller))
+      return loweredByAnother(setting);
     const settled = this.withdraw(setting, "creature", mood);
     this.keep();
     return settled;
+  }
+
+  signal(
+    caller: SignalCaller,
+    signals: readonly Signalling[],
+    why: string | undefined,
+    spends: boolean,
+  ): readonly Signalled[] | ShowRefusal {
+    const now = this.clock.now();
+    const recent = this.arrangedWithinTheMinute(caller.sessionId, now);
+    if (spends && recent.length >= arrangementsPerMinute)
+      return refused("limited", arrangementLimitWords(recent, now));
+    const named = this.ownSignalled(caller, signals);
+    if ("refused" in named) return named;
+    const refusal = this.signallingRefusal(caller, named, why);
+    if (refusal !== undefined) return refusal;
+    if (spends) this.arrangedAt.set(caller.sessionId, [...recent, now]);
+    const signalled = named.map(({ setting, signal }) => this.signalledAs(setting, signal, why));
+    if (signalled.some(({ setting }, at) => setting !== named[at]?.setting)) this.keep();
+    return signalled;
+  }
+
+  clearSignal(id: string): Setting | ShowRefusal {
+    const setting = this.out.get(id);
+    if (setting === undefined) return refused("missing", `no setting out has the id ${id}`);
+    const { signal } = setting;
+    if (signal === undefined)
+      return refused("conflict", `setting ${id} carries no signal, so there is nothing to clear`);
+    const { setting: cleared } = this.signalledAs(setting, undefined);
+    this.outcomes.cleared(cleared, signal);
+    this.keep();
+    return cleared;
   }
 
   mark(
@@ -261,7 +319,7 @@ export class SettingStore {
     const settled = this.outcomes.take(sessionId);
     const placed = this.placedByTheKeeper(sessionId);
     if (placed.length === 0) return settled;
-    return { told: settled?.told ?? [], earlier: settled?.earlier ?? 0, placed };
+    return { told: [], earlier: 0, ...settled, placed };
   }
 
   rested(sessionId: string): void {
@@ -316,6 +374,99 @@ export class SettingStore {
   private async hasThread(sessionId: string): Promise<boolean> {
     if (this.open().some((setting) => setting.sessionId === sessionId)) return true;
     return !(await this.knownGone(sessionId));
+  }
+
+  private ownSignalled(
+    caller: SignalCaller,
+    signals: readonly Signalling[],
+  ): NamedSignal[] | ShowRefusal {
+    const named: NamedSignal[] = [];
+    for (const { id, signal } of signals) {
+      const setting = this.out.get(id);
+      if (setting === undefined || !sameOwner(setting, caller) || setting.origin !== "creature")
+        return refused("missing", nothingOfYoursOut(id));
+      named.push({ setting, signal });
+    }
+    return named;
+  }
+
+  private signallingRefusal(
+    caller: SignalCaller,
+    named: readonly NamedSignal[],
+    why: string | undefined,
+  ): ShowRefusal | undefined {
+    for (const { setting, signal } of named) {
+      const lowers = setting.signal === "critical" && signal !== "critical";
+      if (lowers && !raisedByTheCaller(setting, caller)) return loweredByAnother(setting);
+      if (signal !== "critical" || setting.signal === "critical") continue;
+      if (!raisedByTheCaller(setting, caller)) return criticalOfAnother(setting);
+      if ((why ?? "").trim() === "") return criticalWithoutReason(setting);
+    }
+    const raising = named.filter(
+      ({ setting, signal }) => signal === "critical" && setting.signal !== "critical",
+    );
+    if (raising.length > criticalsAtOnce) return severalCriticals;
+    if (raising.length === 0) return undefined;
+    const asked = new Map(named.map(({ setting, signal }) => [setting.id, signal]));
+    const held = this.criticalsOf(caller).find((setting) => !asked.has(setting.id));
+    const kept = named.find(
+      ({ setting, signal }) => signal === "critical" && setting.signal === "critical",
+    );
+    const holding = held ?? kept?.setting;
+    return holding === undefined ? undefined : criticalAlready(holding);
+  }
+
+  private signalRefusal(
+    asked: ShowProposal,
+    signal: SettingSignal | undefined,
+    replaced: Setting | undefined,
+  ): ShowRefusal | undefined {
+    if (asked.origin !== "creature") return undefined;
+    const lowers = replaced?.signal === "critical" && signal !== "critical";
+    if (lowers && !raisedByTheCaller(replaced, asked)) return loweredByAnother(replaced);
+    if (signal !== "critical" || replaced?.signal === "critical") return undefined;
+    if (asked.why.trim() === "") return criticalWithoutReason(asked);
+    const held = this.criticalsOf(asked).find((setting) => setting.id !== replaced?.id);
+    return held === undefined ? undefined : criticalAlready(held);
+  }
+
+  private criticalsOf(caller: SignalCaller): Setting[] {
+    return this.open().filter(
+      (setting) =>
+        setting.signal === "critical" &&
+        sameOwner(setting, caller) &&
+        raisedByTheCaller(setting, caller),
+    );
+  }
+
+  private signalledAs(
+    setting: Setting,
+    signal: SettingSignal | undefined,
+    why?: string,
+  ): Signalled {
+    const before = setting.signal;
+    const reason = signal === undefined ? undefined : why;
+    if (before === signal && (reason === undefined || reason === setting.why))
+      return { setting, before };
+    const { signal: _before, ...quiet } = setting;
+    const changed: Setting =
+      signal === undefined
+        ? quiet
+        : {
+            ...quiet,
+            signal,
+            ...(reason !== undefined && { why: reason }),
+            ...(signal === "critical" && { until: "seen" }),
+          };
+    if (signal === "critical") this.stopTheClockOn(setting.id);
+    this.out.set(setting.id, changed);
+    this.emit(changed.sessionId, "show.changed", { setting: changed });
+    return { setting: changed, before };
+  }
+
+  private stopTheClockOn(id: string): void {
+    this.timers.get(id)?.();
+    this.timers.delete(id);
   }
 
   private markedAs(id: string, mark: string | undefined): Setting[] {
@@ -517,6 +668,11 @@ interface Placing {
   seat?: Seat;
 }
 
+interface NamedSignal {
+  setting: Setting;
+  signal: SettingSignal | undefined;
+}
+
 const keeperMoves: Readonly<
   Partial<Record<SettingState, Partial<Record<SettingAnswer, SettingState>>>>
 > = {
@@ -562,12 +718,21 @@ function lineageOf({ from }: ShowProposal, replaced: Setting | undefined): strin
   return from === null || from === replaced?.id ? (replaced?.from ?? null) : from;
 }
 
+function signalAfter(
+  { signal, origin }: ShowProposal,
+  replaced: Setting | undefined,
+): SettingSignal | undefined {
+  if (signal === noSignal) return undefined;
+  return keptByAReplacement(signal, replaced?.signal, origin);
+}
+
 function settingOf(
   id: string,
   proposal: ShowProposal,
   placing: Placing,
   replaced: Setting | undefined,
   at: string,
+  signal: SettingSignal | undefined,
 ): Setting {
   const { creature, sessionId, what, rung, why, until, origin, mood, agent } = proposal;
   const lineage = { from: lineageOf(proposal, replaced), origin, replaces: replaced?.id ?? null };
@@ -591,6 +756,7 @@ function settingOf(
     ...(mood !== undefined && { mood }),
     ...(agent !== undefined && { agent }),
     ...(mark !== undefined && { mark }),
+    ...(signal !== undefined && { signal }),
   };
 }
 

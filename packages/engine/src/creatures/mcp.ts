@@ -209,7 +209,7 @@ async function placed(
     outcome: { text: answer.said, structured: answer.made },
     audit: {
       decision: "allow",
-      reason: yardReason(name, call.slug, call.place.machine),
+      reason: yardReason(name, call.slug, call.place.machine, answer.critical),
       request: args,
     },
   };

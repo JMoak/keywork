@@ -44,7 +44,7 @@ describe.skipIf(vibrissa === undefined || !existsSync(cli))("vibrissa's contract
 ${failure.stdout ?? ""}
 ${failure.stderr ?? ""}`);
       });
-      expect(stdout).toContain("11 cases: 11 passed");
+      expect(stdout).toContain("13 cases: 13 passed");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

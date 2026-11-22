@@ -76,6 +76,21 @@ describe("the kept settings text", () => {
     expect(keptSettingsOf(keptSettingsText(kept)).settings[0]).not.toHaveProperty("size");
   });
 
+  it("reads back a signal key for key, and refuses one the console would not know", () => {
+    const signalled: KeptSettings = {
+      settings: [
+        { ...plan, signal: "critical" },
+        { ...opening, signal: "needs-you" },
+      ],
+      spent: [],
+    };
+    const text = keptSettingsText(signalled);
+
+    expect(JSON.stringify(keptSettingsOf(text))).toBe(JSON.stringify(signalled));
+    expect(keptSettingsOf(keptSettingsText(kept)).settings[0]).not.toHaveProperty("signal");
+    expect(() => keptSettingsOf(text.replace('"critical"', '"red"'))).toThrow(/not kept settings/);
+  });
+
   it("refuses a size that is not one", () => {
     const text = keptSettingsText({ settings: [{ ...plan, size: "working" }], spent: [] });
     expect(() => keptSettingsOf(text.replace('"working"', '"huge"'))).toThrow(/not kept settings/);

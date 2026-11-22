@@ -1,9 +1,34 @@
 import type { ShowArranged } from "./arrangement.ts";
 import type { Seat } from "./seat.ts";
 
-export const settingKinds = ["file", "diff", "report", "thread", "chore", "url", "note"] as const;
+export const settingKinds = [
+  "file",
+  "diff",
+  "report",
+  "thread",
+  "chore",
+  "url",
+  "note",
+  "pane",
+] as const;
 
 export type SettingKind = (typeof settingKinds)[number];
+
+// The console's own panes a session may set out, by the name the keeper knows each by. A pane
+// that starts something (a terminal) or captures the display is not among them.
+export const settingPanes = [
+  "sessions",
+  "arcs",
+  "files",
+  "context",
+  "memory",
+  "needs-you",
+  "permissions",
+  "mcp",
+  "workspaces",
+] as const;
+
+export type SettingPane = (typeof settingPanes)[number];
 
 export const rungs = ["lantern", "card", "unfold", "stage"] as const;
 
@@ -68,6 +93,10 @@ export const agentNameLength = 40;
 
 export const markLength = 24;
 
+export const settingSignals = ["needs-you", "critical"] as const;
+
+export type SettingSignal = (typeof settingSignals)[number];
+
 export interface Setting {
   id: string;
   creature: string | null;
@@ -88,6 +117,7 @@ export interface Setting {
   mood?: Mood;
   agent?: SettingAgent;
   mark?: string;
+  signal?: SettingSignal;
 }
 
 export interface ShowProposed {

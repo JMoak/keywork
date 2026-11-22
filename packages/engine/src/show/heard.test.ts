@@ -144,6 +144,32 @@ describe("what a session hears", () => {
   });
 });
 
+describe("what a session hears of the keeper clearing a signal", () => {
+  it("is each signal the keeper cleared, told once, and said as a line of the note", () => {
+    const { store } = board();
+    const plan = setOut(store, { signal: "critical" });
+    const other = setOut(store, {
+      what: note(1),
+      sessionId: "s2",
+      creature: "rook",
+      signal: "needs-you",
+    });
+    store.clearSignal(plan.id);
+    store.clearSignal(other.id);
+
+    const heard = store.takeHeardBy("s1");
+    expect(heard?.cleared).toEqual([{ id: plan.id, what: plan.what, signal: "critical" }]);
+    expect(
+      outcomeNoteOf(heard as Heard)
+        .split("\n")
+        .at(-1),
+    ).toBe(
+      `- ${plan.id} (file "The plan"): the keeper cleared its critical signal, and it is still out.`,
+    );
+    expect(store.takeHeardBy("s1")).toBeUndefined();
+  });
+});
+
 describe("the note", () => {
   const told = (
     what: SettingWhat,

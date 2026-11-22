@@ -22,6 +22,7 @@ export {
   settingsFileIn,
 } from "./file.ts";
 export {
+  type ClearedNote,
   type Heard,
   type KeeperMove,
   outcomeNoteOf,
@@ -75,6 +76,7 @@ export {
   type SettingKind,
   type SettingOrigin,
   type SettingPlace,
+  type SettingSignal,
   type SettingSize,
   type SettingState,
   type SettingUntil,
@@ -92,6 +94,7 @@ export {
   settingKinds,
   settingOrigins,
   settingPlaces,
+  settingSignals,
   settingSizes,
   settingWeights,
 } from "./setting.ts";
@@ -104,6 +107,9 @@ export {
   type ShowProposal,
   type ShowRefusal,
   type ShowRefusalKind,
+  type SignalCaller,
+  type Signalled,
+  type Signalling,
   settingsPerHour,
   showRefusalStatus,
 } from "./store.ts";

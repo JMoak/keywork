@@ -10,7 +10,7 @@ import {
   settingWhatInput,
   settingWhatOf,
 } from "../show/input.ts";
-import { calledOf } from "../show/naming.ts";
+import { calledOf, quotedNameOf } from "../show/naming.ts";
 import { Reading } from "../show/reading.ts";
 import { sameSeat, seatInput, seatWords, seatWrittenInput } from "../show/seat.ts";
 import {
@@ -18,6 +18,8 @@ import {
   rungs,
   type Setting,
   type SettingAgent,
+  type SettingSignal,
+  type SettingWhat,
   settingKinds,
 } from "../show/setting.ts";
 import { overlapWords, type Stood, standingWords } from "../show/standing.ts";
@@ -26,11 +28,15 @@ import {
   mannerOf,
   moodsDescribed,
   moodWords,
+  noSignal,
+  paneWords,
   placeWords,
+  type SignalSaid,
+  signalWords,
   sizeWords,
   weightWords,
 } from "../show/vocabularies.ts";
-import { wordInput } from "../show/words.ts";
+import { quoted, wordInput } from "../show/words.ts";
 import type { Tool } from "../tools.ts";
 import { defineTool } from "./define.ts";
 
@@ -42,6 +48,7 @@ export type ShowSettings = Pick<
   | "takeHeardBy"
   | "arrange"
   | "mark"
+  | "signal"
   | "standingFor"
   | "reportNaming"
 >;
@@ -59,7 +66,7 @@ export function showTool(target: ShowTarget): Tool {
   return defineTool({
     name: showToolName,
     description:
-      'Set something out for the keeper to see: a file, a diff, a report, a thread, a chore, a link or a short note. It sits beside this conversation, or with where outside it stands in a window of its own. This is IDE control: it arranges the console\'s own space and windows, never the computer, it never takes focus and it changes nothing in the world, so it asks for no permission. {what: {kind: "file", ref: "docs/plan.md"}, where: "outside"} is enough, and the console picks the seat; add seat: "left-half" to pick it yourself. To set out several at once, give what a list, {what: [{kind: "note", title: "Plan A", ref: "..."}, {kind: "note", title: "Plan B", ref: "..."}], where: "outside"}: they arrive together, each thing may carry its own seat, why, weight, from and mark, and the answer says where each stands. A note\'s words are markdown, so headings, lists, checklists and tables render. Beside the conversation, rung and size apply; outside, the seat decides: a seat you name overrides size and weight, and when the console chooses, weight says who gets the large seat. A size applies the first time the setting opens, the yard may still show less, and it cannot be changed later. Showing the same thing again replaces what you set out before and keeps its place; a note with the same title is the same thing, so that is how you change its words, and the id it had before still names it. Whatever you leave out the second time stays as it was: its place, rung, size, weight, mark, why and when it goes. A mark is a word or two the keeper reads as a highlighted tag beside its title for as long as it is out, such as chosen, draft or done; arrange changes it later. It stays until the keeper has seen it, until this thread rests, or for a time you name. Name from when it grows out of something already in view: a setting you set out, by its id (every answer names it) or its title, or a thread of yours such as one you delegated. Outside, it arises from that pane, and with weight lead it drills in: it takes the large seat, its parent steps aside, withdraw steps back out, and arrange with its parent as lead steps back out and keeps it. At most a hundred settings an hour, and twelve of yours outside at once.',
+      'Set something out for the keeper to see: a file, a diff, a report, a thread, a chore, a link, a short note, or one of the console\'s own panes by name, such as {kind: "pane", ref: "sessions"}. It sits beside this conversation, or with where outside it stands in a window of its own. This is IDE control: it arranges the console\'s own space and windows, never the computer, it never takes focus and it changes nothing in the world, so it asks for no permission. {what: {kind: "file", ref: "docs/plan.md"}, where: "outside"} is enough, and the console picks the seat; add seat: "left-half" to pick it yourself. To set out several at once, give what a list, {what: [{kind: "note", title: "Plan A", ref: "..."}, {kind: "note", title: "Plan B", ref: "..."}], where: "outside"}: they arrive together, each thing may carry its own seat, why, weight, from, mark and signal, and the answer says where each stands. A note\'s words are markdown, so headings, lists, checklists and tables render. Beside the conversation, rung and size apply; outside, the seat decides: a seat you name overrides size and weight, and when the console chooses, weight says who gets the large seat. A size applies the first time the setting opens, the yard may still show less, and it cannot be changed later. Showing the same thing again replaces what you set out before and keeps its place; a note with the same title is the same thing, so that is how you change its words, and the id it had before still names it. Whatever you leave out the second time stays as it was: its place, rung, size, weight, mark, signal, why and when it goes. A mark is a word or two the keeper reads as a highlighted tag beside its title for as long as it is out, such as chosen, draft or done; arrange changes it later. A signal outlines it for the keeper: needs-you in amber when your work waits on them, critical in red only when something is broken or about to be lost, with why as the reason, one at a time; arrange raises or lowers it later. It stays until the keeper has seen it, until this thread rests, or for a time you name. Name from when it grows out of something already in view: a setting you set out, by its id (every answer names it) or its title, or a thread of yours such as one you delegated. Outside, it arises from that pane, and with weight lead it drills in: it takes the large seat, its parent steps aside, withdraw steps back out, and arrange with its parent as lead steps back out and keeps it. At most a hundred settings an hour, and twelve of yours outside at once.',
     schema: showArgs,
     run: async (args) => {
       const settings = target.settings();
@@ -79,7 +86,12 @@ export function showTool(target: ShowTarget): Tool {
         const told = { moodSaid: args.mood, replaced: outcome.replaced !== undefined };
         const outside = await standingOutside(settings, target, outcome.setting, told);
         const first = onlyOnesOut(settings, target, [outcome.setting]);
-        return sentenceOf(outcome, outside, { lasting: lastingSaid(args.until), first });
+        return sentenceOf(outcome, outside, {
+          lasting: lastingSaid(args.until),
+          first,
+          signalSaid: things[0] === undefined ? undefined : signalAsked(things[0], args),
+          timeAsked: args.until !== undefined,
+        });
       }
       const { done, stopped } = await setOutInTurn(settings, target, asked);
       if (done.length === 0) return stopped ?? noKeeperSurface;
@@ -88,12 +100,15 @@ export function showTool(target: ShowTarget): Tool {
   });
 }
 
+const signalInput = wordInput(signalWords).nullable();
+
 const ownPlacing = {
   seat: seatWrittenInput.optional(),
   why: z.string().trim().min(1).max(200).optional(),
   weight: wordInput(weightWords).optional(),
   from: settingFromInput.nullable().optional(),
   mark: markInput.optional(),
+  signal: signalInput.optional(),
 };
 
 const thingInput = z.object({ ...settingWhatInput.shape, ...ownPlacing }).strict();
@@ -114,7 +129,7 @@ const showArgs = z
     what: z
       .union([thingInput, z.array(listedThingInput).min(1).max(outsideAtOnce)])
       .describe(
-        "The thing to set out, or a list of up to twelve to set out together, each written as one thing is. A thing may carry its own seat, why, weight, from and mark, written as the call's are, and takes the call's for whatever it leaves out.",
+        "The thing to set out, or a list of up to twelve to set out together, each written as one thing is. A thing may carry its own seat, why, weight, from, mark and signal, written as the call's are, and takes the call's for whatever it leaves out.",
       ),
     why: z
       .string()
@@ -147,6 +162,11 @@ const showArgs = z
       .optional()
       .describe(
         'A word or two the keeper reads on it while it is out, such as "chosen", "draft" or "done". arrange changes or clears it later.',
+      ),
+    signal: signalInput
+      .optional()
+      .describe(
+        'How much it wants the keeper, drawn as an outline: needs-you (amber, held until it is answered) when your work waits on the keeper, or critical (red) only when something is broken or about to be lost. Critical needs why, the reason the keeper reads; you may hold one at a time, it stays until the keeper has seen it whatever until says, and only you or the keeper lower it. null or "none" lowers what it had. Leave it out and nothing is outlined. Use it rarely.',
       ),
     rung: z
       .enum(rungs)
@@ -226,6 +246,14 @@ function namedFrom(settings: ShowSettings, target: ShowTarget, from: string | nu
   return paneCalled(from, mine) ?? from;
 }
 
+// A pane is named in the keeper's words, and kept under the one name the console knows it by.
+function whatOf(thing: Thing, reading: Reading): SettingWhat {
+  const what = settingWhatOf(thing);
+  if (what.kind !== "pane") return what;
+  const pane = reading.word("pane", paneWords, what.ref);
+  return pane === undefined ? what : { ...what, ref: pane };
+}
+
 function outOfSight(from: string): string {
   return `Not set out: nothing you may grow from has the id ${from}; name a setting you set out that is still out, or a thread of yours.`;
 }
@@ -238,10 +266,11 @@ function proposalOf(
 ): ShowProposal {
   const lasting = untilOf(args.until);
   const mark = markOf(thing.mark ?? args.mark);
+  const signal = reading.word("signal", signalWords, signalAsked(thing, args));
   return {
     creature: target.creature,
     sessionId: target.sessionId,
-    what: settingWhatOf(thing),
+    what: whatOf(thing, reading),
     rung: args.rung ?? "card",
     size: reading.word("size", sizeWords, args.size),
     where: reading.word("where", placeWords, args.where),
@@ -258,8 +287,14 @@ function proposalOf(
       until: args.until === undefined,
     },
     ...(mark !== undefined && { mark }),
+    ...(signal !== undefined && { signal }),
     ...(target.agent !== undefined && { agent: target.agent }),
   };
+}
+
+function signalAsked(thing: Thing, args: ShowArgs): string | undefined {
+  const asked = thing.signal !== undefined ? thing.signal : args.signal;
+  return asked === null ? noSignal : asked;
 }
 
 function untilOf(said: string | undefined): Pick<ShowProposal, "until" | "lastsMs"> {
@@ -384,12 +419,14 @@ const replacedInPlace = "Replaced in place: what you set out for this before now
 interface Said {
   lasting: string | undefined;
   first: boolean;
+  signalSaid: string | undefined;
+  timeAsked: boolean;
 }
 
 function sentenceOf(
   { setting, replaced }: SetOut,
   outside: StandingOutside | undefined,
-  { lasting, first }: Said,
+  { lasting, first, signalSaid, timeAsked }: Said,
 ): string {
   const saidAlready = outside?.arrived.startsWith(replacedInPlace) === true;
   return [
@@ -399,6 +436,7 @@ function sentenceOf(
       ? []
       : ["It replaces what you set out for this before."]),
     ...markedWords([setting]),
+    ...signalledWords(setting, replaced, { said: signalSaid, timeAsked }),
     ...(first ? squareWords(setting) : []),
     `To set out what grows from it, name ${setting.id} as from.`,
     ...(outside?.others === undefined ? [] : [outside.others]),
@@ -415,6 +453,55 @@ function markedWords(settings: readonly Setting[]): string[] {
     ({ what, mark }) => `${JSON.stringify(what.title ?? what.ref)} as ${JSON.stringify(mark)}`,
   );
   return [`Marked: ${each.join("; ")}.`];
+}
+
+interface SignalTold {
+  said: string | undefined;
+  timeAsked: boolean;
+}
+
+function signalledWords(
+  { signal }: Setting,
+  replaced: Setting | undefined,
+  { said, timeAsked }: SignalTold,
+): string[] {
+  if (signal === undefined)
+    return replaced?.signal === undefined
+      ? []
+      : ["Its signal is lowered: the keeper no longer sees it outlined."];
+  const held = signal === "critical" && timeAsked ? [criticalOutlastsTime] : [];
+  return [`${signalOutlines[signal]}${nearestSignal(signal, said)}`, ...held];
+}
+
+const signalOutlines: Readonly<Record<SettingSignal, string>> = {
+  "needs-you":
+    "The keeper sees it outlined in amber, as needing them, until they answer it or you lower it with arrange and signal null.",
+  critical:
+    "It is critical: the keeper sees it outlined in red with your reason, and it is the one critical you may hold; only you or the keeper lower it.",
+};
+
+const criticalOutlastsTime = "Critical holds it out until then, past the time you gave.";
+
+function nearestSignal(signal: SignalSaid, said: string | undefined): string {
+  return said === undefined || sameWords(said, signal)
+    ? ""
+    : ` It reads ${signal}, the nearest signal to ${quoted(said.trim().toLowerCase())}.`;
+}
+
+function sameWords(said: string, word: string): boolean {
+  const plainly = (words: string) =>
+    words
+      .toLowerCase()
+      .replace(/[^a-z]+/g, " ")
+      .trim();
+  return plainly(said) === plainly(word);
+}
+
+function severalSignalledWords(settings: readonly Setting[]): string[] {
+  const signalled = settings.filter(({ signal }) => signal !== undefined);
+  if (signalled.length === 0) return [];
+  const each = signalled.map(({ what, signal }) => `${quotedNameOf(what)} as ${signal}`);
+  return [`Signalled: ${each.join("; ")}.`];
 }
 
 function squareWords({ agent }: Setting): string[] {
@@ -473,6 +560,7 @@ async function severalWords(
     theyGoWhen(first?.until ?? "seen", lastingSaid(args.until)),
     ...(replaced === 0 ? [] : [`${replaced} of them replaced what you set out before.`]),
     ...markedWords(mine),
+    ...severalSignalledWords(mine),
     ...(first === undefined || !onlyOnesOut(settings, target, mine) ? [] : squareWords(first)).map(
       (words) => words.replace("sees it marked", "sees each marked"),
     ),

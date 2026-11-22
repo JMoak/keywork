@@ -1062,7 +1062,7 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
 | `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
-| `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. |
+| `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`. A session may name it in other words; the name here is always one of those. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
 | `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening and, since contract 1.33, when the session gave none. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |
@@ -1078,14 +1078,18 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | `setting.mood` | `"calm" \| "brisk" \| "eager" \| "playful" \| "urgent" \| "decisive" \| "tentative"`, optional | How the pane arrives, motion only; absent means the console's own way. `decisive` moves everything at once and lands firmly; `tentative` moves one pane at a time with pauses and lands lightly. Since contract 1.33. |
 | `setting.mark` | `string`, optional | A word or two, at most 24 characters, the session asked the keeper to read on the setting for as long as it is out (`chosen`, `draft`, `done`); absent when it has none. A replacement keeps it unless it names another, and `show.changed` follows a change. Since contract 1.33. |
 | `setting.agent` | `{ name?, color? }`, optional | Present when an agent outside the session set this out through a creature's MCP server; `name` is the name its client gave, at most 40 characters, and is absent when it gave none. `color` is `cyan`, `magenta`, `green`, `yellow` or `blue` (never red, which a console keeps for errors): the engine gives each agent name one colour, picks a free one while one is free, and keeps it for that name while the server runs and across a restart for as long as one of its settings is kept, so a console draws the agent's square in it. The setting is still the creature's (`origin: "creature"`, the creature's limits, the creature may withdraw it), and a console marks it as the agent's rather than the creature's. Since contract 1.33. |
+| `setting.signal` | `"needs-you" \| "critical"`, optional | How much the setting wants the keeper, which a console draws as an outline: `needs-you` (amber) when the session's work waits on the keeper's answer, `critical` (red, and nothing else in a pane's chrome is red) when something is broken or about to be lost. Absent when it has none. The session raises it with `show` or `arrange` and may say it in other words; the wire carries only these two. A `critical` is raised only with a `why` the session gives, which becomes the setting's `why`; only on a setting the raiser set out itself; at most one at a time for the creature or thread and one for each agent; and it holds the setting out until the keeper has seen it, so its `until` becomes `seen`. Only the one who set the setting out, or the keeper through `DELETE /show/{id}/signal`, lowers a `critical`; a timer never does. An agent raising one is written to the audit with its reason. A replacement keeps the signal unless it names another, and `show.changed` follows a change. A console may also draw its own marks (a new arrival, a pane waiting on a question) that never reach the wire. Since contract 1.35; an older server sends none. |
 
 ### show.changed
 
 A setting that is still out changed in place: the session set, changed or cleared its `mark` with
-its `arrange` tool. The payload is the whole setting as it now stands, under the id it already had,
-so a client replaces the one it holds and keeps everything else about it (its place, its rung, what
-the keeper has done with it). Nothing arrives and nothing leaves. Scoped to the session that set the
-thing out, like `show.proposed`. Since contract 1.33; a 1.32 console ignores the event.
+its `arrange` tool, or, since contract 1.35, raised or lowered its `signal` (with `arrange`, which
+may also give it a new `why` with the signal), or the keeper cleared the signal through
+`DELETE /show/{id}/signal`. The payload is the whole setting as it now stands, under the id it
+already had, so a client replaces the one it holds and keeps everything else about it (its place,
+its rung, what the keeper has done with it). Nothing arrives and nothing leaves. Scoped to the
+session that set the thing out, like `show.proposed`. Since contract 1.33; a 1.32 console ignores
+the event.
 
 | Field | Type | Meaning |
 |---|---|---|

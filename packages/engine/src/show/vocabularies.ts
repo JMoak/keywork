@@ -5,10 +5,74 @@ import {
   arrangementShapes,
   arrangementSides,
 } from "./arrangement.ts";
-import { type Mood, moods, settingPlaces, settingSizes, settingWeights } from "./setting.ts";
+import {
+  type Mood,
+  moods,
+  type SettingSignal,
+  settingPanes,
+  settingPlaces,
+  settingSignals,
+  settingSizes,
+  settingWeights,
+} from "./setting.ts";
 import { vocabularyOf } from "./words.ts";
 
 const articles = ["the", "a", "an"];
+
+export const noSignal = "none";
+
+export type SignalSaid = SettingSignal | typeof noSignal;
+
+export const signalWords = vocabularyOf<SignalSaid>([...settingSignals, noSignal], {
+  aliases: {
+    "needs keeper": "needs-you",
+    "needs attention": "needs-you",
+    attention: "needs-you",
+    waiting: "needs-you",
+    "waiting on you": "needs-you",
+    "waits on you": "needs-you",
+    question: "needs-you",
+    asks: "needs-you",
+    input: "needs-you",
+    "needs input": "needs-you",
+    "your turn": "needs-you",
+    required: "needs-you",
+    "requires you": "needs-you",
+    "action needed": "needs-you",
+    decision: "needs-you",
+    blocked: "needs-you",
+    amber: "needs-you",
+    important: "needs-you",
+    urgent: "needs-you",
+    red: "critical",
+    alarm: "critical",
+    emergency: "critical",
+    danger: "critical",
+    fatal: "critical",
+    severe: "critical",
+    broken: "critical",
+    failure: "critical",
+    failed: "critical",
+    outage: "critical",
+    clear: noSignal,
+    cleared: noSignal,
+    off: noSignal,
+    nothing: noSignal,
+    no: noSignal,
+    null: noSignal,
+    rest: noSignal,
+    "at rest": noSignal,
+    quiet: noSignal,
+    calm: noSignal,
+    resolved: noSignal,
+    answered: noSignal,
+    done: noSignal,
+    lower: noSignal,
+    lowered: noSignal,
+    normal: noSignal,
+  },
+  filler: [...articles, "signal", "it", "now", "is", "be"],
+});
 
 export const placeWords = vocabularyOf(settingPlaces, {
   aliases: {
@@ -27,6 +91,38 @@ export const placeWords = vocabularyOf(settingPlaces, {
     "new window": "outside",
   },
   filler: [...articles, "conversation", "console", "in", "its", "of"],
+});
+
+export const paneWords = vocabularyOf(settingPanes, {
+  aliases: {
+    session: "sessions",
+    "session tree": "sessions",
+    threads: "sessions",
+    conversations: "sessions",
+    arc: "arcs",
+    file: "files",
+    tree: "files",
+    "file tree": "files",
+    browser: "files",
+    "file browser": "files",
+    explorer: "files",
+    "context map": "context",
+    "context window": "context",
+    tokens: "context",
+    memories: "memory",
+    desk: "needs-you",
+    asks: "needs-you",
+    waiting: "needs-you",
+    questions: "needs-you",
+    permission: "permissions",
+    rules: "permissions",
+    grants: "permissions",
+    "mcp servers": "mcp",
+    servers: "mcp",
+    workspace: "workspaces",
+    projects: "workspaces",
+  },
+  filler: [...articles, "pane", "panel", "view", "list", "all", "every", "of", "console", "its"],
 });
 
 export const sizeWords = vocabularyOf(settingSizes, {

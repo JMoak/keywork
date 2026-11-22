@@ -362,6 +362,33 @@ describe("a creature's windows placed over MCP", () => {
     expect(sessions.injections).toHaveLength(2);
   });
 
+  it("writes the reason of a critical an agent raises into the audit, and only it or the keeper lowers it", async () => {
+    const { connect, settings, audit, conversationOf } = await withWindows();
+    const connection = await connect("pip");
+    const shown = await connection.callTool("show", {
+      what: { kind: "note", ref: "Deploy to prod stopped at step 3", title: "Deploy" },
+      signal: "critical",
+      why: "the release is half applied",
+    });
+    expect(shown.isError).toBe(false);
+    const [deploy] = settings.open();
+    expect(deploy).toMatchObject({ signal: "critical", why: "the release is half applied" });
+    const pip = { creature: "pip", sessionId: await conversationOf("pip") };
+    expect(
+      settings.signal(pip, [{ id: deploy?.id ?? "", signal: undefined }], undefined, true),
+    ).toMatchObject({ refused: "conflict" });
+    expect((await connection.callTool("arrange", { signal: { Deploy: null } })).text).toBe(
+      '"Deploy" is no longer critical. Nothing else moved.',
+    );
+    expect((await audit.rows()).map(({ decision, reason }) => [decision, reason])).toEqual([
+      [
+        "allow",
+        `an agent on house set something out through pip, and raised critical on "Deploy" (${deploy?.id}): "the release is half applied"`,
+      ],
+      ["allow", "an agent on house arranged the windows of pip"],
+    ]);
+  });
+
   it("holds an agent to the creature's own limits and answers a refusal as an error", async () => {
     const { connect, settings, sessions, audit } = await withWindows({ hourlyLimit: 1 });
     const connection = await connect("pip");

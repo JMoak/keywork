@@ -12,7 +12,7 @@ export function shownTool(target: ShowTarget): Tool {
   return defineTool({
     name: shownToolName,
     description:
-      "List what is out, beside this conversation and outside in windows of their own, whoever set it out: what you set out and what the keeper opened. This is IDE control over the console's own space, never the computer, and it changes nothing, so it asks for no permission. Each setting is one line of JSON with id, what, rung, size, weight, why, state, at, until, from, origin, where, seat, by and sometimes note, mark, agent and square. rung, size and weight are what was proposed, state is live or pinned, and origin is creature for what you set out and keeper for what the keeper opened. where is where it stands now: beside the conversation, outside, or inside when the keeper brought it into the console. seat is its place outside, written as show takes it (\"left-half\", or \"columns 4 to 8, rows 0 to 6\"). by is who put it there last, creature, keeper or console, and is absent until the console has reported; what the keeper placed is the keeper's. note is the console's reason when it has one, such as no room outside. mark is the word or two the keeper reads on it, set with show or arrange. agent is there when an agent outside this conversation set the thing out through you, and names it, with square the colour of the square the keeper sees on it, one colour to each agent; it counts against your limits, and it is yours to withdraw. When windows outside overlap, a line names the pairs. A last line tells the stage once the console has reported it: which room it is (beside the console, over its far side, or the whole display) and how many of the smallest seats fit across and down, so you can judge the room before you compose; whatever fits, at most twelve of yours stand outside at once. Use the ids with show's from, with arrange, or with withdraw for what is still yours to take back.",
+      "List what is out, beside this conversation and outside in windows of their own, whoever set it out: what you set out and what the keeper opened. This is IDE control over the console's own space, never the computer, and it changes nothing, so it asks for no permission. Each setting is one line of JSON with id, what, rung, size, weight, why, state, at, until, from, origin, where, seat, by and sometimes note, mark, signal, agent and square. rung, size and weight are what was proposed, state is live or pinned, and origin is creature for what you set out and keeper for what the keeper opened. where is where it stands now: beside the conversation, outside, or inside when the keeper brought it into the console. seat is its place outside, written as show takes it (\"left-half\", or \"columns 4 to 8, rows 0 to 6\"). by is who put it there last, creature, keeper or console, and is absent until the console has reported; what the keeper placed is the keeper's. note is the console's reason when it has one, such as no room outside. mark is the word or two the keeper reads on it, set with show or arrange. signal is needs-you or critical while one outlines it, and is gone once the keeper or you have cleared it. agent is there when an agent outside this conversation set the thing out through you, and names it, with square the colour of the square the keeper sees on it, one colour to each agent; it counts against your limits, and it is yours to withdraw. When windows outside overlap, a line names the pairs. A last line tells the stage once the console has reported it: which room it is (beside the console, over its far side, or the whole display) and how many of the smallest seats fit across and down, so you can judge the room before you compose; whatever fits, at most twelve of yours stand outside at once. Use the ids with show's from, with arrange, or with withdraw for what is still yours to take back.",
     schema: z.object({}).strict(),
     run: async () => {
       const settings = target.settings();
@@ -52,7 +52,7 @@ function brieflyOf(what: Setting["what"]): Setting["what"] {
 }
 
 function rowOf({ setting, where, seat, by, note }: Stood): string {
-  const { id, what, rung, size, weight, why, state, at, until, from, origin, agent, mark } =
+  const { id, what, rung, size, weight, why, state, at, until, from, origin, agent, mark, signal } =
     setting;
   return JSON.stringify({
     id,
@@ -71,6 +71,7 @@ function rowOf({ setting, where, seat, by, note }: Stood): string {
     ...(by !== undefined && { by }),
     ...(note !== undefined && { note }),
     ...(mark !== undefined && { mark }),
+    ...(signal !== undefined && { signal }),
     ...(agent !== undefined && { agent: agent.name ?? "an agent" }),
     ...(agent?.color !== undefined && { square: agent.color }),
   });

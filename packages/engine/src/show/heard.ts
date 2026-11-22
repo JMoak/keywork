@@ -1,7 +1,14 @@
 import { calledOf, quotedNameOf } from "./naming.ts";
 import type { Standing } from "./placements.ts";
 import { type Seat, seatWords } from "./seat.ts";
-import type { Setting, SettingAnswer, SettingWhat, SettledBy, SettledOutcome } from "./setting.ts";
+import type {
+  Setting,
+  SettingAnswer,
+  SettingSignal,
+  SettingWhat,
+  SettledBy,
+  SettledOutcome,
+} from "./setting.ts";
 import { listed } from "./words.ts";
 
 export const outcomesPerNote = 6;
@@ -28,10 +35,17 @@ export interface PlacedNote {
   seat?: Seat;
 }
 
+export interface ClearedNote {
+  id: string;
+  what: SettingWhat;
+  signal: SettingSignal;
+}
+
 export interface Heard {
   told: readonly SettledNote[];
   earlier: number;
   placed?: readonly PlacedNote[];
+  cleared?: readonly ClearedNote[];
 }
 
 export class HeardOutcomes {
@@ -45,11 +59,22 @@ export class HeardOutcomes {
     trimToTheBound(pending);
   }
 
+  cleared(setting: Setting, signal: SettingSignal): void {
+    if (setting.origin !== "creature") return;
+    const pending = this.pendingFor(setting.sessionId);
+    pending.cleared.set(setting.id, { id: setting.id, what: setting.what, signal });
+  }
+
   take(sessionId: string): Heard | undefined {
     const pending = this.pending.get(sessionId);
     if (pending === undefined) return undefined;
     this.pending.delete(sessionId);
-    return { told: [...pending.told.values()], earlier: pending.earlier };
+    const cleared = [...pending.cleared.values()];
+    return {
+      told: [...pending.told.values()],
+      earlier: pending.earlier,
+      ...(cleared.length > 0 && { cleared }),
+    };
   }
 
   forget(sessionId: string): void {
@@ -59,17 +84,18 @@ export class HeardOutcomes {
   private pendingFor(sessionId: string): Pending {
     const existing = this.pending.get(sessionId);
     if (existing !== undefined) return existing;
-    const fresh: Pending = { told: new Map(), earlier: 0 };
+    const fresh: Pending = { told: new Map(), earlier: 0, cleared: new Map() };
     this.pending.set(sessionId, fresh);
     return fresh;
   }
 }
 
-export function outcomeNoteOf({ told, earlier, placed = [] }: Heard): string {
+export function outcomeNoteOf({ told, earlier, placed = [], cleared = [] }: Heard): string {
   return [
     placed.length === 0 ? noteHeading : noteHeadingWithPlacings,
     ...told.map(lineOf),
     ...earlierLine(earlier),
+    ...cleared.map(clearedLine),
     ...placedLine(placed),
   ].join("\n");
 }
@@ -87,6 +113,7 @@ export function keeperMoveOf(before: Standing, now: Standing): KeeperMove {
 interface Pending {
   told: Map<string, SettledNote>;
   earlier: number;
+  cleared: Map<string, ClearedNote>;
 }
 
 const noteHeading =
@@ -108,6 +135,10 @@ function trimToTheBound(pending: Pending): void {
 
 function lineOf({ id, what, outcome, by }: SettledNote): string {
   return `- ${id} (${what.kind} ${quotedNameOf(what)}): ${becameOf(outcome, by)}`;
+}
+
+function clearedLine({ id, what, signal }: ClearedNote): string {
+  return `- ${id} (${what.kind} ${quotedNameOf(what)}): the keeper cleared its ${signal} signal, and it is still out.`;
 }
 
 function earlierLine(earlier: number): string[] {

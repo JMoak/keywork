@@ -17,7 +17,7 @@ export function withdrawTool(target: ShowTarget): Tool {
   return defineTool({
     name: withdrawToolName,
     description:
-      'Take back what you set out, beside this conversation or outside. This is IDE control over the console\'s own space, never the computer, and it asks for no permission. Name the id show answered with or one from shown, or the ref or title you showed it with; give a list to take back several, or "all" with except to clear everything but what you name. It refuses what the keeper pinned, what the keeper opened and anything that is not yours, because the keeper disposes. What grew from a setting stays out when you take it back, and withdrawing a pane that drilled in steps back out: its parent takes its seat again. mood says how it leaves. When what you take back stood outside, the answer waits a moment for the console, so shown is true straight after.',
+      'Take back what you set out, beside this conversation or outside. This is IDE control over the console\'s own space, never the computer, and it asks for no permission. Name the id show answered with or one from shown, or the ref or title you showed it with; give a list to take back several, or "all" with except to clear everything but what you name. It refuses what the keeper pinned, what the keeper opened, a critical another raised and anything that is not yours, because the keeper disposes. What grew from a setting stays out when you take it back, and withdrawing a pane that drilled in steps back out: its parent takes its seat again. mood says how it leaves. When what you take back stood outside, the answer waits a moment for the console, so shown is true straight after.',
     schema: z
       .object({
         id: z

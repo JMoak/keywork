@@ -793,6 +793,7 @@
         "replaces": "null",
         "rung": "string",
         "sessionId": "string",
+        "signal": "string",
         "state": "string",
         "until": "string",
         "what": {

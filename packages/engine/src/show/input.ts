@@ -5,14 +5,14 @@ export const settingWhatInput = z
   .object({
     kind: z
       .enum(settingKinds)
-      .describe("file, diff, report, thread, chore, url or note: what you set out."),
+      .describe("file, diff, report, thread, chore, url, note or pane: what you set out."),
     ref: z
       .string()
       .trim()
       .min(1)
       .max(2_000)
       .describe(
-        "Which one: a workspace path for a file, a change-set id for a diff, a report id, a session id for a thread, a chore id, a url, or the note's own words (at most 2000 characters, read as markdown).",
+        "Which one: a workspace path for a file, a change-set id for a diff, a report id, a session id for a thread, a chore id, a url, the note's own words (at most 2000 characters, read as markdown), or for a pane the name of one of the console's own: sessions, arcs, files, context, memory, needs-you, permissions, mcp or workspaces.",
       ),
     title: z
       .string()

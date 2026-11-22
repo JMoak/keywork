@@ -90,6 +90,18 @@ describe("the withdraw tool", () => {
     expect(settings.open()).toEqual([{ ...setting, state: "pinned" }]);
   });
 
+  it("refuses a critical an agent raised, and takes back one this seat raised", async () => {
+    const { tool, settings, setOut } = seated();
+    const agents = setOut({ signal: "critical", agent: { name: "codex" } });
+    const own = setOut({ what: { kind: "note", ref: "Disk full." }, signal: "critical" });
+
+    expect(await tool.execute({ id: agents.id })).toBe(
+      'Not withdrawn: "Lunch at noon." is critical, raised by codex, and only it or the keeper may lower it.',
+    );
+    expect(await tool.execute({ id: own.id })).toMatch(/^Withdrawn: /);
+    expect(settings.open().map(({ id }) => id)).toEqual([agents.id]);
+  });
+
   it("refuses what the keeper opened, pinned or not", async () => {
     const { tool, settings, setOut } = seated();
     const parent = setOut({ what: { kind: "diff", ref: "cs-41" } });

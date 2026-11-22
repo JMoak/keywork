@@ -85,6 +85,17 @@ describe("the shown tool", () => {
     ]);
   });
 
+  it("lists a signal while one outlines a setting, and nothing once it is cleared", async () => {
+    const { tool, settings } = seated();
+    const outcome = settings.propose(proposal({ signal: "needs-you" }));
+    if ("refused" in outcome) throw new Error(outcome.error);
+    const row = async () => JSON.parse((await tool.execute({})).split("\n")[1] ?? "");
+    expect(await row()).toMatchObject({ signal: "needs-you" });
+
+    settings.clearSignal(outcome.setting.id);
+    expect(await row()).not.toHaveProperty("signal");
+  });
+
   it("names the size only when one was named", async () => {
     const { tool, settings } = seated();
     settings.propose(proposal({ size: "working" }));

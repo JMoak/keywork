@@ -10,6 +10,7 @@ import {
   type SettingStoreOptions,
   type ShowProposal,
   type ShowRefusal,
+  type Signalled,
 } from "./store.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
@@ -753,6 +754,181 @@ describe("a setting's mark", () => {
     }
   });
 });
+
+describe("a setting's signal", () => {
+  const creature = { creature: "wren", sessionId: "s1" };
+  const codex = { ...creature, agent: { name: "codex" } };
+  const deploy = { kind: "note", ref: "Deploy stopped.", title: "Deploy" } as const;
+  const changesIn = (heard: readonly Heard[], from: number) =>
+    heard
+      .slice(from)
+      .filter(({ type }) => type === "show.changed")
+      .map(({ payload }) => (payload as { setting: Setting }).setting.signal);
+
+  it("is carried, kept by a replacement, lowered by none, and changed in place on show.changed", () => {
+    const { store, heard } = board();
+    const first = setOut(store.propose(proposal({ signal: "needs-you" }))).setting;
+    const kept = setOut(store.propose(proposal({ why: "Again." }))).setting;
+    const lowered = setOut(store.propose(proposal({ signal: "none" }))).setting;
+    expect([first.signal, kept.signal, lowered.signal]).toEqual([
+      "needs-you",
+      "needs-you",
+      undefined,
+    ]);
+
+    const before = heard.length;
+    const raise = [{ id: lowered.id, signal: "needs-you" as const }];
+    expect(store.signal(creature, raise, undefined, true)).toEqual([
+      { setting: expect.objectContaining({ signal: "needs-you" }), before: undefined },
+    ]);
+    store.signal(creature, raise, undefined, true);
+    store.signal(creature, [{ id: lowered.id, signal: undefined }], undefined, true);
+    expect(changesIn(heard, before)).toEqual(["needs-you", undefined]);
+  });
+
+  it("takes a reason with what it raises as the setting's why, and leaves why alone when lowering", () => {
+    const { store } = board();
+    const plan = setOut(store.propose(proposal())).setting;
+
+    const [raised] = signalled(
+      store.signal(creature, [{ id: plan.id, signal: "needs-you" }], "Pick one of the two.", true),
+    );
+    const [lowered] = signalled(
+      store.signal(creature, [{ id: plan.id, signal: undefined }], "Ignored.", true),
+    );
+    expect([raised?.setting.why, lowered?.setting.why]).toEqual([
+      "Pick one of the two.",
+      "Pick one of the two.",
+    ]);
+  });
+
+  it("raises critical only with a reason, and holds the setting out until the keeper has seen it", async () => {
+    const { store, advanceTo } = board();
+    expect(store.propose(proposal({ signal: "critical", why: "" }))).toMatchObject({
+      refused: "invalid",
+      error: expect.stringMatching(/^critical needs a reason: give why/),
+    });
+    const timed = setOut(store.propose(proposal({ lastsMs: 10 * minuteMs }))).setting;
+    const critical = [{ id: timed.id, signal: "critical" as const }];
+    expect(store.signal(creature, critical, undefined, true)).toMatchObject({ refused: "invalid" });
+
+    const [raised] = signalled(
+      store.signal(creature, critical, "The release is half applied.", true),
+    );
+    expect(raised?.setting).toMatchObject({ signal: "critical", until: "seen" });
+    await advanceTo(t0 + 11 * minuteMs);
+    expect(store.open().map(({ id }) => id)).toEqual([timed.id]);
+  });
+
+  it("holds a critical shown with a time until the keeper has seen it", () => {
+    const { store } = board();
+    const shown = setOut(
+      store.propose(proposal({ signal: "critical", lastsMs: minuteMs })),
+    ).setting;
+    expect(shown.until).toBe("seen");
+  });
+
+  it("is one critical at a time for the creature and one for each agent", () => {
+    const { store } = board();
+    const disk = { kind: "note", ref: "Disk is full.", title: "Disk" } as const;
+    setOut(store.propose(proposal({ signal: "critical" })));
+
+    expect(store.propose(proposal({ what: deploy, signal: "critical" }))).toMatchObject({
+      refused: "limited",
+      error: expect.stringContaining('"The plan" is critical already'),
+    });
+    expect(setOut(store.propose(proposal({ why: "Still." }))).setting.signal).toBe("critical");
+    const agents = setOut(
+      store.propose(proposal({ what: deploy, signal: "critical", agent: { name: "codex" } })),
+    ).setting;
+    const second = setOut(
+      store.propose(proposal({ what: disk, agent: { name: "codex" } })),
+    ).setting;
+    expect(
+      store.signal(codex, [{ id: second.id, signal: "critical" }], "Full.", true),
+    ).toMatchObject({ refused: "limited" });
+    const moved = store.signal(
+      codex,
+      [
+        { id: agents.id, signal: undefined },
+        { id: second.id, signal: "critical" },
+      ],
+      "Full.",
+      true,
+    );
+    expect(signalled(moved).map(({ setting }) => setting.signal)).toEqual([undefined, "critical"]);
+  });
+
+  it("refuses two criticals raised in one call, and changes nothing", () => {
+    const { store } = board();
+    const plan = setOut(store.propose(proposal())).setting;
+    const notes = setOut(store.propose(proposal({ what: deploy }))).setting;
+    const both = [
+      { id: plan.id, signal: "critical" as const },
+      { id: notes.id, signal: "critical" as const },
+    ];
+    expect(store.signal(creature, both, "Both.", true)).toMatchObject({ refused: "limited" });
+    expect(store.open().map(({ signal }) => signal)).toEqual([undefined, undefined]);
+  });
+
+  it("goes only on what the raiser set out, and only the raiser or the keeper lowers it", () => {
+    const { store } = board();
+    const creatures = setOut(store.propose(proposal())).setting;
+    const agents = setOut(
+      store.propose(proposal({ what: deploy, signal: "critical", agent: { name: "codex" } })),
+    ).setting;
+
+    expect(
+      store.signal(codex, [{ id: creatures.id, signal: "critical" }], "Mine.", true),
+    ).toMatchObject({
+      refused: "conflict",
+      error: expect.stringContaining("critical goes only on what you set out yourself"),
+    });
+    expect(
+      store.signal(codex, [{ id: creatures.id, signal: "needs-you" }], undefined, true),
+    ).toMatchObject([{ setting: { signal: "needs-you" } }]);
+    for (const signal of [undefined, "needs-you"] as const) {
+      expect(store.signal(creature, [{ id: agents.id, signal }], undefined, true)).toMatchObject({
+        refused: "conflict",
+        error: '"Deploy" is critical, raised by codex, and only it or the keeper may lower it',
+      });
+    }
+    expect(store.takeBack(creature, agents.id)).toMatchObject({ refused: "conflict" });
+    expect(store.propose(proposal({ what: deploy, signal: "none" }))).toMatchObject({
+      refused: "conflict",
+    });
+    expect(store.takeBack(codex, agents.id)).toMatchObject({ state: "withdrawn" });
+  });
+
+  it("is cleared by the keeper, who leaves the setting out, and the session hears it", () => {
+    const { store, heard } = board();
+    const plan = setOut(store.propose(proposal({ signal: "critical" }))).setting;
+    const before = heard.length;
+
+    expect(store.clearSignal(plan.id)).toMatchObject({ id: plan.id, state: "live" });
+    expect(store.clearSignal(plan.id)).toMatchObject({ refused: "conflict" });
+    expect(store.clearSignal("no-such-id")).toMatchObject({ refused: "missing" });
+    expect(changesIn(heard, before)).toEqual([undefined]);
+    expect(store.open()[0]).not.toHaveProperty("signal");
+    expect(store.takeHeardBy("s1")?.cleared).toEqual([
+      { id: plan.id, what: plan.what, signal: "critical" },
+    ]);
+  });
+
+  it("never stands in the way of the keeper opening the same thing", async () => {
+    const { store } = board();
+    const plan = setOut(
+      store.propose(proposal({ signal: "critical", agent: { name: "codex" } })),
+    ).setting;
+    const opened = await store.keeperOpens({ what: plan.what, from: plan.id, rung: "unfold" });
+    expect(setOut(opened).setting).not.toHaveProperty("signal");
+  });
+});
+
+function signalled(outcome: readonly Signalled[] | ShowRefusal): readonly Signalled[] {
+  if ("refused" in outcome) throw new Error(outcome.error);
+  return outcome;
+}
 
 describe("a setting that lasts a time from now", () => {
   it("goes at that time by the store's own clock", async () => {

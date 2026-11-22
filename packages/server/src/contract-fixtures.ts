@@ -564,6 +564,7 @@ const samples: Samples = {
         where: "outside",
         agent: { name: "claude-code", color: "magenta" },
         mark: "chosen",
+        signal: "needs-you",
       },
     },
   ],
