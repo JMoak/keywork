@@ -72,6 +72,7 @@ import {
   type StagedItem,
   scopeContains,
   sessionPosture,
+  type Tailnet,
   type ThreadOutcome,
   type ToolGuard,
   type ToolPosture,
@@ -270,6 +271,8 @@ export interface HostOptions {
   notice?: ((text: string) => void) | undefined;
   recompose?: (() => Promise<void>) | undefined;
   modelProbe?: ProbeHttp | undefined;
+  // The tailnet the mesh reads this machine's identity from; its own tailscaled when left out.
+  tailnet?: Tailnet | undefined;
 }
 
 export function serverTicketFile(userRoot?: string): string {
@@ -454,6 +457,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     log,
     notice,
     modelProbe: options.modelProbe,
+    tailnet: options.tailnet,
     inventory:
       inventory === undefined
         ? undefined

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type CreatureHandoff,
+  createTailnet,
   MockProvider,
   type Provider,
   textTurn,
@@ -10,6 +11,9 @@ import {
 import { createKeyworkServer, EventLog } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
+import { pingFailure } from "../../engine/src/mesh/transport/ping.ts";
+import { parseStatus } from "../../engine/src/mesh/transport/status.ts";
+import { recordedText } from "../../engine/src/mesh/transport/testing/recorded.ts";
 import { servedHost } from "./serve.ts";
 
 const tempDir = scratchDirs("keywork-serve-handoffs-");
@@ -79,12 +83,26 @@ async function steadPlace(): Promise<SteadPlace> {
   return { cwd, sessionDir: await tempDir(), userRoot: await tempDir() };
 }
 
+// A message is sent under this machine's tailnet identity, and a machine without Tailscale has
+// none. The stead is therefore given a recorded tailnet, so the test does not depend on what is
+// installed where it runs.
+function recordedTailnet() {
+  return createTailnet({
+    name: "recorded",
+    status: async () => parseStatus(recordedText("status-running")),
+    whois: async () => null,
+    ping: async () => pingFailure("unused"),
+    serve: async () => ({ serving: false, funnel: [] }),
+  });
+}
+
 async function steadAt(place: SteadPlace, provider: Provider) {
   const log = new EventLog();
   const host = await servedHost({
     ...place,
     projectTrusted: true,
     provider,
+    tailnet: recordedTailnet(),
     permissions: () => "allow",
     checkpoints: "off",
     log,

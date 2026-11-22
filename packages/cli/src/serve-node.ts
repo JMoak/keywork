@@ -28,6 +28,7 @@ import {
   registryBenchOpener,
   routinesStateOf,
   stewardedInventory,
+  type Tailnet,
   type Usage,
   UsageLedger,
   type UsageLedgerEntry,
@@ -51,6 +52,8 @@ export interface ServedNodeOptions {
   modelProbe?: ProbeHttp | undefined;
   inventory?: NodeInventorySeams | undefined;
   now?: (() => Date) | undefined;
+  // The tailnet the mesh reads this machine's identity from; its own tailscaled when left out.
+  tailnet?: Tailnet | undefined;
 }
 
 export interface NodeInventorySeams {
@@ -248,7 +251,7 @@ function dayOf(at: Date | string): string {
 
 async function meshConsoleFor(
   state: string,
-  options: Pick<ServedNodeOptions, "userRoot" | "log" | "notice">,
+  options: Pick<ServedNodeOptions, "userRoot" | "log" | "notice" | "tailnet">,
 ): Promise<HouseMeshConsole | undefined> {
   try {
     const config = readNodeConfig(nodePaths(options.userRoot).config);
@@ -259,6 +262,7 @@ async function meshConsoleFor(
       userRoot: options.userRoot,
       headless: config.headless,
       port: config.mesh.port,
+      tailnet: options.tailnet,
       onPairing: sinks.pairing,
       onGrant: sinks.grants,
       onLanes: sinks.lanes,
