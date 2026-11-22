@@ -68,6 +68,7 @@ describe("the shown tool", () => {
         until: "seen",
         from: null,
         origin: "creature",
+        where: "beside",
       },
       {
         id: opened.setting.id,
@@ -79,6 +80,7 @@ describe("the shown tool", () => {
         until: "seen",
         from: diff.setting.id,
         origin: "keeper",
+        where: "beside",
       },
     ]);
   });
@@ -92,6 +94,49 @@ describe("the shown tool", () => {
 
     expect(JSON.parse(sized ?? "")).toMatchObject({ size: "working" });
     expect(JSON.parse(unsized ?? "")).not.toHaveProperty("size");
+  });
+
+  it("tells where each thing stands, its seat in the words show takes, who put it there, and the stage once", async () => {
+    const { tool, settings } = seated();
+    const out = (overrides: Partial<ShowProposal>) => {
+      const outcome = settings.propose(proposal(overrides));
+      if ("refused" in outcome) throw new Error(outcome.error);
+      return outcome.setting.id;
+    };
+    const lead = out({ seat: { x: 0, y: 0, w: 8, h: 12 }, weight: "lead" });
+    const moved = out({ what: { kind: "note", ref: "a" }, where: "outside" });
+    const inside = out({ what: { kind: "note", ref: "b" }, where: "outside" });
+    out({ what: { kind: "note", ref: "c" } });
+    out({ what: { kind: "note", ref: "d" }, seat: { x: 0, y: 0, w: 6, h: 6 } });
+    await settings.placed("s1", {
+      stage: { room: "beside", cardsAcross: 4, cardsDown: 3, consoleMaximised: false },
+      placements: [
+        { id: lead, where: "outside", seat: { x: 0, y: 0, w: 8, h: 12 }, by: "creature" },
+        { id: moved, where: "outside", seat: { x: 8, y: 0, w: 4, h: 5 }, by: "keeper" },
+        { id: inside, where: "inside", by: "keeper" },
+      ],
+    });
+
+    const listed = (await tool.execute({})).split("\n");
+
+    expect(listed[0]).toBe(
+      "5 settings are out, 3 outside in windows of their own, oldest first, one JSON object to a line:",
+    );
+    expect(
+      listed.slice(1, -1).map((line) => {
+        const { where, seat, by, weight } = JSON.parse(line);
+        return { where, seat, by, weight };
+      }),
+    ).toEqual([
+      { where: "outside", seat: "left-two-thirds", by: "creature", weight: "lead" },
+      { where: "outside", seat: "columns 8 to 12, rows 0 to 5", by: "keeper" },
+      { where: "inside", by: "keeper" },
+      { where: "beside" },
+      { where: "outside", seat: "top-left" },
+    ]);
+    expect(listed.at(-1)).toBe(
+      "The stage, where your windows outside stand, is the free room beside the console: the smallest seats fit 4 across and 3 down, and the console is not maximised.",
+    );
   });
 
   it("counts one setting in the singular", async () => {

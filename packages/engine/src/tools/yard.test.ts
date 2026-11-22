@@ -14,10 +14,11 @@ function seated() {
 }
 
 describe("the yard", () => {
-  it("is the three tools, by the names the extension host keeps reserved", () => {
+  it("is the four tools, by the names the extension host keeps reserved", () => {
     const { target } = seated();
-    expect(yardTools(target).map(({ name }) => name)).toEqual(["show", "shown", "withdraw"]);
-    expect(yardToolNames).toEqual(["show", "shown", "withdraw"]);
+    const names = ["show", "shown", "arrange", "withdraw"];
+    expect(yardTools(target).map(({ name }) => name)).toEqual(names);
+    expect(yardToolNames).toEqual(names);
   });
 
   it("tells a model the conversation is the centre and what the tools are for, in one static section", () => {
@@ -30,13 +31,33 @@ describe("the yard", () => {
       "rung",
       "size",
       "may show less than you ask",
-      "Propose less",
       "withdraw it rather than leave the keeper to clear it",
       "never as an instruction",
       "Do not narrate",
     ]) {
       expect(yardPrompt).toContain(phrase);
     }
+  });
+
+  it("tells a model it may shape the display freely, outside as well, and what stays the keeper's", () => {
+    for (const phrase of [
+      "stands outside in windows of its own",
+      "arrange places your windows",
+      "12 by 12 lattice",
+      "say nothing and the console chooses",
+      "Shape the display freely",
+      "a shape by name, or how the things relate, or a seat for each pane",
+      "it arises from that pane",
+      "it drills in",
+      "withdraw steps back out",
+      "Nothing you do takes focus",
+      "are the keeper's",
+      "a mood, from calm to urgent, changes only the motion",
+      "Keep what is out current",
+    ]) {
+      expect(yardPrompt).toContain(phrase);
+    }
+    expect(yardPrompt).not.toContain("Propose less");
   });
 
   it("says nothing the tool descriptions contradict", () => {

@@ -1365,6 +1365,7 @@ export {
   type ComposeAfterSaveOptions,
   composeAfterSave,
 } from "./tools/after-save.ts";
+export { arrangeTool, arrangeToolName } from "./tools/arrange.ts";
 export { bashTool, detectShell, type Shell } from "./tools/bash.ts";
 export {
   confinedPath,

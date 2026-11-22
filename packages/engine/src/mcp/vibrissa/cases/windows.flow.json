@@ -1,0 +1,102 @@
+{
+  "name": "windows: a pane is seated outside, arranged, listed and withdrawn in the creature's name",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "show outside",
+      "tool": "show",
+      "args": {
+        "what": {
+          "kind": "note",
+          "ref": "the release plan",
+          "title": "Release plan"
+        },
+        "seat": "left half",
+        "mood": "calm"
+      },
+      "capture": {
+        "plan": "structuredContent.id"
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Set out outside in a window of its own, in the left half[.]"
+            }
+          }
+        ],
+        "structuredContent": {
+          "id": {
+            "$type": "string"
+          }
+        },
+        "isError": false
+      }
+    },
+    {
+      "name": "arrange",
+      "tool": "arrange",
+      "args": {
+        "seats": [
+          {
+            "id": "{{plan}}",
+            "seat": "right two thirds"
+          }
+        ]
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Arranged 1 pane in the seats you composed[.] Outside now: .*right two thirds"
+            }
+          }
+        ],
+        "structuredContent": {
+          "arrangement": {
+            "$type": "string"
+          },
+          "panes": ["{{plan}}"]
+        },
+        "isError": false
+      }
+    },
+    {
+      "name": "shown",
+      "tool": "shown",
+      "args": {},
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "\"id\":\"{{plan}}\".*\"where\":\"outside\",\"seat\":\"right-two-thirds\",\"by\":\"creature\""
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "withdraw",
+      "tool": "withdraw",
+      "args": {
+        "id": "{{plan}}"
+      },
+      "expect": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Withdrawn: {{plan}} has left the yard."
+          }
+        ],
+        "structuredContent": {
+          "id": "{{plan}}"
+        },
+        "isError": false
+      }
+    }
+  ]
+}

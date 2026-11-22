@@ -4,6 +4,7 @@ import {
   type CreatureHost,
   type CreatureMcpPort,
   creatureMcp,
+  creatureYard,
   defaultMessageLimits,
   type FetchLike,
   type McpArrival,
@@ -11,6 +12,7 @@ import {
   type RelayedExchange,
   type SelfIdentity,
   type SessionStore,
+  type ShowSettings,
 } from "@keywork/engine";
 import { readServerTicket, type ServerTicket } from "@keywork/server";
 import { keyworkVersion } from "./version.ts";
@@ -30,6 +32,7 @@ export interface ServedCreatureMcpOptions {
   creatures: Pick<CreatureHost, "inbound" | "deliver" | "read">;
   sessions: CreatureConversations;
   mesh: CreatureMcpMesh | undefined;
+  settings?: ShowSettings | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -38,10 +41,9 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
 } {
   const { mesh } = options;
   if (mesh === undefined) return {};
-  const own = {
-    guard: messageGuard(defaultMessageLimits, options.now ?? Date.now),
-    limits: defaultMessageLimits,
-  };
+  const now = options.now ?? Date.now;
+  const own = { guard: messageGuard(defaultMessageLimits, now), limits: defaultMessageLimits };
+  const yard = options.settings === undefined ? undefined : creatureYard(options.settings, now);
   return {
     creatureMcp: {
       answer: (slug, message, caller, mail = own) =>
@@ -54,6 +56,7 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
           self: () => mesh.self(),
           machine: () => mesh.machine(),
           version: keyworkVersion,
+          yard,
         }).answer(slug, message, caller),
     },
   };

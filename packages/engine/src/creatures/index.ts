@@ -98,6 +98,13 @@ export {
   type SharedLimits,
   statusOf,
 } from "./mcp.ts";
+export {
+  type CreatureYard,
+  type CreatureYardTool,
+  creatureYard,
+  creatureYardTools,
+  yardNoticeEveryMs,
+} from "./mcp-yard.ts";
 export * from "./messages/index.ts";
 export {
   type ChoreSwitchboard,

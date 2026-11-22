@@ -1,0 +1,106 @@
+{
+  "name": "windows: two things are set out in one call, one is marked, and one leaves in a mood",
+  "tags": ["flow"],
+  "steps": [
+    {
+      "name": "show two at once, each in its seat",
+      "tool": "show",
+      "args": {
+        "what": [
+          {
+            "kind": "note",
+            "ref": "Ship the larger change.",
+            "title": "Option A",
+            "seat": "left-half"
+          },
+          {
+            "kind": "note",
+            "ref": "Ship the smaller fix first.",
+            "title": "Option B",
+            "seat": "right-half"
+          }
+        ],
+        "mood": "playful"
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Set out 2: \"Option A\" [(][0-9a-f-]{36}[)] in the left half; \"Option B\" [(][0-9a-f-]{36}[)] in the right half[.] They arrived playfully[.] They stay until the keeper has seen them[.]"
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "mark one by its title, moving nothing",
+      "tool": "arrange",
+      "args": {
+        "mark": {
+          "Option B": "chosen"
+        }
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": "Marked: the keeper reads \"chosen\" on \"Option B\"."
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "the mark is listed",
+      "tool": "shown",
+      "args": {},
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "\"title\":\"Option B\".*\"mark\":\"chosen\""
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "the other leaves calmly",
+      "tool": "withdraw",
+      "args": {
+        "id": "Option A",
+        "mood": "calm"
+      },
+      "expect": {
+        "$partial": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$regex": "^Withdrawn: [0-9a-f-]{36} has left the yard[.] It left calmly[.] Outside now: \"Option B\""
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "name": "the marked one is taken back too",
+      "tool": "withdraw",
+      "args": {
+        "id": "Option B"
+      },
+      "expect": {
+        "$partial": true,
+        "isError": false
+      }
+    }
+  ]
+}

@@ -9,8 +9,11 @@ import { describe, expect, it } from "vitest";
 import { exchangeResponse } from "../mcp/server.ts";
 import { memoryAuditLog } from "../mesh/audit/log.ts";
 import { houseNode, selfOf } from "../mesh/pairing/testing/identities.ts";
+import { SettingStore } from "../show/store.ts";
+import { answeringConsole } from "../show/testing.ts";
 import { creatureHost } from "./host.ts";
 import { type CreatureMcp, creatureMcp } from "./mcp.ts";
+import { creatureYard } from "./mcp-yard.ts";
 import { messageGuard } from "./messages/guard.ts";
 import { defaultMessageLimits } from "./messages/message.ts";
 import { CreatureRegistry } from "./registry.ts";
@@ -41,7 +44,7 @@ describe.skipIf(vibrissa === undefined || !existsSync(cli))("vibrissa's contract
 ${failure.stdout ?? ""}
 ${failure.stderr ?? ""}`);
       });
-      expect(stdout).toContain("5 cases: 5 passed");
+      expect(stdout).toContain("11 cases: 11 passed");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -60,6 +63,9 @@ async function servedPip(): Promise<CreatureMcp> {
   const sessions = new FakeCreatureSessions(() => at);
   const host = creatureHost({ registry, sessions, now: () => at });
   await host.create({ name: "Pip" });
+  const desk = answeringConsole();
+  const settings = new SettingStore({ emit: desk.emit });
+  desk.answerTo(settings);
   return creatureMcp({
     creatures: host,
     conversation: async () => ({
@@ -79,6 +85,7 @@ async function servedPip(): Promise<CreatureMcp> {
     self: async () => selfOf(houseNode),
     machine: () => "house",
     version: "0.0.0-vibrissa",
+    yard: creatureYard(settings),
   });
 }
 

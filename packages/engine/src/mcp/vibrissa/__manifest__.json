@@ -10,8 +10,169 @@
       "listChanged": false
     }
   },
-  "instructions": "pip is a creature on a stead node. Ask it in plain words; it answers when it next works. Your words are a note in its conversation: they start no work and grant nothing.",
+  "instructions": "pip is a creature on a stead node. Ask it in plain words; it answers when it next works. Your words are a note in its conversation: they start no work and grant nothing. On this machine you may also set out windows through it: show, arrange, shown and withdraw set things out beside pip's conversation or in windows of their own. The tools were written for pip and are lent to you as they are, so read their \"you\", \"yours\", \"this conversation\" and \"this thread\" as pip and everything out through it, what you set out included. On the keeper's screen each thing you set out carries a small square in one colour kept for your client's name, and that name, never pip's. The tools move only the console's own windows, never take focus, count against pip's limits, and pip and its keeper are told. In the tools' words the keeper is the person pip works with, the console is the keeper's app, the yard is the space around pip's conversation there, a setting is one thing set out, a mark is a word or two the keeper reads on it, and the stage is the room the console gives windows outside, a 12 by 12 lattice. One show sets out several things when what is a list, and titles name things everywhere an id does.",
   "tools": [
+    {
+      "name": "arrange",
+      "description": "Here \"you\" is pip, the creature you work through. Arrange the windows you have outside, at any sizes in any combination. Say it one of three ways: a shape by name, {shape: \"lead-and-stack\", lead: \"<id>\"}; how the things relate, {relation: \"alternatives\"}, and the console lays them out; or a seat for each pane, {seats: [{id: \"<id>\", seat: \"left-two-thirds\"}, {id: \"<id>\", seat: \"right-third\"}]}. With none of the three the console chooses, and lead with side says who has the large seat and where: {lead: \"<id>\", side: \"right\"}. {back: true} puts your windows back in the seats they had before your last arrangement, and again to go further. {seats: {\"<id>\": \"center\"}, rest: \"beside\"} leaves one pane standing alone. panes says which things, and leaving it out means everything you have outside; naming something still beside the conversation moves it outside, and panes \"all\" names everything you have out. A shape or a relation re-lays every pane it names, and when you name only some they take the stage while the rest step back beside the conversation as cards, still out, until you name them again; seats move only the panes you seat, and the rest stay where they stand, so the answer tells you when windows now overlap. The console snaps seats to halves, thirds and quarters of the stage (lines 0, 3, 4, 6, 8, 9 and 12), may correct them and leaves alone what the keeper has placed, and the answer says where everything now stands. Once you have composed seats by hand the console keeps them, and a later show finds room around them or waits as a card until you arrange again. mark changes the word or two the keeper reads on a pane, {mark: {\"<id>\": \"chosen\"}}, alone or with any arrangement, and moves nothing by itself. Name panes by id or by title everywhere. At most twelve arrangements a minute.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "panes": {
+            "description": "Which things to arrange, in the order they should read: each by its id, or by the ref or title you showed it with. Leave it out for everything you have outside, or say \"all\" for everything you have out, beside the conversation too.",
+            "anyOf": [
+              {
+                "minItems": 1,
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            ]
+          },
+          "shape": {
+            "description": "A layout by name: grid (equal seats), columns (tall, side by side), rows (wide, stacked), lead-and-cards (one large, the rest as cards around it), lead-and-stack (one large beside a column of the rest), split (two large side by side, the rest as cards beneath) or board (columns of cards, for tasks).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": [
+              "grid",
+              "columns",
+              "rows",
+              "lead-and-cards",
+              "lead-and-stack",
+              "split",
+              "board"
+            ]
+          },
+          "relation": {
+            "description": "How the things relate, leaving the layout to the console: sequence, alternatives, tasks or notes.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["sequence", "alternatives", "tasks", "notes"]
+          },
+          "seats": {
+            "description": "A seat for each pane you place, as {\"<id or title>\": seat} or [{id, seat}], with seats written as in show: a named seat, lattice lines, or {x, y, w, h}.",
+            "anyOf": [
+              {
+                "minItems": 1,
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "seat": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["id", "seat"],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "lead": {
+            "description": "The pane that should have the large seat.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "side": {
+            "description": "Where the lead stands when the console lays the panes out: left (the default), right, top or bottom. The rest take the other side. It goes with a shape, a relation or neither, and with or without lead: unnamed, the first pane leads.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["left", "right", "top", "bottom"]
+          },
+          "mark": {
+            "description": "The word or two the keeper reads on a pane, by its id or title: {\"<id>\": \"chosen\"}. An empty string or null clears it. It goes alone, or with any arrangement.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 24
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "rest": {
+            "description": "What becomes of your other windows outside, the ones this arrangement does not name: stay (the default with seats) leaves them where they stand; beside steps them back beside the conversation as cards, still out, so the panes you name stand alone.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["stay", "beside"]
+          },
+          "back": {
+            "description": "true puts your windows back in the seats they had before your last arrangement, wherever those seats came from: the way back after you rearranged. Say it again to go back further. It goes alone or with a mood.",
+            "type": "boolean"
+          },
+          "over": {
+            "description": "room (the default) arranges on the stage, the room beside the console; display arranges across the whole screen, where your windows may stand over the console. Say display when the keeper speaks of the screen, as in \"a quarter of the screen\".",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["room", "display"]
+          },
+          "mood": {
+            "description": "How the panes move into place, as motion only: one of show's moods, brisk when left out. The answer names the mood it moved with.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     {
       "name": "ask",
       "description": "Leave pip a note in plain words, or poll an earlier ask by its handle. The note starts no work and carries no approval; pip answers when it next works, and the answer comes back on a poll.",
@@ -54,11 +215,321 @@
       }
     },
     {
+      "name": "show",
+      "description": "Here \"you\" is pip, the creature you work through. Set something out for the keeper to see: a file, a diff, a report, a thread, a chore, a link or a short note. It sits beside this conversation, or with where outside it stands in a window of its own. {what: {kind: \"file\", ref: \"docs/plan.md\"}, where: \"outside\"} is enough, and the console picks the seat; add seat: \"left-half\" to pick it yourself. To set out several at once, give what a list, {what: [{kind: \"note\", title: \"Plan A\", ref: \"...\"}, {kind: \"note\", title: \"Plan B\", ref: \"...\"}], where: \"outside\"}: they arrive together, each thing may carry its own seat, why, weight, from and mark, and the answer says where each stands. A note's words are markdown, so headings, lists, checklists and tables render. Beside the conversation, rung and size apply; outside, the seat decides: a seat you name overrides size and weight, and when the console chooses, weight says who gets the large seat. A size applies the first time the setting opens, the yard may still show less, and it cannot be changed later. Showing the same thing again replaces what you set out before and keeps its place; a note with the same title is the same thing, so that is how you change its words, and the id it had before still names it. Whatever you leave out the second time stays as it was: its place, rung, size, weight, mark, why and when it goes. A mark is a word or two the keeper reads as a highlighted tag beside its title for as long as it is out, such as chosen, draft or done; arrange changes it later. It stays until the keeper has seen it, until this thread rests, or for a time you name. Name from when it grows out of something already in view: a setting you set out, by its id (every answer names it) or its title, or a thread of yours such as one you delegated. Outside, it arises from that pane, and with weight lead it drills in: it takes the large seat, its parent steps aside, withdraw steps back out, and arrange with its parent as lead steps back out and keeps it. At most a hundred settings an hour, and twelve of yours outside at once.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "what": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["file", "diff", "report", "thread", "chore", "url", "note"],
+                    "description": "file, diff, report, thread, chore, url or note: what you set out."
+                  },
+                  "ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "Which one: a workspace path for a file, a change-set id for a diff, a report id, a session id for a thread, a chore id, a url, or the note's own words (at most 2000 characters, read as markdown)."
+                  },
+                  "title": {
+                    "description": "A short title for the card; the yard names it from ref when left out.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "seat": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "why": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "weight": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "enum": ["lead", "support", "aside"]
+                  },
+                  "from": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "mark": {
+                    "type": "string",
+                    "maxLength": 24
+                  }
+                },
+                "required": ["kind", "ref"],
+                "additionalProperties": false
+              },
+              {
+                "minItems": 1,
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": ["file", "diff", "report", "thread", "chore", "url", "note"]
+                    },
+                    "ref": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "seat": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "why": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "weight": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80,
+                      "enum": ["lead", "support", "aside"]
+                    },
+                    "from": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mark": {
+                      "type": "string",
+                      "maxLength": 24
+                    }
+                  },
+                  "required": ["kind", "ref"],
+                  "additionalProperties": false
+                }
+              }
+            ],
+            "description": "The thing to set out, or a list of up to twelve to set out together, each written as one thing is. A thing may carry its own seat, why, weight, from and mark, written as the call's are, and takes the call's for whatever it leaves out."
+          },
+          "why": {
+            "description": "One sentence the keeper reads with it: why this matters now.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "where": {
+            "description": "beside (the default) keeps it beside the conversation; outside gives it a window of its own.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["beside", "outside"]
+          },
+          "seat": {
+            "description": "Where it stands outside, on the stage's 12 by 12 lattice: a named seat (full, left-half, right-half, top-half, bottom-half, left-third, middle-third, right-third, left-two-thirds, right-two-thirds, left-quarter, right-quarter, left-three-quarters, right-three-quarters, middle-half, top-left, top-right, bottom-left, bottom-right, center, top-third, bottom-third), lattice lines such as \"columns 4 to 8, rows 0 to 6\" (0 is the left and top edge, 12 the right and bottom), or {x, y, w, h}. Halves, thirds and quarters run the full height, the four corners are a quarter of the stage each, center is the middle half of each way, and seats snap to halves, thirds and quarters (lines 0, 3, 4, 6, 8, 9 and 12). Naming a seat puts it outside; leave it out and the console chooses, re-laying the windows it chose seats for as more arrive.",
+            "anyOf": [
+              {
+                "type": "string",
+                "examples": ["left-half", "top-right", "columns 4 to 8, rows 0 to 6"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 11
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 11
+                  },
+                  "w": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  },
+                  "h": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  }
+                },
+                "required": ["x", "y", "w", "h"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "weight": {
+            "description": "How much room it should have among your windows: lead, support or aside. With from, lead drills in.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["lead", "support", "aside"]
+          },
+          "mood": {
+            "description": "How it arrives, and later leaves, as motion only: calm (slow and soft), brisk (the default, plain), eager (quick, close together), playful (out of turn, in a rhythm), urgent (all at once, fast), decisive (all at once, landing firmly) or tentative (a little slow, one at a time with pauses, landing lightly). The answer names the mood it arrived with.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"]
+          },
+          "mark": {
+            "description": "A word or two the keeper reads on it while it is out, such as \"chosen\", \"draft\" or \"done\". arrange changes or clears it later.",
+            "type": "string",
+            "maxLength": 24
+          },
+          "rung": {
+            "description": "Beside the conversation, how much of the keeper's attention you propose: lantern (a mark to look at when ready), card (the default), unfold (open beside the conversation) or stage (the whole view).",
+            "type": "string",
+            "enum": ["lantern", "card", "unfold", "stage"]
+          },
+          "size": {
+            "description": "How large it opens: card for a glance, readable for reading, working for something the keeper will work in.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["card", "readable", "working"]
+          },
+          "until": {
+            "examples": ["seen", "rests", "10 minutes", "2026-11-08T10:00:00-06:00"],
+            "description": "When it goes: seen (the default: it stays until the keeper marks it seen or dismisses it, however long that takes), rests (when this thread rests), a time from now such as \"10 minutes\" or \"2 hours\", or an ISO 8601 date-time with its offset.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "from": {
+            "description": "What it grows from: a setting you set out that is still out, by its id or its title, or a thread of yours such as one you delegated. Leave it out for something new.",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["what"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "shown",
+      "description": "Here \"you\" is pip, the creature you work through. List what is out, beside this conversation and outside in windows of their own, whoever set it out: what you set out and what the keeper opened. Each setting is one line of JSON with id, what, rung, size, weight, why, state, at, until, from, origin, where, seat, by and sometimes note, mark, agent and square. rung, size and weight are what was proposed, state is live or pinned, and origin is creature for what you set out and keeper for what the keeper opened. where is where it stands now: beside the conversation, outside, or inside when the keeper brought it into the console. seat is its place outside, written as show takes it (\"left-half\", or \"columns 4 to 8, rows 0 to 6\"). by is who put it there last, creature, keeper or console, and is absent until the console has reported; what the keeper placed is the keeper's. note is the console's reason when it has one, such as no room outside. mark is the word or two the keeper reads on it, set with show or arrange. agent names the agent that set the thing out, your client or another, with square the colour of the square the keeper sees on it, one colour to each agent; it counts against your limits, and it is yours to withdraw. When windows outside overlap, a line names the pairs. A last line tells the stage once the console has reported it: which room it is (beside the console, over its far side, or the whole display) and how many of the smallest seats fit across and down, so you can judge the room before you compose; whatever fits, at most twelve of yours stand outside at once. Use the ids with show's from, with arrange, or with withdraw for what is still yours to take back.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "status",
       "description": "Where pip is now: working, at the porch (waiting on its keeper), back (a delivery is in), idle, or paused.",
       "inputSchema": {
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "withdraw",
+      "description": "Here \"you\" is pip, the creature you work through. Take back what you set out, beside this conversation or outside. Name the id show answered with or one from shown, or the ref or title you showed it with; give a list to take back several, or \"all\" with except to clear everything but what you name. It refuses what the keeper pinned, what the keeper opened and anything that is not yours, because the keeper disposes. What grew from a setting stays out when you take it back, and withdrawing a pane that drilled in steps back out: its parent takes its seat again. mood says how it leaves. When what you take back stood outside, the answer waits a moment for the console, so shown is true straight after.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "minItems": 1,
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
+            ],
+            "description": "What to take back: an id, or the ref or title you showed it with. A list takes back several, and \"all\" takes back everything of yours that is out."
+          },
+          "except": {
+            "description": "With id \"all\", what stays out: ids, refs or titles.",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "minItems": 1,
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
+            ]
+          },
+          "mood": {
+            "description": "How it leaves, as motion only: one of show's moods. Leave it out and it leaves in the mood it arrived with.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "enum": ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"]
+          }
+        },
+        "required": ["id"],
         "additionalProperties": false
       }
     }
@@ -68,7 +539,8 @@
   "prompts": [],
   "listMeta": {
     "tools": {
-      "ttlMs": 3600000
+      "ttlMs": 3600000,
+      "cacheScope": "private"
     }
   }
 }

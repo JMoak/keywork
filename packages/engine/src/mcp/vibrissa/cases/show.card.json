@@ -1,0 +1,26 @@
+{
+  "name": "show: a note set out in the creature's name is a card beside its conversation, and answers its id",
+  "tool": "show",
+  "args": {
+    "what": {
+      "kind": "note",
+      "ref": "the build is green"
+    }
+  },
+  "expect": {
+    "content": [
+      {
+        "type": "text",
+        "text": {
+          "$regex": "^Set out as a card; the yard decides whether it unfolds[.] It stays until the keeper has seen it[.]( The keeper sees it marked with a (cyan|magenta|green|yellow|blue) square as (vibrissa's|an agent's)[.])? To set out what grows from it, name [0-9a-f-]{36} as from[.]$"
+        }
+      }
+    ],
+    "structuredContent": {
+      "id": {
+        "$type": "string"
+      }
+    },
+    "isError": false
+  }
+}

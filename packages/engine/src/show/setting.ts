@@ -1,3 +1,6 @@
+import type { ShowArranged } from "./arrangement.ts";
+import type { Seat } from "./seat.ts";
+
 export const settingKinds = ["file", "diff", "report", "thread", "chore", "url", "note"] as const;
 
 export type SettingKind = (typeof settingKinds)[number];
@@ -16,9 +19,29 @@ export type SettledBy = "keeper" | "creature" | "time";
 
 export type SettingState = "live" | "seen" | "pinned" | "dismissed" | "withdrawn";
 
-export const settingSizes = ["readable", "working"] as const;
+export const settingSizes = ["card", "readable", "working"] as const;
 
 export type SettingSize = (typeof settingSizes)[number];
+
+export const settingPlaces = ["beside", "outside"] as const;
+
+export type SettingPlace = (typeof settingPlaces)[number];
+
+export const settingWeights = ["lead", "support", "aside"] as const;
+
+export type SettingWeight = (typeof settingWeights)[number];
+
+export const moods = [
+  "calm",
+  "brisk",
+  "eager",
+  "playful",
+  "urgent",
+  "decisive",
+  "tentative",
+] as const;
+
+export type Mood = (typeof moods)[number];
 
 export const settingOrigins = ["creature", "keeper"] as const;
 
@@ -31,6 +54,19 @@ export interface SettingWhat {
   ref: string;
   title?: string;
 }
+
+export const agentColors = ["cyan", "magenta", "green", "yellow", "blue"] as const;
+
+export type AgentColor = (typeof agentColors)[number];
+
+export interface SettingAgent {
+  name?: string;
+  color?: AgentColor;
+}
+
+export const agentNameLength = 40;
+
+export const markLength = 24;
 
 export interface Setting {
   id: string;
@@ -46,6 +82,12 @@ export interface Setting {
   origin: SettingOrigin;
   replaces: string | null;
   size?: SettingSize;
+  where?: SettingPlace;
+  seat?: Seat;
+  weight?: SettingWeight;
+  mood?: Mood;
+  agent?: SettingAgent;
+  mark?: string;
 }
 
 export interface ShowProposed {
@@ -56,11 +98,18 @@ export interface ShowSettled {
   id: string;
   outcome: SettledOutcome;
   by: SettledBy;
+  mood?: Mood;
+}
+
+export interface ShowChanged {
+  setting: Setting;
 }
 
 export interface ShowEvents {
   "show.proposed": ShowProposed;
+  "show.changed": ShowChanged;
   "show.settled": ShowSettled;
+  "show.arranged": ShowArranged;
 }
 
 export type ShowEventType = keyof ShowEvents;

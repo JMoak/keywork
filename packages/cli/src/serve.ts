@@ -610,7 +610,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     }),
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
     creatures,
-    ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh }),
+    ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh, settings: shown.settings }),
     ...(routines !== undefined && { routines: routines.service }),
     models: refreshableModels(node.models, options.refreshInference),
     campaigns,
