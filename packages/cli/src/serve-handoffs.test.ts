@@ -37,10 +37,10 @@ describe("hand-offs under keywork serve", () => {
       await first.call("POST", "/creatures", { name: "Hal" });
       const { conversation } = await first.call<{ conversation: string }>("GET", "/creatures/lark");
       await first.host.prompt(conversation, "tell hal where the docs are");
+      // A turn that has only just been asked for is not yet marked as working, so waiting for
+      // "not working" can return before it starts. Wait for the count, then for the turn to end.
+      counted = await first.counted();
       await first.settled(conversation);
-
-      counted = (await first.call<{ handoffs: CreatureHandoff[] }>("GET", "/creature-handoffs"))
-        .handoffs;
       expect(counted).toEqual([{ from: "lark", to: "hal", count: 1, lastAt: expect.any(String) }]);
       expect(first.handoffEvents()).toEqual([{ change: "counted", handoff: counted[0] }]);
     } finally {
@@ -108,10 +108,19 @@ async function steadAt(place: SteadPlace, provider: Provider) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
+  const counted = async (): Promise<CreatureHandoff[]> => {
+    const deadline = Date.now() + waitLimitMs;
+    for (;;) {
+      const { handoffs } = await call<{ handoffs: CreatureHandoff[] }>("GET", "/creature-handoffs");
+      if (handoffs.length > 0 || Date.now() > deadline) return handoffs;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
   return {
     host,
     call,
     settled,
+    counted,
     handoffEvents: () =>
       log
         .since(0)
