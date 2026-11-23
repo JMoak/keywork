@@ -1,4 +1,4 @@
-export const contractVersion = "1.37";
+export const contractVersion = "1.38";
 
 export function contractMajorOf(contract: string): number {
   return Number.parseInt(contract.split(".")[0] ?? "", 10);

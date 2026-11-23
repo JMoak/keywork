@@ -8,12 +8,12 @@ import {
   type SeatedPane,
   sharedNameWords,
 } from "../show/arrangement.ts";
-import { markOf } from "../show/input.ts";
+import { type MarkSaid, markOf, markSaidInput, toneSaidOf } from "../show/input.ts";
 import { quotedNameOf, saidOnOneLine } from "../show/naming.ts";
 import type { PlacementsReport } from "../show/placements.ts";
 import { Reading } from "../show/reading.ts";
 import { seatWrittenInput } from "../show/seat.ts";
-import { markLength, type Setting, type SettingSignal } from "../show/setting.ts";
+import type { Setting, SettingSignal } from "../show/setting.ts";
 import { overlapWords, standingWords } from "../show/standing.ts";
 import type { Marking, Signalled, Signalling } from "../show/store.ts";
 import {
@@ -26,6 +26,8 @@ import {
   shapeWords,
   sideWords,
   signalWords,
+  tonesDescribed,
+  toneWords,
 } from "../show/vocabularies.ts";
 import { quoted, wordInput } from "../show/words.ts";
 import type { Tool } from "../tools.ts";
@@ -38,7 +40,7 @@ export function arrangeTool(target: ShowTarget): Tool {
   return defineTool({
     name: arrangeToolName,
     description:
-      'Arrange the windows you have outside, at any sizes in any combination. This is IDE control over the console\'s own windows, never the computer; it never takes focus and asks for no permission. Say it one of three ways: a shape by name, {shape: "lead-and-stack", lead: "<id>"}; how the things relate, {relation: "alternatives"}, and the console lays them out; or a seat for each pane, {seats: [{id: "<id>", seat: "left-two-thirds"}, {id: "<id>", seat: "right-third"}]}. With none of the three the console chooses, and lead with side says who has the large seat and where: {lead: "<id>", side: "right"}. {back: true} puts your windows back in the seats they had before your last arrangement, and again to go further. {seats: {"<id>": "center"}, rest: "beside"} leaves one pane standing alone. panes says which things, and leaving it out means everything you have outside; naming something still beside the conversation moves it outside, and panes "all" names everything you have out. A shape or a relation re-lays every pane it names, and when you name only some they take the stage while the rest step back beside the conversation as cards, still out, until you name them again; seats move only the panes you seat, and the rest stay where they stand, so the answer tells you when windows now overlap. The console snaps seats to halves, thirds and quarters of the stage (lines 0, 3, 4, 6, 8, 9 and 12), may correct them and leaves alone what the keeper has placed, and the answer says where everything now stands. Once you have composed seats by hand the console keeps them, and a later show finds room around them or waits as a card until you arrange again. mark changes the word or two the keeper reads on a pane, {mark: {"<id>": "chosen"}}, and signal raises or lowers its outline, {signal: {"<id>": "needs-you"}}, or {signal: {"<id>": "critical"}, why: "<what is wrong>"}, with null to lower it; either goes alone or with any arrangement, and moves nothing by itself. Name panes by id or by title everywhere. At most twelve arrangements a minute.',
+      'Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {"<id or title>": "left-two-thirds"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and "all" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {"<id>": "done"}} or {mark: {"<id>": {text: "done", tone: "good"}}}, and signal raises or lowers its outline; either can go alone. It moves only the app\'s own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.',
     schema: arrangeArgs,
     run: async (args) => {
       const settings = target.settings();
@@ -46,7 +48,8 @@ export function arrangeTool(target: ShowTarget): Tool {
       const reading = new Reading();
       const ask = askOf(args, reading);
       if (reading.problem !== undefined) return `Not arranged: ${reading.problem}.`;
-      const marks = marksOf(args.mark, settings, target);
+      const marks = marksOf(args.mark, settings, target, reading);
+      if (reading.problem !== undefined) return `Not arranged: ${reading.problem}.`;
       if (typeof marks === "string") return `Not arranged: ${marks}.`;
       const signals = signalsOf(args.signal, settings, target, reading);
       if (reading.problem !== undefined) return `Not arranged: ${reading.problem}.`;
@@ -113,10 +116,10 @@ const arrangeArgs = z
         "Where the lead stands when the console lays the panes out: left (the default), right, top or bottom. The rest take the other side. It goes with a shape, a relation or neither, and with or without lead: unnamed, the first pane leads.",
       ),
     mark: z
-      .record(paneInput, z.string().trim().max(markLength).nullable())
+      .record(paneInput, markSaidInput.nullable())
       .optional()
       .describe(
-        'The word or two the keeper reads on a pane, by its id or title: {"<id>": "chosen"}. An empty string or null clears it. It goes alone, or with any arrangement.',
+        `The word or two on a window, by its id or title: {"<id>": "chosen"}, or with a tone (${tonesDescribed}), {"<id>": {text: "chosen", tone: "good"}}. An empty string or null clears it.`,
       ),
     signal: z
       .record(paneInput, signalInput)
@@ -320,6 +323,7 @@ function marksOf(
   asked: ArrangeArgs["mark"],
   settings: ShowSettings,
   target: ShowTarget,
+  reading: Reading,
 ): Marking[] | string {
   if (asked === undefined) return [];
   const mine = ownPanes(settings, target);
@@ -331,16 +335,25 @@ function marksOf(
         sharedNameWords(said, mine) ??
         `mark names ${quoted(said)}, and nothing you set out is out as that; shown lists what is out`
       );
-    marks.push({ id, mark: markOf(words) });
+    const tone = reading.word("tone", toneWords, toneSaidOf(words));
+    const before = mine.find(({ setting }) => setting.id === id)?.setting.mark;
+    const mark = markOf(words) ?? (onlyATone(words) ? before : undefined);
+    if (onlyATone(words) && mark === undefined)
+      return `a tone colours a mark, and ${quoted(said)} has none; give the mark's text with it`;
+    marks.push({ id, mark, tone });
   }
   return marks;
 }
 
+function onlyATone(words: MarkSaid | null): boolean {
+  return typeof words === "object" && words !== null && words.text === undefined;
+}
+
 function markedWords(marked: readonly Setting[]): string {
-  const each = marked.map(({ what, mark }) =>
+  const each = marked.map(({ what, mark, markTone }) =>
     mark === undefined
       ? `${quotedNameOf(what)} carries no mark now`
-      : `the keeper reads ${JSON.stringify(mark)} on ${quotedNameOf(what)}`,
+      : `the keeper reads ${JSON.stringify(mark)}${markTone === undefined ? "" : `, in ${markTone},`} on ${quotedNameOf(what)}`,
   );
   return `Marked: ${each.join("; ")}.`;
 }

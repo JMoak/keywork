@@ -1,6 +1,7 @@
 import type { PromptOrigin, SendBehavior } from "@keywork/engine";
 import {
   bodyOf,
+  endedConversation,
   fieldsOf,
   type JsonSchema,
   json,
@@ -82,6 +83,7 @@ export const sessionRoutes = [
         'The prompt was accepted; `queued` says whether it waits behind a running turn, and with `behavior: "now"`, `setAside` lists the prompts taken off the queue as `queue.changed` carried them. Watch /events for the turn.',
       "400": 'The body is not `{ text, behavior?: "steer" | "queue" | "now" }`.',
       "404": "No session has that id.",
+      "409": "The session is a ledger conversation that has ended, so it takes no prompt.",
     },
   },
   {
@@ -96,6 +98,7 @@ export const sessionRoutes = [
       "202": "The prompt was accepted; `queued` is true when it waits behind a running turn.",
       "400": "The body is not `{ text, client, frame?: { creature } }`.",
       "404": "No session has that id.",
+      "409": "The session is a ledger conversation that has ended, so it takes no prompt.",
     },
   },
   {
@@ -130,6 +133,7 @@ export const sessionFamily = {
       const setAside = prompt.behavior === "now" ? await host.queue.setAside(id ?? "") : undefined;
       if (setAside === "missing") return missingSession();
       const outcome = await host.prompt(id ?? "", prompt.text, sendBehaviorOf(prompt.behavior));
+      if (outcome === "ended") return endedConversation();
       return outcome === "missing"
         ? missingSession()
         : json(202, {
@@ -148,6 +152,7 @@ export const sessionFamily = {
         });
       }
       const outcome = await host.inject(id ?? "", injection.text, originOf(injection, id ?? ""));
+      if (outcome === "ended") return endedConversation();
       return outcome === "missing"
         ? missingSession()
         : json(202, { sessionId: id, accepted: true, queued: outcome === "queued" });

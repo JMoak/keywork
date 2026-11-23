@@ -4,6 +4,7 @@ import {
   type CreatureLedgerChange,
   type CreatureLedgerEntry,
   type CreatureLedgerView,
+  createTailnet,
   type LedgerThread,
   MockProvider,
   type PermissionResolver,
@@ -17,6 +18,9 @@ import { createKeyworkServer, EventLog } from "@keywork/server";
 import { toError } from "@keywork/shared";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
+import { pingFailure } from "../../engine/src/mesh/transport/ping.ts";
+import { parseStatus } from "../../engine/src/mesh/transport/status.ts";
+import { recordedText } from "../../engine/src/mesh/transport/testing/recorded.ts";
 import { servedHost } from "./serve.ts";
 import { ledgeredCreatures } from "./serve-ledger.ts";
 
@@ -73,6 +77,7 @@ describe("a creature's ledger under keywork serve", () => {
         closedAt: null,
         answer: null,
         about: { kind: "ask", callId: "w1", tool: "write" },
+        conversation: null,
       });
       await first.call("POST", "/asks/w1", { verdict: "granted", scope: "once" });
       await first.settled(conversation);
@@ -97,6 +102,7 @@ describe("a creature's ledger under keywork serve", () => {
         directory: place.cwd,
         session: run.sessionId,
         about: { kind: "chore", routineId: "triage", runId: run.runId },
+        conversation: null,
       });
       const { entry: seen } = await first.call<{ entry: CreatureLedgerEntry }>(
         "POST",
@@ -124,6 +130,7 @@ describe("a creature's ledger under keywork serve", () => {
         directory: place.cwd,
         session: null,
         about: { kind: "grants", routineId: "stamp" },
+        conversation: null,
       });
 
       kept = await first.ledger();
@@ -166,6 +173,84 @@ describe("a creature's ledger under keywork serve", () => {
       expect((await second.fetch("GET", "/creatures/pip/ledger")).status).toBe(404);
       await second.call("POST", "/creatures", { name: "Pip" });
       expect(await second.ledger()).toEqual({ creature: "pip", entries: [], folded: 0 });
+    } finally {
+      await second.close();
+    }
+  });
+});
+
+describe("a short conversation about one ledger entry", () => {
+  it("opens once, ends when its question is answered, then refuses a prompt, also after a restart", async () => {
+    const place = await steadPlace();
+    const first = await steadAt(
+      place,
+      new MockProvider([
+        toolCallTurn({
+          type: "tool-call",
+          callId: "w1",
+          name: "write",
+          arguments: { path: "plan.md", content: "the plan\n" },
+        }),
+        textTurn("It writes plan.md and nothing else."),
+        textTurn("Wrote the plan."),
+      ]),
+      () => "ask",
+    );
+    let talk: string;
+    let asked: CreatureLedgerEntry;
+    try {
+      await first.call("POST", "/creatures", { name: "Pip" });
+      const { conversation } = await first.call<{ conversation: string }>("GET", "/creatures/pip");
+      await first.host.prompt(conversation, "write the plan");
+      asked = await first.entryWhere((entry) => entry.about.kind === "ask");
+      const about = `/creatures/pip/ledger/${asked.id}/conversation`;
+
+      const opened = await first.call<{ entry: CreatureLedgerEntry }>("POST", about);
+      talk = opened.entry.conversation?.session ?? "";
+      await first.settled(talk);
+      const again = await first.call<{ entry: CreatureLedgerEntry }>("POST", about);
+
+      expect(again.entry.conversation).toEqual(opened.entry.conversation);
+      expect(opened.entry.conversation).toMatchObject({ state: "open", endedBy: null });
+      expect(await first.call("GET", `/sessions/${talk}`)).toMatchObject({
+        ledgerEntry: { creature: "pip", id: asked.id },
+      });
+
+      await first.call("POST", "/asks/w1", { verdict: "granted", scope: "once" });
+      const ended = await first.entryWhere(
+        (entry) => entry.id === asked.id && entry.conversation?.state === "ended",
+      );
+      await first.settled(conversation);
+
+      expect(ended.conversation).toMatchObject({ session: talk, endedBy: "answer" });
+      expect(
+        (await first.fetch("POST", `/sessions/${talk}/prompt`, { text: "one more" })).status,
+      ).toBe(409);
+      const pip = await first.call<{ threads: { id: string }[] }>("GET", "/creatures/pip");
+      expect(pip.threads.map(({ id }) => id)).not.toContain(talk);
+      const main = await first.call<{ reports: { text: string }[] }>(
+        "GET",
+        `/sessions/${conversation}`,
+      );
+      expect(main.reports.map(({ text }) => text)).toContain(
+        'The conversation about "Allow write plan.md?" ended: the keeper allowed it.',
+      );
+    } finally {
+      await first.close();
+    }
+
+    const second = await steadAt(place, new MockProvider([]));
+    try {
+      const kept = await second.entryWhere((entry) => entry.id === asked.id);
+      expect(kept.conversation).toMatchObject({ session: talk, state: "ended" });
+      expect(
+        (await second.fetch("POST", `/sessions/${talk}/prompt`, { text: "still there?" })).status,
+      ).toBe(409);
+      const reopened = await second.call<{ entry: CreatureLedgerEntry }>(
+        "POST",
+        `/creatures/pip/ledger/${asked.id}/conversation`,
+      );
+      expect(reopened.entry.conversation?.session).toBe(talk);
     } finally {
       await second.close();
     }
@@ -221,6 +306,18 @@ async function steadPlace(): Promise<SteadPlace> {
   return { cwd, sessionDir: await tempDir(), userRoot: await tempDir() };
 }
 
+// A served stead reads this machine's tailnet identity, and a machine without Tailscale has none,
+// so the stead is given a recorded tailnet and the test depends on nothing installed where it runs.
+function recordedTailnet() {
+  return createTailnet({
+    name: "recorded",
+    status: async () => parseStatus(recordedText("status-running")),
+    whois: async () => null,
+    ping: async () => pingFailure("unused"),
+    serve: async () => ({ serving: false, funnel: [] }),
+  });
+}
+
 async function steadAt(
   place: SteadPlace,
   provider: Provider,
@@ -231,6 +328,7 @@ async function steadAt(
     ...place,
     projectTrusted: true,
     provider,
+    tailnet: recordedTailnet(),
     permissions,
     checkpoints: "off",
     log,

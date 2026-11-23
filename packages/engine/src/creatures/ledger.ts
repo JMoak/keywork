@@ -41,7 +41,35 @@ export interface CreatureLedgerEntry {
   closedAt: string | null;
   answer: QuestionAnswer | null;
   about: CreatureLedgerAbout;
+  conversation: LedgerConversation | null;
 }
+
+export type LedgerConversationState = "open" | "ended";
+
+export type LedgerConversationEnd = "answer" | "keeper";
+
+export interface LedgerConversation {
+  session: string;
+  state: LedgerConversationState;
+  openedAt: string;
+  endedAt: string | null;
+  endedBy: LedgerConversationEnd | null;
+}
+
+export interface LedgerConversationEnding {
+  creature: string;
+  entry: CreatureLedgerEntry;
+  conversation: LedgerConversation;
+}
+
+export type LedgerConversationOutcome =
+  | CreatureLedgerEntry
+  | "missing-creature"
+  | "missing-entry"
+  | "already-answered"
+  | "no-conversation";
+
+export type ConversationOpener = (creature: string, entry: CreatureLedgerEntry) => Promise<string>;
 
 export interface CreatureLedgerView {
   creature: string;
@@ -68,6 +96,8 @@ export interface CreatureLedgerPort {
   read(creature: string): Promise<CreatureLedgerView | undefined>;
   seen(creature: string, id: string): Promise<LedgerSeenOutcome>;
   subscribe(listener: (change: CreatureLedgerChange) => void): () => void;
+  converse?(creature: string, id: string): Promise<LedgerConversationOutcome>;
+  closeConversation?(creature: string, id: string): Promise<LedgerConversationOutcome>;
 }
 
 export interface LedgerAsk {
@@ -96,6 +126,12 @@ export interface ChoreFacts {
 }
 
 export interface CreatureLedger extends CreatureLedgerPort {
+  conversationAbout(
+    creature: string,
+    id: string,
+    opener: ConversationOpener,
+  ): Promise<LedgerConversationOutcome>;
+  endConversation(creature: string, id: string): Promise<LedgerConversationOutcome>;
   asked(ask: LedgerAsk): void;
   askSettled(session: string, callId: string, answer: QuestionAnswer): void;
   threadOpened(thread: LedgerThread): void;
@@ -114,6 +150,7 @@ export interface CreatureLedgerOptions {
   exists(creature: string): Promise<boolean>;
   chore?: ((creature: string, routineId: string) => Promise<ChoreFacts | undefined>) | undefined;
   notice(line: string): void;
+  conversationEnded?: ((ending: LedgerConversationEnding) => Promise<void>) | undefined;
   now?: (() => Date) | undefined;
   keepsClosed?: number | undefined;
 }
@@ -139,6 +176,8 @@ interface KeptEntry extends CreatureLedgerEntry {
   away: boolean;
 }
 
+type LedgerMissing = "missing-creature" | "missing-entry";
+
 interface CreatureRecord {
   entries: KeptEntry[];
   folded: number;
@@ -152,6 +191,8 @@ type Closing = Pick<KeptEntry, "state"> & Partial<Pick<KeptEntry, "title" | "ans
 class KeptCreatureLedger implements CreatureLedger {
   private readonly records: Map<string, CreatureRecord>;
   private readonly listeners = new Set<(change: CreatureLedgerChange) => void>();
+  private readonly conversing = new Map<string, Promise<LedgerConversationOutcome>>();
+  private readonly ending = new Set<string>();
   private readonly kept: KeptLedger;
   private readonly now: () => Date;
   private readonly keepsClosed: number;
@@ -190,6 +231,29 @@ class KeptCreatureLedger implements CreatureLedger {
   subscribe(listener: (change: CreatureLedgerChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  conversationAbout(
+    creature: string,
+    id: string,
+    opener: ConversationOpener,
+  ): Promise<LedgerConversationOutcome> {
+    const key = `${creature} ${id}`;
+    const inFlight = this.conversing.get(key);
+    if (inFlight !== undefined) return inFlight;
+    const opening = this.openConversation(creature, id, opener).finally(() =>
+      this.conversing.delete(key),
+    );
+    this.conversing.set(key, opening);
+    return opening;
+  }
+
+  async endConversation(creature: string, id: string): Promise<LedgerConversationOutcome> {
+    const found = await this.entryOf(creature, id);
+    if (typeof found === "string") return found;
+    if (found.conversation === null) return "no-conversation";
+    await this.endItsConversation(creature, found, "keeper");
+    return wireOf(found);
   }
 
   asked(ask: LedgerAsk): void {
@@ -302,6 +366,55 @@ class KeptCreatureLedger implements CreatureLedger {
     this.unfollow();
   }
 
+  private async openConversation(
+    creature: string,
+    id: string,
+    opener: ConversationOpener,
+  ): Promise<LedgerConversationOutcome> {
+    const found = await this.entryOf(creature, id);
+    if (typeof found === "string") return found;
+    if (found.conversation !== null) return wireOf(found);
+    if (found.kind === "question" && found.state === "answered") return "already-answered";
+    const session = await opener(creature, wireOf(found));
+    const conversation: LedgerConversation = {
+      session,
+      state: "open",
+      openedAt: this.now().toISOString(),
+      endedAt: null,
+      endedBy: null,
+    };
+    this.change(creature, found, { conversation });
+    return wireOf(found);
+  }
+
+  private async entryOf(creature: string, id: string): Promise<KeptEntry | LedgerMissing> {
+    if (!(await this.options.exists(creature))) return "missing-creature";
+    return this.records.get(creature)?.entries.find((each) => each.id === id) ?? "missing-entry";
+  }
+
+  private async endItsConversation(
+    creature: string,
+    entry: KeptEntry,
+    by: LedgerConversationEnd,
+  ): Promise<void> {
+    const open = entry.conversation;
+    if (open === null || open.state === "ended" || this.ending.has(entry.id)) return;
+    const conversation: LedgerConversation = {
+      ...open,
+      state: "ended",
+      endedAt: this.now().toISOString(),
+      endedBy: by,
+    };
+    this.ending.add(entry.id);
+    try {
+      const ended = { ...wireOf(entry), conversation };
+      await this.options.conversationEnded?.({ creature, entry: ended, conversation });
+    } finally {
+      this.ending.delete(entry.id);
+    }
+    this.change(creature, entry, { conversation });
+  }
+
   private drop(creature: string): void {
     if (!this.records.delete(creature)) return;
     this.kept.save(this.records);
@@ -316,6 +429,7 @@ class KeptCreatureLedger implements CreatureLedger {
       answer: null,
       parent: null,
       away: false,
+      conversation: null,
       ...opening,
     };
     record.entries.push(entry);
@@ -335,6 +449,7 @@ class KeptCreatureLedger implements CreatureLedger {
     this.kept.save(this.records);
     this.announce(creature, "changed", entry);
     for (const gone of folded) this.announce(creature, "folded", gone);
+    if (entry.state === "answered") void this.endItsConversation(creature, entry, "answer");
   }
 
   private markAway(session: string, away: boolean): void {
@@ -389,12 +504,30 @@ class KeptCreatureLedger implements CreatureLedger {
     const records = this.kept.load();
     const at = this.now().toISOString();
     let settled = false;
-    for (const record of records.values()) {
-      for (const entry of record.entries) settled = settleCutOff(entry, at) || settled;
+    for (const [creature, record] of records) {
+      for (const entry of record.entries) {
+        if (!settleCutOff(entry, at)) continue;
+        settled = true;
+        this.endedByTheStop(creature, entry, at);
+      }
       settled = foldBeyond(record, this.keepsClosed).length > 0 || settled;
     }
     if (settled) this.kept.save(records);
     return records;
+  }
+
+  private endedByTheStop(creature: string, entry: KeptEntry, at: string): void {
+    const open = entry.conversation;
+    if (entry.state !== "answered" || open === null || open.state === "ended") return;
+    const conversation: LedgerConversation = {
+      ...open,
+      state: "ended",
+      endedAt: at,
+      endedBy: "answer",
+    };
+    entry.conversation = conversation;
+    const ending = { creature, entry: wireOf(entry), conversation };
+    queueMicrotask(() => void this.options.conversationEnded?.(ending));
   }
 }
 
@@ -462,6 +595,7 @@ function wireOf(entry: KeptEntry): CreatureLedgerEntry {
     closedAt: entry.closedAt,
     answer: entry.answer,
     about: entry.about,
+    conversation: entry.conversation,
   };
 }
 
@@ -501,6 +635,14 @@ const keptAbout = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("thread") }),
 ]);
 
+const keptConversation = z.strictObject({
+  session: z.string().min(1),
+  state: z.enum(["open", "ended"]),
+  openedAt: moment,
+  endedAt: moment.nullable(),
+  endedBy: z.enum(["answer", "keeper"]).nullable(),
+});
+
 const keptEntry = z.strictObject({
   id: z.string().min(1),
   kind: z.enum(["question", "task"]),
@@ -514,6 +656,7 @@ const keptEntry = z.strictObject({
   closedAt: moment.nullable(),
   answer: z.enum(["granted", "denied", "lapsed"]).nullable(),
   about: keptAbout,
+  conversation: keptConversation.nullable().default(null),
 });
 
 const keptRecord = z.strictObject({
@@ -546,7 +689,7 @@ function keptLedger(file: string, notice: (line: string) => void): KeptLedger {
     },
     save: (records) => {
       try {
-        store.write({ version: keptVersion, creatures: Object.fromEntries(records) });
+        store.write({ version: keptVersion, creatures: keptFormOf(records) });
         lastSaveFailed = false;
       } catch (cause) {
         if (!lastSaveFailed) notice(unsavedWords(file, cause));
@@ -554,6 +697,21 @@ function keptLedger(file: string, notice: (line: string) => void): KeptLedger {
       }
     },
   };
+}
+
+function keptFormOf(records: ReadonlyMap<string, CreatureRecord>): Record<string, CreatureRecord> {
+  return Object.fromEntries(
+    [...records].map(([creature, { entries, folded }]) => [
+      creature,
+      { entries: entries.map(withoutAnUnusedConversation), folded },
+    ]),
+  );
+}
+
+function withoutAnUnusedConversation(entry: KeptEntry): KeptEntry {
+  if (entry.conversation !== null) return entry;
+  const { conversation: _none, ...kept } = entry;
+  return kept as KeptEntry;
 }
 
 function keptFileOf(data: unknown): z.infer<typeof keptFile> {

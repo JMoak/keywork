@@ -27,7 +27,7 @@ export interface PermissionDecision {
   note?: string;
 }
 
-export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted">;
+export type AskRule = Extract<PermissionGate, "policy" | "default" | "trusted"> | "always";
 
 export interface PermissionAsk {
   tool: string;

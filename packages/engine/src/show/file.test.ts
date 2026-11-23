@@ -31,6 +31,7 @@ const plan: Setting = {
   from: null,
   origin: "creature",
   replaces: null,
+  place: { kind: "workshop", creature: "wren" },
 };
 
 const opening: Setting = {

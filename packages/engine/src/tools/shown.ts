@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { placeSaid } from "../show/places.ts";
 import { seatAsWritten } from "../show/seat.ts";
 import type { Setting } from "../show/setting.ts";
 import { overlapWords, type StandingPicture, type Stood, stageWords } from "../show/standing.ts";
@@ -12,12 +13,12 @@ export function shownTool(target: ShowTarget): Tool {
   return defineTool({
     name: shownToolName,
     description:
-      "List what is out, beside this conversation and outside in windows of their own, whoever set it out: what you set out and what the keeper opened. This is IDE control over the console's own space, never the computer, and it changes nothing, so it asks for no permission. Each setting is one line of JSON with id, what, rung, size, weight, why, state, at, until, from, origin, where, seat, by and sometimes note, mark, signal, agent and square. rung, size and weight are what was proposed, state is live or pinned, and origin is creature for what you set out and keeper for what the keeper opened. where is where it stands now: beside the conversation, outside, or inside when the keeper brought it into the console. seat is its place outside, written as show takes it (\"left-half\", or \"columns 4 to 8, rows 0 to 6\"). by is who put it there last, creature, keeper or console, and is absent until the console has reported; what the keeper placed is the keeper's. note is the console's reason when it has one, such as no room outside. mark is the word or two the keeper reads on it, set with show or arrange. signal is needs-you or critical while one outlines it, and is gone once the keeper or you have cleared it. agent is there when an agent outside this conversation set the thing out through you, and names it, with square the colour of the square the keeper sees on it, one colour to each agent; it counts against your limits, and it is yours to withdraw. When windows outside overlap, a line names the pairs. A last line tells the stage once the console has reported it: which room it is (beside the console, over its far side, or the whole display) and how many of the smallest seats fit across and down, so you can judge the room before you compose; whatever fits, at most twelve of yours stand outside at once. Use the ids with show's from, with arrange, or with withdraw for what is still yours to take back.",
+      'List what is open for the keeper, whoever opened it, one JSON line each: id, what, place (where in the stead it rose from), from (the id of what it grew from, or null), where it stands now (beside your conversation, outside in its own window with its seat such as "left-half", or inside the app), by (who put it there last: you, the keeper or the app), mark, tone, signal, state and when it goes. origin keeper means the keeper opened it; agent names an agent that set it out through you. A last line says how much room your windows have outside. It changes nothing. Use the ids with from, arrange and withdraw.',
     schema: z.object({}).strict(),
     run: async () => {
       const settings = target.settings();
       if (settings === undefined) return nothingListedHere;
-      return listed(settings.standingFor(target));
+      return listed(settings.standingFor(target), target.creature);
     },
   });
 }
@@ -27,10 +28,12 @@ const nothingListedHere =
 
 const nothingOut = "Nothing is out beside this conversation.";
 
-function listed({ out, stage }: StandingPicture): string {
+function listed({ out, stage }: StandingPicture, caller: string | null): string {
   const overlap = overlapWords(out);
   return [
-    ...(out.length === 0 ? [nothingOut] : [headingOf(out), ...out.map(rowOf)]),
+    ...(out.length === 0
+      ? [nothingOut]
+      : [headingOf(out), ...out.map((stood) => rowOf(stood, caller))]),
     ...(overlap === undefined ? [] : [overlap]),
     ...(stage === undefined ? [] : [stageWords(stage)]),
   ].join("\n");
@@ -51,9 +54,10 @@ function brieflyOf(what: Setting["what"]): Setting["what"] {
   return { ...what, ref: `${what.ref.slice(0, noteWordsShown).trimEnd()}…` };
 }
 
-function rowOf({ setting, where, seat, by, note }: Stood): string {
-  const { id, what, rung, size, weight, why, state, at, until, from, origin, agent, mark, signal } =
+function rowOf({ setting, where, seat, by, note }: Stood, caller: string | null): string {
+  const { id, what, rung, size, weight, why, state, at, until, from, origin, agent, mark } =
     setting;
+  const { markTone, signal, place } = setting;
   return JSON.stringify({
     id,
     what: brieflyOf(what),
@@ -65,12 +69,14 @@ function rowOf({ setting, where, seat, by, note }: Stood): string {
     at,
     until,
     from,
+    place: placeSaid(place, caller),
     origin,
     where,
     ...(seat !== undefined && { seat: seatAsWritten(seat) }),
     ...(by !== undefined && { by }),
     ...(note !== undefined && { note }),
     ...(mark !== undefined && { mark }),
+    ...(markTone !== undefined && { tone: markTone }),
     ...(signal !== undefined && { signal }),
     ...(agent !== undefined && { agent: agent.name ?? "an agent" }),
     ...(agent?.color !== undefined && { square: agent.color }),

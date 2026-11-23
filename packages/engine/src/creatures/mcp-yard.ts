@@ -1,11 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { neutralizeRecalled } from "../memory/neutralize.ts";
+import type { ToolCallPart } from "../messages.ts";
 import { minuteMs } from "../routines/clock.ts";
 import { quotedNameOf } from "../show/naming.ts";
-import { agentNameLength, type Setting, type SettingAgent } from "../show/setting.ts";
-import type { ShowSettings, ShowTarget } from "../tools/show.ts";
+import type { PlaceBook } from "../show/places.ts";
+import {
+  agentNameLength,
+  type Setting,
+  type SettingAgent,
+  type SteadPlace,
+} from "../show/setting.ts";
+import { machinePaneIn, type ShowSettings, type ShowTarget } from "../tools/show.ts";
 import { yardRefused, yardToolNames, yardTools } from "../tools/yard.ts";
-import { findTool } from "../tools.ts";
+import { findTool, type Tool } from "../tools.ts";
 
 export const creatureYardTools = yardToolNames;
 
@@ -17,6 +25,16 @@ export interface CreatureYard {
   settings: ShowSettings;
   now(): number;
   toldAt: Map<string, number>;
+  places?: PlaceBook | undefined;
+  asksTheKeeper?: KeeperAsker | undefined;
+}
+
+export type KeeperAsker = (conversation: string, call: ToolCallPart) => Promise<boolean>;
+
+export interface CreatureYardSeams {
+  now?: (() => number) | undefined;
+  places?: PlaceBook | undefined;
+  asksTheKeeper?: KeeperAsker | undefined;
 }
 
 export interface YardListing {
@@ -31,8 +49,9 @@ export type YardAnswer =
   | { said: string; refused: boolean; made: YardMade | undefined; critical: string | undefined }
   | { invalid: z.ZodError };
 
-export function creatureYard(settings: ShowSettings, now: () => number = Date.now): CreatureYard {
-  return { settings, now, toldAt: new Map() };
+export function creatureYard(settings: ShowSettings, seams: CreatureYardSeams = {}): CreatureYard {
+  const { now = Date.now, places, asksTheKeeper } = seams;
+  return { settings, now, toldAt: new Map(), places, asksTheKeeper };
 }
 
 export function yardListingsFor(slug: string): YardListing[] {
@@ -74,6 +93,8 @@ export async function answeredInItsName(
   const raised: Setting[] = [];
   const tool = findTool(yardTools(seatOf(yard, seat, { made, raised })), name);
   try {
+    const declined = await declinedByTheKeeper(yard, seat, tool, args);
+    if (declined !== undefined) return declined;
     const said = await tool.execute(args);
     const refused = yardRefused(said);
     return {
@@ -86,6 +107,29 @@ export async function answeredInItsName(
     if (error instanceof z.ZodError) return { invalid: error };
     throw error;
   }
+}
+
+async function declinedByTheKeeper(
+  yard: CreatureYard,
+  seat: YardSeat,
+  tool: Tool,
+  args: Record<string, unknown>,
+): Promise<YardAnswer | undefined> {
+  const pane = machinePaneIn(args);
+  if (tool.alwaysAsks?.(args) !== true || pane === undefined) return undefined;
+  const call: ToolCallPart = {
+    type: "tool-call",
+    callId: randomUUID(),
+    name: tool.name,
+    arguments: args,
+  };
+  const approved = (await yard.asksTheKeeper?.(seat.conversation, call)) ?? false;
+  if (approved) return undefined;
+  const said =
+    yard.asksTheKeeper === undefined
+      ? `Not set out: a ${pane} acts on the keeper's machine, so the keeper says yes each time, and nobody here can ask them.`
+      : `Not set out: the keeper did not allow the ${pane}.`;
+  return { said, refused: true, made: undefined, critical: undefined };
 }
 
 export function tellsNow(yard: CreatureYard, slug: string): boolean {
@@ -101,7 +145,7 @@ export function yardLine(name: CreatureYardTool): string {
 }
 
 export function yardInstructions(slug: string): string {
-  return `On this machine you may also set out windows through it: show, arrange, shown and withdraw set things out beside ${slug}'s conversation or in windows of their own. The tools were written for ${slug} and are lent to you as they are, so read their "you", "yours", "this conversation" and "this thread" as ${slug} and everything out through it, what you set out included. On the keeper's screen each thing you set out carries a small square in one colour kept for your client's name, and that name, never ${slug}'s. The tools move only the console's own windows, never take focus, count against ${slug}'s limits, and ${slug} and its keeper are told. In the tools' words the keeper is the person ${slug} works with, the console is the keeper's app, the yard is the space around ${slug}'s conversation there, a setting is one thing set out, a mark is a word or two the keeper reads on it, a signal outlines it when it needs the keeper (needs-you, amber) or when something is broken (critical, red, with a reason, one at a time, and written to the keeper's audit), and the stage is the room the console gives windows outside, a 12 by 12 lattice. One show sets out several things when what is a list, and titles name things everywhere an id does.`;
+  return `On this machine you may also open things for the keeper through it: show, shown, arrange and withdraw set things out beside ${slug}'s conversation or in windows of their own in the keeper's app. The tools were written for ${slug} and are lent to you as they are, so read their "you", "yours" and "your conversation" as ${slug}. What you open rises from the porch unless you name another place, carries a small square in a colour kept for your client's name, and counts against ${slug}'s limits; ${slug} and the keeper are told. The keeper is the person ${slug} works with. A terminal or a screen acts on the keeper's machine, so the keeper is asked each time.`;
 }
 
 export function yardReason(
@@ -147,8 +191,17 @@ function seatOf(
   witnessed: Witnessed,
 ): ShowTarget {
   const settings = forAnother(yard.settings, witnessed);
-  return { creature: slug, sessionId: conversation, agent, settings: () => settings };
+  return {
+    creature: slug,
+    sessionId: conversation,
+    agent,
+    home: atThePorch,
+    places: yard.places,
+    settings: () => settings,
+  };
 }
+
+const atThePorch: SteadPlace = { kind: "porch" };
 
 function raisedWords(raised: readonly Setting[]): string {
   return raised

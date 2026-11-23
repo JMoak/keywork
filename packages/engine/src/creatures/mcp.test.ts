@@ -112,10 +112,7 @@ async function withWindows(options: { hourlyLimit?: number } = {}) {
   const settings = new SettingStore({ emit: desk.emit, hourlyLimit: options.hourlyLimit });
   desk.answerTo(settings);
   let now = at.getTime();
-  const served = await fixture(
-    {},
-    creatureYard(settings, () => now),
-  );
+  const served = await fixture({}, creatureYard(settings, { now: () => now }));
   const later = (ms: number) => {
     now += ms;
   };

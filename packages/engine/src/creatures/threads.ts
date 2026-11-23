@@ -17,6 +17,7 @@ export interface TaggedSession {
   working: boolean;
   waiting: number;
   held?: ThreadHold;
+  ended?: boolean;
 }
 
 export interface CreatureSessions {
@@ -144,7 +145,9 @@ const outcomeWords: Record<ThreadOutcome, string> = {
 function isThread(
   session: TaggedSession,
 ): session is TaggedSession & { tag: { kind: ThreadKind } } {
-  return session.tag.kind === "thread" || session.tag.kind === "routine";
+  return (
+    (session.tag.kind === "thread" || session.tag.kind === "routine") && session.ended !== true
+  );
 }
 
 function threadOf(

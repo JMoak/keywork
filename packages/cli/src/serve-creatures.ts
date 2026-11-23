@@ -14,6 +14,7 @@ import {
   type CreatureSessions,
   type CreatureSessionTag,
   type CreatureThreads,
+  conversationEndedOf,
   creatureHost,
   creatureInjection,
   creatureTagOf,
@@ -23,6 +24,7 @@ import {
   inboundBlockHeading,
   inboundNotesForThisTurn,
   isRefused,
+  ledgerConversationOf,
   loadBots,
   type PayloadRef,
   type RemovalFacts,
@@ -201,9 +203,10 @@ export async function finishThread(
   creatures: Pick<CreatureHost, "finish" | "deliver">,
   settled: SettledThread,
 ): Promise<InjectOutcome | undefined> {
-  const tag = creatureTagOf(settled.store.entries());
+  const entries = settled.store.entries();
+  const tag = creatureTagOf(entries);
   if (tag?.kind === "conversation") return reportTurn(creatures, tag.creature, settled);
-  if (tag?.kind !== "thread") return undefined;
+  if (tag?.kind !== "thread" || ledgerConversationOf(entries) !== undefined) return undefined;
   return creatures.finish(tag.creature, settled.id, {
     title: settled.store.name() ?? untitledThread,
     outcome: settled.outcome,
@@ -331,6 +334,7 @@ function taggedSessionOf(store: SessionStore, served: ServedCreatureSessions): T
       ...(parent !== undefined && { parent }),
       working: served.working(id),
       waiting: served.waiting(id),
+      ...(conversationEndedOf(store.entries()) !== undefined && { ended: true }),
     },
   ];
 }

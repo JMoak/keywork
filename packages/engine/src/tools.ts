@@ -2,6 +2,7 @@ import type { ToolDefinition } from "./provider.ts";
 
 export interface Tool extends ToolDefinition {
   mutates?: boolean;
+  alwaysAsks?(args: unknown): boolean;
   execute(args: unknown, signal?: AbortSignal): Promise<string>;
   preview?(args: unknown): Promise<ToolPreview | undefined>;
 }

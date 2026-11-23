@@ -25,9 +25,12 @@ import type { KeeperOpening } from "./input.ts";
 import { type KeptSettings, memorySettingStorage, type SettingStorage } from "./kept.ts";
 import { ownerOf, type SettingSeat, sameOwner, sees, type ThreadLookup } from "./lineage.ts";
 import { ConsoleReports, PlacementBook, type PlacementsReport, standsAs } from "./placements.ts";
+import { homePlaceOf } from "./places.ts";
 import { nothingOfYoursOut, refused, type ShowRefusal } from "./refusal.ts";
 import { type Seat, seatProblemOf } from "./seat.ts";
 import type {
+  MarkColour,
+  MarkTone,
   Mood,
   Rung,
   Setting,
@@ -44,6 +47,7 @@ import type {
   SettledBy,
   SettledOutcome,
   ShowEventSink,
+  SteadPlace,
 } from "./setting.ts";
 import {
   criticalAlready,
@@ -79,7 +83,9 @@ export interface ShowProposal {
   mood?: Mood | undefined;
   agent?: SettingAgent | undefined;
   mark?: string | undefined;
+  markTone?: MarkTone | undefined;
   signal?: SignalSaid | undefined;
+  place?: SteadPlace | undefined;
   lastsMs?: number | undefined;
   keeps?: Keeps | undefined;
 }
@@ -93,6 +99,7 @@ export interface Keeps {
 export interface Marking {
   id: string;
   mark: string | undefined;
+  tone?: MarkTone | undefined;
 }
 
 export interface SetOut {
@@ -171,7 +178,8 @@ export class SettingStore {
     const { agent } = proposal;
     const shownBy =
       agent === undefined ? proposal : { ...proposal, agent: this.agents.coloured(agent) };
-    const setting = settingOf(randomUUID(), shownBy, placing, replaced, isoOf(now), signal);
+    const arising = { placing, place: this.placeOf(proposal, replaced) };
+    const setting = settingOf(randomUUID(), shownBy, arising, replaced, isoOf(now), signal);
     this.setDown(setting);
     this.emit(setting.sessionId, "show.proposed", { setting });
     this.keep();
@@ -310,7 +318,7 @@ export class SettingStore {
     });
     if (stranger !== undefined) return refused("missing", nothingOfYoursOut(stranger.id));
     if (spends) this.arrangedAt.set(caller.sessionId, [...recent, now]);
-    const marked = marks.flatMap(({ id, mark }) => this.markedAs(id, mark));
+    const marked = marks.flatMap(({ id, mark, tone }) => this.markedAs(id, mark, colourOf(tone)));
     if (marked.length > 0) this.keep();
     return marks.flatMap(({ id }) => this.out.get(id) ?? []);
   }
@@ -469,11 +477,16 @@ export class SettingStore {
     this.timers.delete(id);
   }
 
-  private markedAs(id: string, mark: string | undefined): Setting[] {
+  private markedAs(id: string, mark: string | undefined, tone: MarkColour | undefined): Setting[] {
     const setting = this.out.get(id);
-    if (setting === undefined || setting.mark === mark) return [];
-    const { mark: _before, ...unmarked } = setting;
-    const changed: Setting = mark === undefined ? unmarked : { ...unmarked, mark };
+    const markTone = mark === undefined ? undefined : tone;
+    if (setting === undefined || (setting.mark === mark && setting.markTone === markTone))
+      return [];
+    const { mark: _before, markTone: _toneBefore, ...unmarked } = setting;
+    const changed: Setting =
+      mark === undefined
+        ? unmarked
+        : { ...unmarked, mark, ...(markTone !== undefined && { markTone }) };
     this.out.set(id, changed);
     this.emit(changed.sessionId, "show.changed", { setting: changed });
     return [changed];
@@ -528,6 +541,15 @@ export class SettingStore {
     return this.open()
       .filter((setting) => sameOwner(setting, caller) && setting.origin === "creature")
       .map((setting) => ({ setting, outside: this.stood(setting).where === "outside" }));
+  }
+
+  private placeOf(proposal: ShowProposal, replaced: Setting | undefined): SteadPlace {
+    const { place, from, origin, creature } = proposal;
+    const parent = from === null ? undefined : this.out.get(from);
+    if (parent !== undefined) return parent.place;
+    if (place !== undefined) return place;
+    if (origin === "creature" && replaced !== undefined) return replaced.place;
+    return homePlaceOf(creature);
   }
 
   private placingOf(proposal: ShowProposal, replaced: Setting | undefined): Placing {
@@ -726,10 +748,15 @@ function signalAfter(
   return keptByAReplacement(signal, replaced?.signal, origin);
 }
 
+interface Arising {
+  placing: Placing;
+  place: SteadPlace;
+}
+
 function settingOf(
   id: string,
   proposal: ShowProposal,
-  placing: Placing,
+  { placing, place }: Arising,
   replaced: Setting | undefined,
   at: string,
   signal: SettingSignal | undefined,
@@ -739,6 +766,7 @@ function settingOf(
   const size = keptByAReplacement(proposal.size, replaced?.size, origin);
   const weight = keptByAReplacement(proposal.weight, replaced?.weight, origin);
   const mark = keptByAReplacement(proposal.mark, replaced?.mark, origin);
+  const markTone = mark === undefined ? undefined : toneAfter(proposal, replaced);
   return {
     id,
     creature,
@@ -750,14 +778,29 @@ function settingOf(
     until,
     state: "live",
     ...lineage,
+    place,
     ...(size !== undefined && { size }),
     ...placing,
     ...(weight !== undefined && { weight }),
     ...(mood !== undefined && { mood }),
     ...(agent !== undefined && { agent }),
     ...(mark !== undefined && { mark }),
+    ...(markTone !== undefined && { markTone }),
     ...(signal !== undefined && { signal }),
   };
+}
+
+function toneAfter(
+  { mark, markTone, origin }: ShowProposal,
+  replaced: Setting | undefined,
+): MarkColour | undefined {
+  if (markTone !== undefined) return colourOf(markTone);
+  if (mark !== undefined || origin !== "creature") return undefined;
+  return replaced?.markTone;
+}
+
+function colourOf(tone: MarkTone | undefined): MarkColour | undefined {
+  return tone === "neutral" ? undefined : tone;
 }
 
 function keptFrom<Asked extends Omit<ShowProposal, "lastsMs" | "keeps">>(

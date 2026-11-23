@@ -95,6 +95,7 @@ export {
 export {
   askTitleOf,
   type ChoreFacts,
+  type ConversationOpener,
   type CreatureLedger,
   type CreatureLedgerAbout,
   type CreatureLedgerChange,
@@ -108,6 +109,11 @@ export {
   creatureLedger,
   grantsTitleOf,
   type LedgerAsk,
+  type LedgerConversation,
+  type LedgerConversationEnd,
+  type LedgerConversationEnding,
+  type LedgerConversationOutcome,
+  type LedgerConversationState,
   type LedgerSeenOutcome,
   type LedgerThread,
   ledgerFileIn,
@@ -132,9 +138,11 @@ export {
 } from "./mcp.ts";
 export {
   type CreatureYard,
+  type CreatureYardSeams,
   type CreatureYardTool,
   creatureYard,
   creatureYardTools,
+  type KeeperAsker,
   yardNoticeEveryMs,
 } from "./mcp-yard.ts";
 export * from "./messages/index.ts";
@@ -188,14 +196,20 @@ export {
   slugOf,
 } from "./registry.ts";
 export {
+  type ConversationEnded,
   type CreatureSessionKind,
   type CreatureSessionTag,
   childTagOf,
   claimSession,
+  conversationEndedOf,
+  conversationEndedType,
   creatureSessionKinds,
   creatureSessionType,
   creatureTagOf,
   isCreatureTag,
+  type LedgerConversationTag,
+  ledgerConversationOf,
+  ledgerConversationType,
   SessionClaimedError,
 } from "./sessions.ts";
 export {

@@ -19,7 +19,7 @@ const defaults: CreatureFile = {
   name: "Pip",
   created: "2026-11-05T09:00:00.000Z",
   introduction,
-  body: { skin: "kid", seed: 424242 },
+  body: { skin: "cairn", seed: 424242 },
   workshop: "host",
   models: inheritEverywhere(),
   routines: "routines",

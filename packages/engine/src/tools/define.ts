@@ -6,6 +6,7 @@ export function defineTool<Schema extends z.ZodType>(options: {
   description: string;
   schema: Schema;
   mutates?: boolean;
+  alwaysAsks?(args: unknown): boolean;
   run(args: z.infer<Schema>, signal?: AbortSignal): Promise<string>;
   preview?(args: z.infer<Schema>): Promise<ToolPreview | undefined>;
 }): Tool {
@@ -15,6 +16,7 @@ export function defineTool<Schema extends z.ZodType>(options: {
     description: options.description,
     parameters: z.toJSONSchema(options.schema),
     ...(options.mutates !== undefined && { mutates: options.mutates }),
+    ...(options.alwaysAsks !== undefined && { alwaysAsks: options.alwaysAsks }),
     execute: async (args, signal) => options.run(options.schema.parse(args), signal),
     ...(preview !== undefined && {
       preview: async (args) => {

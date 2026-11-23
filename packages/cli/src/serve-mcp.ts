@@ -7,14 +7,16 @@ import {
   creatureYard,
   defaultMessageLimits,
   type FetchLike,
+  type KeeperAsker,
   type McpArrival,
   messageGuard,
+  type PlaceBook,
   type RelayedExchange,
   type SelfIdentity,
   type SessionStore,
   type ShowSettings,
 } from "@keywork/engine";
-import { readServerTicket, type ServerTicket } from "@keywork/server";
+import { type AskQueue, type EventLog, readServerTicket, type ServerTicket } from "@keywork/server";
 import { keyworkVersion } from "./version.ts";
 
 export interface CreatureConversations {
@@ -33,6 +35,8 @@ export interface ServedCreatureMcpOptions {
   sessions: CreatureConversations;
   mesh: CreatureMcpMesh | undefined;
   settings?: ShowSettings | undefined;
+  places?: PlaceBook | undefined;
+  asksTheKeeper?: KeeperAsker | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -43,7 +47,11 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
   if (mesh === undefined) return {};
   const now = options.now ?? Date.now;
   const own = { guard: messageGuard(defaultMessageLimits, now), limits: defaultMessageLimits };
-  const yard = options.settings === undefined ? undefined : creatureYard(options.settings, now);
+  const { places, asksTheKeeper } = options;
+  const yard =
+    options.settings === undefined
+      ? undefined
+      : creatureYard(options.settings, { now, places, asksTheKeeper });
   return {
     creatureMcp: {
       answer: (slug, message, caller, mail = own) =>
@@ -59,6 +67,25 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
           yard,
         }).answer(slug, message, caller),
     },
+  };
+}
+
+export function keeperAskOver(
+  asks: Pick<AskQueue, "ask">,
+  log: Pick<EventLog, "record">,
+): KeeperAsker {
+  return async (conversation, call) => {
+    const { name: tool, callId, arguments: args } = call;
+    const ask = { tool, callId, arguments: args, rule: "always" as const, rules: [] };
+    log.record(conversation, "gate.ask", { ask });
+    const answer = await asks.ask(conversation, call, ask);
+    const { approved, gate } =
+      typeof answer === "boolean" ? { approved: answer, gate: "user" as const } : answer;
+    const verdict = approved ? "granted" : "denied";
+    log.record(conversation, "gate.permission", {
+      decision: { tool, callId, verdict, gate, asked: true },
+    });
+    return approved;
   };
 }
 

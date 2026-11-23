@@ -59,3 +59,44 @@ function isCreatureSessionKind(value: unknown): value is CreatureSessionKind {
 function sameTag(left: CreatureSessionTag, right: CreatureSessionTag): boolean {
   return left.creature === right.creature && left.kind === right.kind;
 }
+
+export const ledgerConversationType = "keywork.creature.ledger-conversation";
+
+export const conversationEndedType = "keywork.creature.conversation-ended";
+
+export interface LedgerConversationTag {
+  creature: string;
+  entry: string;
+}
+
+export interface ConversationEnded {
+  at: string;
+  by: "answer" | "keeper";
+  decided: string;
+}
+
+export function ledgerConversationOf(
+  entries: readonly SessionEntry[],
+): LedgerConversationTag | undefined {
+  const data = customDataOf(entries, ledgerConversationType);
+  const { creature, entry } = (data ?? {}) as Partial<LedgerConversationTag>;
+  return typeof creature === "string" && typeof entry === "string"
+    ? { creature, entry }
+    : undefined;
+}
+
+export function conversationEndedOf(
+  entries: readonly SessionEntry[],
+): ConversationEnded | undefined {
+  const data = customDataOf(entries, conversationEndedType);
+  const { at, by, decided } = (data ?? {}) as Partial<ConversationEnded>;
+  if (typeof at !== "string" || (by !== "answer" && by !== "keeper")) return undefined;
+  return { at, by, decided: typeof decided === "string" ? decided : "" };
+}
+
+function customDataOf(entries: readonly SessionEntry[], type: string): unknown {
+  for (const entry of entries) {
+    if (entry.type === "custom" && entry.customType === type) return entry.data;
+  }
+  return undefined;
+}

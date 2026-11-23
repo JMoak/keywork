@@ -1,26 +1,20 @@
 import { z } from "zod";
-import { markLength, type SettingWhat, settingKinds } from "./setting.ts";
+import { markLength, type SettingWhat, settingKinds, settingPanes } from "./setting.ts";
+import { toneWords } from "./vocabularies.ts";
+import { wordInput } from "./words.ts";
 
 export const settingWhatInput = z
   .object({
-    kind: z
-      .enum(settingKinds)
-      .describe("file, diff, report, thread, chore, url, note or pane: what you set out."),
+    kind: z.enum(settingKinds).describe("What it is."),
     ref: z
       .string()
       .trim()
       .min(1)
       .max(2_000)
       .describe(
-        "Which one: a workspace path for a file, a change-set id for a diff, a report id, a session id for a thread, a chore id, a url, the note's own words (at most 2000 characters, read as markdown), or for a pane the name of one of the console's own: sessions, arcs, files, context, memory, needs-you, permissions, mcp or workspaces.",
+        `Which one: a workspace path, a change-set id, a report id, a session id, a chore id, a url, the note's own markdown (at most 2000 characters), or a pane's name: ${settingPanes.join(", ")}.`,
       ),
-    title: z
-      .string()
-      .trim()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe("A short title for the card; the yard names it from ref when left out."),
+    title: z.string().trim().min(1).max(200).optional().describe("A short title."),
   })
   .strict();
 
@@ -28,9 +22,23 @@ export const settingIdInput = z.string().trim().min(1).max(128);
 
 export const markInput = z.string().trim().max(markLength);
 
-export function markOf(said: string | null | undefined): string | undefined {
-  const mark = (said ?? "").replace(/\s+/g, " ").trim().slice(0, markLength);
+export const toneInput = wordInput(toneWords);
+
+export const markSaidInput = z.union([
+  markInput,
+  z.object({ text: markInput.optional(), tone: toneInput.optional() }).strict(),
+]);
+
+export type MarkSaid = z.infer<typeof markSaidInput>;
+
+export function markOf(said: MarkSaid | null | undefined): string | undefined {
+  const text = typeof said === "string" ? said : said?.text;
+  const mark = (text ?? "").replace(/\s+/g, " ").trim().slice(0, markLength);
   return mark === "" ? undefined : mark;
+}
+
+export function toneSaidOf(said: MarkSaid | null | undefined): string | undefined {
+  return typeof said === "object" && said !== null ? said.tone : undefined;
 }
 
 const secondMs = 1_000;

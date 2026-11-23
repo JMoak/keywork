@@ -69,7 +69,7 @@ export type QueueMove = "moved" | "unknown" | "out-of-range" | "crosses-steer";
 export type GrantedScope = Exclude<AskScope, "once">;
 export type PermissionRuling =
   | { permission: "allow"; gate: "user"; scope: GrantedScope }
-  | { permission: ToolPermission; gate: Exclude<AskRule, "default"> };
+  | { permission: ToolPermission; gate: Extract<PermissionGate, "policy" | "trusted"> };
 export type PermissionResolver = (
   call: ToolCallPart,
 ) => ToolPermission | PermissionRuling | undefined;
@@ -727,17 +727,19 @@ export class Agent {
     tool: Tool,
     rule: AskRule,
   ): Promise<ToolOutcome | undefined> {
-    if (this.guard?.grantsQuietly?.(call, rule) === true) {
+    const always = rule === "always";
+    if (!always && this.guard?.grantsQuietly?.(call, rule) === true) {
       this.emitPermissionDecision(call, quietlyGranted);
       return undefined;
     }
     const ask = this.guard?.confirm === undefined ? undefined : await askAbout(call, tool, rule);
     if (ask !== undefined) this.bus.emit("gate.ask", { ask });
-    const answer = await this.confirmWithGuard(call, ask);
+    const answer =
+      always && ask === undefined ? nobodyToAsk : await this.confirmWithGuard(call, ask);
     const answeredBy = answer.gate ?? this.guard?.gate ?? "user";
     this.emitPermissionDecision(call, {
       verdict: answer.approved ? "granted" : "denied",
-      gate: ask === undefined ? rule : answeredBy,
+      gate: ask === undefined && rule !== "always" ? rule : answeredBy,
       asked: ask !== undefined && answer.asked !== false,
       scope: answer.scope,
       ...(!answer.approved && denialOf(answer)),
@@ -748,9 +750,13 @@ export class Agent {
   }
 
   private rulingFor(call: ToolCallPart, tool: Tool): GateRuling {
-    return (
-      rulingOf(this.permissions?.(call)) ?? { permission: defaultPermission(tool), gate: "default" }
-    );
+    const ruling = rulingOf(this.permissions?.(call)) ?? {
+      permission: defaultPermission(tool),
+      gate: "default",
+    };
+    return tool.alwaysAsks?.(call.arguments) === true && ruling.permission !== "deny"
+      ? alwaysAsked
+      : ruling;
   }
 
   private emitPermissionDecision(call: ToolCallPart, ruled: RuledCall): void {
@@ -826,7 +832,14 @@ function spillSource(spills: SpillStore | SpillSource | undefined): SpillSource 
   return () => spills;
 }
 
-type GateRuling = PermissionRuling | { permission: ToolPermission; gate: "default" };
+type GateRuling =
+  | PermissionRuling
+  | { permission: ToolPermission; gate: "default" }
+  | { permission: "ask"; gate: "always" };
+
+const alwaysAsked: GateRuling = { permission: "ask", gate: "always" };
+
+const nobodyToAsk: AnsweredConfirmation = { approved: false, gate: "headless" };
 
 interface RuledCall {
   verdict: PermissionDecision["verdict"];

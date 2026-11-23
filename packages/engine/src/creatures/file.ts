@@ -16,7 +16,7 @@ export { modelClasses };
 
 export const creatureFileName = "creature.json";
 export const hostWorkshop = "host";
-export const defaultSkin = "kid";
+export const defaultSkin = "cairn";
 export const defaultRoutinesDir = "routines";
 export const seedLimit = 0xffffffff;
 

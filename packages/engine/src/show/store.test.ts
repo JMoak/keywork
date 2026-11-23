@@ -75,6 +75,7 @@ describe("a setting the creature sets out", () => {
       from: null,
       origin: "creature",
       replaces: null,
+      place: { kind: "workshop", creature: "wren" },
     });
     expect(replaced).toBeUndefined();
     expect(store.open()).toEqual([setting]);
@@ -516,6 +517,7 @@ describe("the keeper's opening", () => {
       from: diff.id,
       origin: "keeper",
       replaces: null,
+      place: { kind: "workshop", creature: "wren" },
     });
     expect(heard.at(-1)).toEqual({
       sessionId: "s4",

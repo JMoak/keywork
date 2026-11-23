@@ -9,6 +9,7 @@ import {
   type BotDefinition,
   type ChangedPath,
   type Checkpoints,
+  type ConversationEnded,
   type CreatureHost,
   type CreatureLedger,
   type CreatureMail,
@@ -18,6 +19,8 @@ import {
   claimSession,
   compactionDue,
   contextMeasureOf,
+  conversationEndedOf,
+  conversationEndedType,
   creatureHandoffs,
   creatureLedger,
   creatureMail,
@@ -37,7 +40,10 @@ import {
   type KeeperTap,
   keeperContextOf,
   knownCostNanos,
+  type LedgerConversationTag,
   latestSessionTotals,
+  ledgerConversationOf,
+  ledgerConversationType,
   ledgerFileIn,
   type Mailboxes,
   type MemoryStore,
@@ -50,6 +56,7 @@ import {
   type PermissionLedger,
   type PermissionResolver,
   type PersistentShell,
+  type PlaceBook,
   type ProbeHttp,
   type ProjectWorkRequest,
   type PromptOrigin,
@@ -177,12 +184,15 @@ import {
 import {
   type CreatureSessionFacts,
   choreFactsOver,
+  conversationEnder,
+  conversingLedger,
   followAsks,
   followLedgerEvents,
+  type LedgerConversationSessions,
   ledgeredCreatures,
 } from "./serve-ledger.ts";
 import { type LifecycleSessions, servedLifecycle, trashSession } from "./serve-lifecycle.ts";
-import { servedCreatureMcp } from "./serve-mcp.ts";
+import { keeperAskOver, servedCreatureMcp } from "./serve-mcp.ts";
 import { servedMemory, stagedInbox } from "./serve-memory.ts";
 import {
   creatureInitialProvider,
@@ -202,6 +212,7 @@ import {
   type ServedSettings,
   servedSettings,
   showThreadOf,
+  steadPlaces,
   workspaceSettingsFile,
 } from "./serve-show.ts";
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
@@ -510,11 +521,13 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
         : () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
     projectWork: (store: SessionStore) => projectThreadTag(store.entries()) !== undefined,
   };
+  const places = steadPlaces({ registry, ...place });
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
     initialProvider: creatureInitialProvider(modelOptions),
     providerFor: selectedCreatureProvider(modelOptions),
     settings: shown.settings,
+    places,
     meter: (turn) => {
       node.usage.record(turn);
       answers.answered(turn.provider);
@@ -558,12 +571,14 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     spentToday: async (slug, date) => node.usage.spentOn(slug, date),
     notice,
   });
+  const conversationSessions = ledgerConversationSessions(sessions, hosted, log);
   const ledger = creatureLedger({
     file: workspaceLedgerFile(place),
     creatures: hosted,
     exists: async (slug) => (await registry.read(slug)) !== undefined,
     chore: choreFactsOver(() => routines?.service, options.cwd),
     notice,
+    conversationEnded: conversationEnder(conversationSessions, notice),
   });
   const unfollowLedger = [
     followAsks(gate.asks, ledger, (id) => sessions.creatureSessionOf(id)),
@@ -644,8 +659,15 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
     creatures,
     handoffs,
-    ledger,
-    ...servedCreatureMcp({ creatures, sessions, mesh: node.mesh, settings: shown.settings }),
+    ledger: conversingLedger(ledger, conversationSessions),
+    ...servedCreatureMcp({
+      creatures,
+      sessions,
+      mesh: node.mesh,
+      settings: shown.settings,
+      places,
+      asksTheKeeper: keeperAskOver(gate.asks, log),
+    }),
     ...(routines !== undefined && { routines: routines.service }),
     models: refreshableModels(node.models, options.refreshInference),
     campaigns,
@@ -710,11 +732,13 @@ function sessionVerbsHost(
     },
     read: (id) => sessions.read(id),
     create: () => sessions.create(),
-    prompt: (id, text, behavior) => onLive(id, (live) => live.run(text, { behavior })),
+    prompt: (id, text, behavior) =>
+      onLive(id, (live) => (live.ended() ? "ended" : live.run(text, { behavior }))),
     inject: (id, text, origin) =>
-      onLive(id, (live) =>
-        origin.kind === "creature" ? live.frame(text, origin) : live.run(text, { origin }),
-      ),
+      onLive(id, (live) => {
+        if (live.ended()) return "ended";
+        return origin.kind === "creature" ? live.frame(text, origin) : live.run(text, { origin });
+      }),
     abort: async (id) => {
       const live = sessions.liveOnly(id);
       if (live !== undefined) return live.interrupt();
@@ -832,6 +856,7 @@ interface SessionSeams {
   settled?(thread: SettledThread): void;
   keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
   settings?: ShowSettings | undefined;
+  places?: PlaceBook | undefined;
 }
 
 const projectThreadType = "keywork.creature-project";
@@ -923,6 +948,7 @@ class LiveSessions {
       ...store.messageMarks(child?.agent.busy() === true),
       asOf: this.options.log.latestId(),
       ...parentSessionOf(store),
+      ...conversationFactsOf(store),
     });
   }
 
@@ -1236,6 +1262,7 @@ class LiveSessions {
     return {
       creature: creatureTagOf(store.entries())?.creature ?? null,
       sessionId: store.header.id,
+      places: this.seams.places,
       settings: () => settings,
     };
   }
@@ -1745,7 +1772,25 @@ class LiveSession {
       ...this.store.messageMarks(this.agent.busy()),
       asOf,
       ...parentSessionOf(this.store),
+      ...conversationFactsOf(this.store),
     };
+  }
+
+  ended(): boolean {
+    return conversationEndedOf(this.store.entries()) !== undefined;
+  }
+
+  async begin(about: LedgerConversationTag, title: string): Promise<void> {
+    if (ledgerConversationOf(this.store.entries()) === undefined)
+      await this.store.appendCustom(ledgerConversationType, about);
+    await this.rename(title);
+  }
+
+  async end(ended: ConversationEnded): Promise<void> {
+    if (this.ended()) return;
+    if (this.agent.busy()) this.interrupt();
+    await this.store.appendCustom(conversationEndedType, ended);
+    this.announce();
   }
 
   state(): SessionState {
@@ -2285,6 +2330,16 @@ function sameSelection(
   return selection?.provider === model.provider && selection.modelId === model.model;
 }
 
+function conversationFactsOf(store: SessionStore): Pick<SessionDetail, "ledgerEntry" | "endedAt"> {
+  const entries = store.entries();
+  const about = ledgerConversationOf(entries);
+  const ended = conversationEndedOf(entries);
+  return {
+    ...(about !== undefined && { ledgerEntry: { creature: about.creature, id: about.entry } }),
+    ...(ended !== undefined && { endedAt: ended.at }),
+  };
+}
+
 function parentSessionOf(store: SessionStore): { parentSession?: string } {
   const { parentSession } = store.header;
   return parentSession === undefined ? {} : { parentSession };
@@ -2345,6 +2400,32 @@ async function storesWithChildren(sessionDir: string): Promise<SessionStore[]> {
   return [...stores, ...children.flat()];
 }
 
+function ledgerConversationSessions(
+  sessions: LiveSessions,
+  hosted: Pick<CreatureHost, "openThread" | "deliver">,
+  log: EventLog,
+): LedgerConversationSessions {
+  const live = async (id: string): Promise<LiveSession> => {
+    const opened = await sessions.open(id);
+    if (opened === undefined) throw new Error(`no session has the id ${id}`);
+    return opened;
+  };
+  return {
+    open: (creature) => hosted.openThread(creature, "thread"),
+    begin: async (session, about, title) => (await live(session)).begin(about, title),
+    frame: async (session, text, origin) => (await live(session)).frame(text, origin),
+    lastReply: async (session) => {
+      const history =
+        sessions.liveOnly(session)?.history() ?? (await sessions.stored(session))?.messages() ?? [];
+      const reply = [...history].reverse().find(({ role }) => role === "assistant");
+      return reply === undefined ? "" : messageText(reply);
+    },
+    end: async (session, ended) => (await live(session)).end(ended),
+    note: (creature, text, origin) => hosted.deliver(creature, text, origin),
+    threadsChanged: (slug) => log.record("", "creature.changed", { slug, change: "threads" }),
+  };
+}
+
 function routineSessionsOf(
   sessions: LiveSessions,
   verbs: SessionHost,
@@ -2369,7 +2450,10 @@ function routineSessionsOf(
       return id;
     },
     confine: async (id, posture, grants) => sessions.confine(id, posture, grants),
-    prompt: (id, text) => verbs.prompt(id, text, "queue"),
+    prompt: async (id, text) => {
+      const outcome = await verbs.prompt(id, text, "queue");
+      return outcome === "ended" ? "missing" : outcome;
+    },
     abort: (id) => verbs.abort(id),
     denyAsk: async (callId) => asks.answer(callId, "denied"),
     costUsd: async (id) => {

@@ -113,6 +113,8 @@ export interface SessionDetail extends SessionSummary {
   asOf: number;
   parentSession?: string;
   forkedFrom?: ForkOrigin;
+  ledgerEntry?: { creature: string; id: string };
+  endedAt?: string;
 }
 
 export interface ForkOrigin {
@@ -130,7 +132,7 @@ export interface SessionLifecyclePort {
 
 export type PromptOutcome = "accepted" | "missing";
 
-export type InjectOutcome = "started" | "queued" | "missing";
+export type InjectOutcome = "started" | "queued" | "missing" | "ended";
 
 export type AbortOutcome = "aborted" | "idle" | "missing";
 

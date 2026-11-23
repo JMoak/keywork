@@ -111,7 +111,7 @@ export class AskQueue {
       timer.unref?.();
       this.pending.set(call.callId, { ask, resolve, timer });
       for (const follower of [...this.followers]) follower.asked(ask);
-      if (decide) void this.decide(ask, announced);
+      if (decide && announced?.rule !== "always") void this.decide(ask, announced);
     });
   }
 

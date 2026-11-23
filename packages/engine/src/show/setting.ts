@@ -14,8 +14,8 @@ export const settingKinds = [
 
 export type SettingKind = (typeof settingKinds)[number];
 
-// The console's own panes a session may set out, by the name the keeper knows each by. A pane
-// that starts something (a terminal) or captures the display is not among them.
+export const machinePanes = ["terminal", "screen"] as const;
+
 export const settingPanes = [
   "sessions",
   "arcs",
@@ -26,9 +26,37 @@ export const settingPanes = [
   "permissions",
   "mcp",
   "workspaces",
+  "workshop",
+  "mills",
+  "parcels",
+  "bots",
+  "campaigns",
+  "themes",
+  "posture",
+  "stead",
+  ...machinePanes,
 ] as const;
 
 export type SettingPane = (typeof settingPanes)[number];
+
+export type MachinePane = (typeof machinePanes)[number];
+
+export const steadPlaceKinds = ["workshop", "porch", "store", "mill", "project"] as const;
+
+export type SteadPlaceKind = (typeof steadPlaceKinds)[number];
+
+export type SteadPlace =
+  | { kind: "workshop"; creature: string }
+  | { kind: "porch" }
+  | { kind: "store" }
+  | { kind: "mill" }
+  | { kind: "project"; creature: string; directory: string };
+
+export const markTones = ["neutral", "good", "caution", "bad"] as const;
+
+export type MarkTone = (typeof markTones)[number];
+
+export type MarkColour = Exclude<MarkTone, "neutral">;
 
 export const rungs = ["lantern", "card", "unfold", "stage"] as const;
 
@@ -110,6 +138,7 @@ export interface Setting {
   from: string | null;
   origin: SettingOrigin;
   replaces: string | null;
+  place: SteadPlace;
   size?: SettingSize;
   where?: SettingPlace;
   seat?: Seat;
@@ -117,6 +146,7 @@ export interface Setting {
   mood?: Mood;
   agent?: SettingAgent;
   mark?: string;
+  markTone?: MarkColour;
   signal?: SettingSignal;
 }
 

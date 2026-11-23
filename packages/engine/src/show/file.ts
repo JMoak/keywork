@@ -4,11 +4,13 @@ import { basename, dirname, join } from "node:path";
 import { type HeldFilePacingSync, renameOverSync, toError } from "@keywork/shared";
 import { z } from "zod";
 import { type KeptSettings, nothingKept, type SettingStorage } from "./kept.ts";
+import { homePlaceOf } from "./places.ts";
 import { seatSpanInput } from "./seat.ts";
 import {
   agentColors,
   agentNameLength,
   markLength,
+  markTones,
   moods,
   rungs,
   type Setting,
@@ -81,6 +83,18 @@ const keptUntil = z
     message: "until is seen, rests or a time",
   });
 
+const keptPlace = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("workshop"), creature: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("porch") }),
+  z.strictObject({ kind: z.literal("store") }),
+  z.strictObject({ kind: z.literal("mill") }),
+  z.strictObject({
+    kind: z.literal("project"),
+    creature: z.string().min(1),
+    directory: z.string().min(1),
+  }),
+]);
+
 const keptSetting = z.object({
   id: z.string().min(1),
   creature: z.string().nullable(),
@@ -98,6 +112,7 @@ const keptSetting = z.object({
   from: z.string().nullable(),
   origin: z.enum(settingOrigins),
   replaces: z.string().nullable(),
+  place: keptPlace.optional(),
   size: z.enum(settingSizes).optional(),
   where: z.enum(settingPlaces).optional(),
   seat: seatSpanInput.optional(),
@@ -111,6 +126,7 @@ const keptSetting = z.object({
     .strict()
     .optional(),
   mark: z.string().min(1).max(markLength).optional(),
+  markTone: z.enum(markTones).exclude(["neutral"]).optional(),
   signal: z.enum(settingSignals).optional(),
 });
 
@@ -121,11 +137,13 @@ const keptFile = z.object({
 });
 
 function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
-  const { size, where, seat, weight, mood, agent, mark, signal, ...setting } = kept;
+  const { place, size, where, seat, weight, mood, agent, mark, markTone, signal, ...setting } =
+    kept;
   const { kind, ref, title } = setting.what;
   return {
     ...setting,
     what: title === undefined ? { kind, ref } : { kind, ref, title },
+    place: place ?? homePlaceOf(setting.creature),
     ...(size !== undefined && { size }),
     ...(where !== undefined && { where }),
     ...(seat !== undefined && { seat }),
@@ -133,6 +151,7 @@ function keptSettingOf(kept: z.infer<typeof keptSetting>): Setting {
     ...(mood !== undefined && { mood }),
     ...(agent !== undefined && { agent: keptAgentOf(agent) }),
     ...(mark !== undefined && { mark }),
+    ...(mark !== undefined && markTone !== undefined && { markTone }),
     ...(signal !== undefined && { signal }),
   };
 }

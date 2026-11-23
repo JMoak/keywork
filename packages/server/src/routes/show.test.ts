@@ -199,6 +199,7 @@ describe("POST /show", () => {
       from: diff.id,
       origin: "keeper",
       replaces: null,
+      place: { kind: "workshop", creature: "wren" },
     };
     expect(answered).toEqual({ status: 201, body: { setting } });
     expect(log.since(0).at(-1)).toMatchObject({

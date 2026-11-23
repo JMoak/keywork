@@ -1,29 +1,41 @@
 import { z } from "zod";
-import { outsideAtOnce, paneCalled } from "../show/arrangement.ts";
+import {
+  type Arrangement,
+  type ArrangementShape,
+  outsideAtOnce,
+  paneCalled,
+} from "../show/arrangement.ts";
 import {
   lastingOf,
   lastingPattern,
   lastingWords,
-  markInput,
   markOf,
+  markSaidInput,
   settingFromInput,
   settingWhatInput,
   settingWhatOf,
+  toneInput,
+  toneSaidOf,
 } from "../show/input.ts";
 import { calledOf, quotedNameOf } from "../show/naming.ts";
+import { noPlaceBook, type PlaceBook, placeCalled, placeSaid } from "../show/places.ts";
 import { Reading } from "../show/reading.ts";
 import { sameSeat, seatInput, seatWords, seatWrittenInput } from "../show/seat.ts";
 import {
+  type MachinePane,
+  machinePanes,
   type Rung,
   rungs,
   type Setting,
   type SettingAgent,
   type SettingSignal,
   type SettingWhat,
+  type SteadPlace,
   settingKinds,
+  settingPanes,
 } from "../show/setting.ts";
 import { overlapWords, type Stood, standingWords } from "../show/standing.ts";
-import type { SetOut, SettingStore, ShowProposal } from "../show/store.ts";
+import type { SetOut, SettingStore, ShowProposal, ShowRefusal } from "../show/store.ts";
 import {
   mannerOf,
   moodsDescribed,
@@ -32,8 +44,11 @@ import {
   paneWords,
   placeWords,
   type SignalSaid,
+  shapeWords,
   signalWords,
   sizeWords,
+  tonesDescribed,
+  toneWords,
   weightWords,
 } from "../show/vocabularies.ts";
 import { quoted, wordInput } from "../show/words.ts";
@@ -57,6 +72,8 @@ export interface ShowTarget {
   creature: string | null;
   sessionId: string;
   agent?: SettingAgent | undefined;
+  home?: SteadPlace | undefined;
+  places?: PlaceBook | undefined;
   settings(): ShowSettings | undefined;
 }
 
@@ -65,9 +82,9 @@ export const showToolName = "show";
 export function showTool(target: ShowTarget): Tool {
   return defineTool({
     name: showToolName,
-    description:
-      'Set something out for the keeper to see: a file, a diff, a report, a thread, a chore, a link, a short note, or one of the console\'s own panes by name, such as {kind: "pane", ref: "sessions"}. It sits beside this conversation, or with where outside it stands in a window of its own. This is IDE control: it arranges the console\'s own space and windows, never the computer, it never takes focus and it changes nothing in the world, so it asks for no permission. {what: {kind: "file", ref: "docs/plan.md"}, where: "outside"} is enough, and the console picks the seat; add seat: "left-half" to pick it yourself. To set out several at once, give what a list, {what: [{kind: "note", title: "Plan A", ref: "..."}, {kind: "note", title: "Plan B", ref: "..."}], where: "outside"}: they arrive together, each thing may carry its own seat, why, weight, from, mark and signal, and the answer says where each stands. A note\'s words are markdown, so headings, lists, checklists and tables render. Beside the conversation, rung and size apply; outside, the seat decides: a seat you name overrides size and weight, and when the console chooses, weight says who gets the large seat. A size applies the first time the setting opens, the yard may still show less, and it cannot be changed later. Showing the same thing again replaces what you set out before and keeps its place; a note with the same title is the same thing, so that is how you change its words, and the id it had before still names it. Whatever you leave out the second time stays as it was: its place, rung, size, weight, mark, signal, why and when it goes. A mark is a word or two the keeper reads as a highlighted tag beside its title for as long as it is out, such as chosen, draft or done; arrange changes it later. A signal outlines it for the keeper: needs-you in amber when your work waits on them, critical in red only when something is broken or about to be lost, with why as the reason, one at a time; arrange raises or lowers it later. It stays until the keeper has seen it, until this thread rests, or for a time you name. Name from when it grows out of something already in view: a setting you set out, by its id (every answer names it) or its title, or a thread of yours such as one you delegated. Outside, it arises from that pane, and with weight lead it drills in: it takes the large seat, its parent steps aside, withdraw steps back out, and arrange with its parent as lead steps back out and keeps it. At most a hundred settings an hour, and twelve of yours outside at once.',
+    description: `Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (${settingPanes.join(", ")}). It opens beside your conversation, or in a window of its own with where "outside"; seat picks its spot ("left-half", "top-right") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.`,
     schema: showArgs,
+    alwaysAsks: (args) => machinePaneIn(args) !== undefined,
     run: async (args) => {
       const settings = target.settings();
       if (settings === undefined) return noKeeperSurface;
@@ -75,12 +92,14 @@ export function showTool(target: ShowTarget): Tool {
       if (things.length > 1 && args.seat !== undefined) return oneSeatForSeveral;
       const reading = new Reading();
       const asked = things.map((thing) => proposalOf(target, args, thing, reading));
+      const shape = reading.word("shape", shapeWords, args.shape);
       if (reading.problem !== undefined) return `Not set out: ${reading.problem}.`;
+      if (shape !== undefined && asked.some(({ where }) => where === "beside")) return shapeBeside;
       const [alone] = asked;
-      if (asked.length === 1 && alone !== undefined) {
-        const proposal = { ...alone, from: namedFrom(settings, target, alone.from) };
-        const { from } = proposal;
-        if (from !== null && !(await settings.canGrowFrom(target, from))) return outOfSight(from);
+      if (asked.length === 1 && alone !== undefined && shape === undefined) {
+        const proposal =
+          alone.from === null ? alone : await arisingOf(settings, target, alone, alone.from);
+        if (typeof proposal === "string") return proposal;
         const outcome = settings.propose(proposal);
         if ("refused" in outcome) return `Not set out: ${outcome.error}.`;
         const told = { moodSaid: args.mood, replaced: outcome.replaced !== undefined };
@@ -91,11 +110,16 @@ export function showTool(target: ShowTarget): Tool {
           first,
           signalSaid: things[0] === undefined ? undefined : signalAsked(things[0], args),
           timeAsked: args.until !== undefined,
+          placeNamed: proposal.place !== undefined && proposal.place !== target.home,
+          caller: target.creature,
         });
       }
-      const { done, stopped } = await setOutInTurn(settings, target, asked);
+      const laidOut = shape === undefined ? asked : asked.map(outsideTogether);
+      const { done, stopped } = await setOutInTurn(settings, target, laidOut);
       if (done.length === 0) return stopped ?? noKeeperSurface;
-      return severalWords(settings, target, { done, stopped, asked: asked.length }, args);
+      const arranged =
+        shape === undefined ? undefined : arrangedTogether(settings, target, done, shape);
+      return severalWords(settings, target, { done, stopped, asked: asked.length, arranged }, args);
     },
   });
 }
@@ -107,7 +131,8 @@ const ownPlacing = {
   why: z.string().trim().min(1).max(200).optional(),
   weight: wordInput(weightWords).optional(),
   from: settingFromInput.nullable().optional(),
-  mark: markInput.optional(),
+  mark: markSaidInput.optional(),
+  tone: toneInput.optional(),
   signal: signalInput.optional(),
 };
 
@@ -129,7 +154,7 @@ const showArgs = z
     what: z
       .union([thingInput, z.array(listedThingInput).min(1).max(outsideAtOnce)])
       .describe(
-        "The thing to set out, or a list of up to twelve to set out together, each written as one thing is. A thing may carry its own seat, why, weight, from, mark and signal, written as the call's are, and takes the call's for whatever it leaves out.",
+        "The thing to set out, or a list of up to twelve set out together. Each may carry its own seat, why, weight, from, mark, tone and signal.",
       ),
     why: z
       .string()
@@ -137,48 +162,46 @@ const showArgs = z
       .min(1)
       .max(200)
       .optional()
-      .describe("One sentence the keeper reads with it: why this matters now."),
+      .describe("One sentence the keeper reads with it: why it matters now."),
     where: wordInput(placeWords)
       .optional()
-      .describe(
-        "beside (the default) keeps it beside the conversation; outside gives it a window of its own.",
-      ),
+      .describe("beside (the default) keeps it by your conversation; outside gives it a window."),
     seat: seatInput
       .optional()
       .describe(
-        'Where it stands outside, on the stage\'s 12 by 12 lattice: a named seat (full, left-half, right-half, top-half, bottom-half, left-third, middle-third, right-third, left-two-thirds, right-two-thirds, left-quarter, right-quarter, left-three-quarters, right-three-quarters, middle-half, top-left, top-right, bottom-left, bottom-right, center, top-third, bottom-third), lattice lines such as "columns 4 to 8, rows 0 to 6" (0 is the left and top edge, 12 the right and bottom), or {x, y, w, h}. Halves, thirds and quarters run the full height, the four corners are a quarter of the stage each, center is the middle half of each way, and seats snap to halves, thirds and quarters (lines 0, 3, 4, 6, 8, 9 and 12). Naming a seat puts it outside; leave it out and the console chooses, re-laying the windows it chose seats for as more arrive.',
+        'Its spot outside, on a 12 by 12 grid: a name (full, left-half, right-half, top-half, bottom-half, left-third, middle-third, right-third, left-two-thirds, right-two-thirds, left-quarter, right-quarter, top-left, top-right, bottom-left, bottom-right, center, top-third, bottom-third), lines such as "columns 4 to 8, rows 0 to 6", or {x, y, w, h}. Leave it out and the app chooses.',
+      ),
+    shape: wordInput(shapeWords)
+      .optional()
+      .describe(
+        "Lays out what this call sets out, in windows outside: grid, columns, rows, lead-and-cards, lead-and-stack, split or board.",
       ),
     weight: wordInput(weightWords)
       .optional()
-      .describe(
-        "How much room it should have among your windows: lead, support or aside. With from, lead drills in.",
-      ),
+      .describe("lead, support or aside: who gets the large spot. With from, lead drills in."),
     mood: wordInput(moodWords)
       .optional()
-      .describe(
-        `How it arrives, and later leaves, as motion only: ${moodsDescribed}. The answer names the mood it arrived with.`,
-      ),
-    mark: markInput
+      .describe(`How it moves in, motion only: ${moodsDescribed}.`),
+    mark: markSaidInput
       .optional()
       .describe(
-        'A word or two the keeper reads on it while it is out, such as "chosen", "draft" or "done". arrange changes or clears it later.',
+        'A word or two on it while it is out, such as "draft" or "done", or {text, tone}. arrange changes it later.',
       ),
+    tone: toneInput.optional().describe(`The mark's tone: ${tonesDescribed}.`),
     signal: signalInput
       .optional()
       .describe(
-        'How much it wants the keeper, drawn as an outline: needs-you (amber, held until it is answered) when your work waits on the keeper, or critical (red) only when something is broken or about to be lost. Critical needs why, the reason the keeper reads; you may hold one at a time, it stays until the keeper has seen it whatever until says, and only you or the keeper lower it. null or "none" lowers what it had. Leave it out and nothing is outlined. Use it rarely.',
+        "needs-you (amber) when your work waits on the keeper; critical (red) only when something is broken or about to be lost, with why; null lowers it. Use it rarely.",
       ),
     rung: z
       .enum(rungs)
       .optional()
       .describe(
-        "Beside the conversation, how much of the keeper's attention you propose: lantern (a mark to look at when ready), card (the default), unfold (open beside the conversation) or stage (the whole view).",
+        "Beside your conversation, how much attention it asks: lantern (least), card (the default), unfold or stage (most).",
       ),
     size: wordInput(sizeWords)
       .optional()
-      .describe(
-        "How large it opens: card for a glance, readable for reading, working for something the keeper will work in.",
-      ),
+      .describe("card, readable or working: how large it first opens."),
     until: z
       .string()
       .trim()
@@ -188,13 +211,13 @@ const showArgs = z
       .optional()
       .meta({ examples: ["seen", "rests", "10 minutes", "2026-11-08T10:00:00-06:00"] })
       .describe(
-        'When it goes: seen (the default: it stays until the keeper marks it seen or dismisses it, however long that takes), rests (when this thread rests), a time from now such as "10 minutes" or "2 hours", or an ISO 8601 date-time with its offset.',
+        'When it goes: seen (the default: it stays until the keeper puts it away), rests (when this conversation goes quiet), a time from now such as "10 minutes", or an ISO 8601 time.',
       ),
     from: settingFromInput
       .nullable()
       .optional()
       .describe(
-        "What it grows from: a setting you set out that is still out, by its id or its title, or a thread of yours such as one you delegated. Leave it out for something new.",
+        "Where it rises from: a place (your workshop, the porch, the storehouse, the mill, a project by name or path, another creature's workshop such as \"pip's workshop\"), or something of yours already out (by id or title), which it then grows from.",
       ),
   })
   .strict();
@@ -214,6 +237,26 @@ const noKeeperSurface =
 const oneSeatForSeveral =
   "Not set out: seat names one place, and you are setting out several things; give each thing its own seat inside what, or leave seats out and the console lays them out.";
 
+const shapeBeside =
+  "Not set out: a shape lays things out in windows outside, so it cannot go with where beside; leave one of them out.";
+
+export function machinePaneIn(args: unknown): MachinePane | undefined {
+  const what = recordOf(args).what;
+  const things = Array.isArray(what) ? what : [what];
+  for (const thing of things) {
+    const { kind, ref } = recordOf(thing);
+    if (kind !== "pane" || typeof ref !== "string") continue;
+    const pane = paneWords.understood(ref);
+    const machine = machinePanes.find((named) => named === pane);
+    if (machine !== undefined) return machine;
+  }
+  return undefined;
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
 interface TurnOut {
   done: SetOut[];
   stopped: string | undefined;
@@ -226,10 +269,8 @@ async function setOutInTurn(
 ): Promise<TurnOut> {
   const done: SetOut[] = [];
   for (const ask of asked) {
-    const proposal = { ...ask, from: namedFrom(settings, target, ask.from) };
-    const { from } = proposal;
-    if (from !== null && !(await settings.canGrowFrom(target, from)))
-      return { done, stopped: outOfSight(from) };
+    const proposal = ask.from === null ? ask : await arisingOf(settings, target, ask, ask.from);
+    if (typeof proposal === "string") return { done, stopped: proposal };
     const outcome = settings.propose(proposal);
     if ("refused" in outcome) return { done, stopped: `Not set out: ${outcome.error}.` };
     done.push(outcome);
@@ -237,13 +278,40 @@ async function setOutInTurn(
   return { done, stopped: undefined };
 }
 
-function namedFrom(settings: ShowSettings, target: ShowTarget, from: string | null): string | null {
-  if (from === null) return null;
+async function arisingOf(
+  settings: ShowSettings,
+  target: ShowTarget,
+  ask: ShowProposal,
+  said: string,
+): Promise<ShowProposal | string> {
+  const from = namedFrom(settings, target, said);
+  if (await settings.canGrowFrom(target, from)) return { ...ask, from };
+  const reading = await placeCalled(said, target.creature, target.places ?? noPlaceBook);
+  if ("place" in reading) return { ...ask, from: null, place: reading.place };
+  return `Not set out: from names a place, something of yours that is out or a thread of yours, and ${reading.unknown}.`;
+}
+
+function namedFrom(settings: ShowSettings, target: ShowTarget, from: string): string {
   const mine = settings
     .standingFor(target, "another")
     .out.filter(({ setting }) => setting.origin === "creature")
     .map(({ setting, where }) => ({ setting, outside: where === "outside" }));
   return paneCalled(from, mine) ?? from;
+}
+
+function outsideTogether(proposal: ShowProposal): ShowProposal {
+  return { ...proposal, where: "outside" };
+}
+
+function arrangedTogether(
+  settings: ShowSettings,
+  target: ShowTarget,
+  done: readonly SetOut[],
+  shape: ArrangementShape,
+): Arrangement | ShowRefusal {
+  const panes = done.map(({ setting }) => setting.id);
+  const lead = done.find(({ setting }) => setting.weight === "lead")?.setting.id;
+  return settings.arrange(target, { panes, shape, lead, mood: done[0]?.setting.mood });
 }
 
 // A pane is named in the keeper's words, and kept under the one name the console knows it by.
@@ -254,10 +322,6 @@ function whatOf(thing: Thing, reading: Reading): SettingWhat {
   return pane === undefined ? what : { ...what, ref: pane };
 }
 
-function outOfSight(from: string): string {
-  return `Not set out: nothing you may grow from has the id ${from}; name a setting you set out that is still out, or a thread of yours.`;
-}
-
 function proposalOf(
   target: ShowTarget,
   args: ShowArgs,
@@ -265,7 +329,10 @@ function proposalOf(
   reading: Reading,
 ): ShowProposal {
   const lasting = untilOf(args.until);
-  const mark = markOf(thing.mark ?? args.mark);
+  const markSaid = thing.mark ?? args.mark;
+  const mark = markOf(markSaid);
+  const toneSaid = thing.tone ?? toneSaidOf(thing.mark) ?? args.tone ?? toneSaidOf(args.mark);
+  const markTone = reading.word("tone", toneWords, toneSaid);
   const signal = reading.word("signal", signalWords, signalAsked(thing, args));
   return {
     creature: target.creature,
@@ -287,8 +354,10 @@ function proposalOf(
       until: args.until === undefined,
     },
     ...(mark !== undefined && { mark }),
+    ...(markTone !== undefined && { markTone }),
     ...(signal !== undefined && { signal }),
     ...(target.agent !== undefined && { agent: target.agent }),
+    ...(target.home !== undefined && { place: target.home }),
   };
 }
 
@@ -421,16 +490,19 @@ interface Said {
   first: boolean;
   signalSaid: string | undefined;
   timeAsked: boolean;
+  placeNamed: boolean;
+  caller: string | null;
 }
 
 function sentenceOf(
   { setting, replaced }: SetOut,
   outside: StandingOutside | undefined,
-  { lasting, first, signalSaid, timeAsked }: Said,
+  { lasting, first, signalSaid, timeAsked, placeNamed, caller }: Said,
 ): string {
   const saidAlready = outside?.arrived.startsWith(replacedInPlace) === true;
   return [
     outside?.arrived ?? placedAs[setting.rung],
+    ...(placeNamed ? [`It rises from ${placeSaid(setting.place, caller)}.`] : []),
     goesWhen(setting.until, lasting),
     ...(replaced === undefined || saidAlready
       ? []
@@ -448,11 +520,16 @@ function markedWords(settings: readonly Setting[]): string[] {
   const [only] = settings;
   if (marked.length === 0) return [];
   if (settings.length === 1 && only !== undefined)
-    return [`The keeper reads ${JSON.stringify(only.mark)} on it.`];
+    return [`The keeper reads ${JSON.stringify(only.mark)}${toneOf(only)} on it.`];
   const each = marked.map(
-    ({ what, mark }) => `${JSON.stringify(what.title ?? what.ref)} as ${JSON.stringify(mark)}`,
+    (setting) =>
+      `${JSON.stringify(setting.what.title ?? setting.what.ref)} as ${JSON.stringify(setting.mark)}${toneOf(setting)}`,
   );
   return [`Marked: ${each.join("; ")}.`];
+}
+
+function toneOf({ markTone }: Setting): string {
+  return markTone === undefined ? "" : `, in ${markTone}`;
 }
 
 interface SignalTold {
@@ -528,18 +605,21 @@ interface Several {
   done: readonly SetOut[];
   stopped: string | undefined;
   asked: number;
+  arranged: Arrangement | ShowRefusal | undefined;
 }
 
 async function severalWords(
   settings: ShowSettings,
   target: ShowTarget,
-  { done, stopped, asked }: Several,
+  { done, stopped, asked, arranged }: Several,
   args: ShowArgs,
 ): Promise<string> {
   const mine = done.map(({ setting }) => setting);
   const ids = new Set(mine.map(({ id }) => id));
   const outside = mine.filter(({ where }) => where === "outside").map(({ id }) => id);
-  if (outside.length > 0)
+  if (arranged !== undefined && !("refused" in arranged))
+    await settings.reportNaming((heard) => heard.arrangement?.id === arranged.id);
+  else if (outside.length > 0)
     await settings.reportNaming(({ placements }) =>
       outside.every((id) => placements.some((placed) => placed.id === id)),
     );
@@ -556,6 +636,7 @@ async function severalWords(
       : [`They arrived ${mannerOf(first.mood, args.mood)}.`];
   return [
     `Set out ${mine.length}: ${stood.map(placedWords).join("; ")}.`,
+    ...laidOutWords(arranged),
     ...mannered,
     theyGoWhen(first?.until ?? "seen", lastingSaid(args.until)),
     ...(replaced === 0 ? [] : [`${replaced} of them replaced what you set out before.`]),
@@ -579,6 +660,12 @@ function placedWords({ setting, where, seat, by, note }: Stood): string {
   }
   if (by === undefined || seat === undefined) return `${called} outside, its seat not yet reported`;
   return `${called} in ${seatWords(seat)}`;
+}
+
+function laidOutWords(arranged: Arrangement | ShowRefusal | undefined): string[] {
+  if (arranged === undefined) return [];
+  if ("refused" in arranged) return [`They were not laid out together: ${arranged.error}.`];
+  return [`Laid out together as ${arranged.shape ?? "the console chose"}.`];
 }
 
 function theyGoWhen(until: string, lasting: string | undefined): string {

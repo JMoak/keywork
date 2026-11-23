@@ -312,7 +312,12 @@ preview's text is never journaled ([`backlog/122`](backlog/122-tool-decision-evi
 | `ask` | `PermissionAsk` | `{ tool, callId, arguments, rule, rules, preview? }`. |
 
 `rule` says why the gate is asking: `policy` (a configured rule says ask) or `default` (the
-tool mutates and no rule covers it). A session left quiet (`POST /sessions/{id}/quiet`) raises
+tool mutates and no rule covers it). `always` (since contract 1.38) is a call that acts on the
+keeper's machine and so asks every time: a `show` of the `terminal` or `screen` pane. No rule,
+preset, posture, quiet session, standing grant or promoted rule class decides it, its `rules` are
+empty so a `session` or `workspace` answer remembers nothing, and with no one to ask it is refused.
+A local agent's `show` of one over a creature's MCP server raises the same ask on the creature's
+conversation, with `gate.ask` and `gate.permission` recorded there. A session left quiet (`POST /sessions/{id}/quiet`) raises
 no ask for a call its quiet posture grants; see `gate.permission`.
 
 `rule` can also be `trusted`: the trusted read posture allows a command but asks for its
@@ -795,6 +800,27 @@ The ledger is a record for display: it grants, widens and implies nothing about 
 may do, and a question is answered only where it was asked. Since contract 1.37; an older server
 sends none and serves no `GET /creatures/{slug}/ledger`.
 
+An entry may carry a short conversation about it (since contract 1.38; a 1.37 server sends no
+`conversation`, which a client reads as `null`). `POST /creatures/{slug}/ledger/{id}/conversation`
+opens one, a fresh session of kind `thread` on this server, titled `About: <entry title>`, its
+journal naming the entry (`keywork.creature.ledger-conversation`, so `GET /sessions/{id}` carries
+`ledgerEntry: { creature, id }`), and framed with the entry so the creature speaks first. Asking
+again for the same entry answers the same conversation, open or ended; a question already answered
+with no conversation is refused. The conversation ends when the entry's question is answered
+(granted, denied or lapsed, `endedBy: "answer"`) or when the keeper closes it with
+`POST /creatures/{slug}/ledger/{id}/conversation/close` (`endedBy: "keeper"`, which also stops a
+running turn). Ended is read-only and kept in two places: the conversation's own journal gains a
+`keywork.creature.conversation-ended` entry `{ at, by, decided }`, so `POST /sessions/{id}/prompt`
+and `/inject` answer 409, `GET /sessions/{id}` still reads it with `endedAt`, and it is no longer
+among the creature's live `threads`; and the entry's `conversation.state` becomes `ended`, so the
+console still reaches it from the entry. One line saying what was decided goes into the creature's
+main conversation as a creature report (`The conversation about "<title>" ended: the keeper allowed
+it.`). Both survive a restart, and a question the stop answers `lapsed` ends its conversation at
+the next start. Each change fires this event with `change: "changed"`. The conversation answers no
+question and grants nothing: a permission question is still answered with `POST /asks/{callId}`, and
+the conversation's own tool calls pass the same gate as any thread's. It is for work on this server
+only; a project thread served by another server has none.
+
 | Field | Type | Meaning |
 |---|---|---|
 | `creature` | `string` | The creature's slug. |
@@ -809,6 +835,7 @@ sends none and serves no `GET /creatures/{slug}/ledger`.
 | `entry.closedAt` | `string \| null` | When it was answered, finished or blocked; `null` while it is open. Marking a task seen leaves it as it was. |
 | `entry.answer` | `"granted" \| "denied" \| "lapsed" \| null` | On an answered question: what the answer was, or `lapsed` when nobody answered (the ask timed out, its session or the server closed first, or the chore stopped needing the acceptance some other way). `null` otherwise. |
 | `entry.about` | `object` | `{ kind: "ask", callId, tool }` (answer it with `POST /asks/{callId}`), `{ kind: "grants", routineId }` (accept it on the chore), `{ kind: "chore", routineId, runId }` or `{ kind: "thread" }`. |
+| `entry.conversation` | `object \| null` | `{ session, state, openedAt, endedAt, endedBy }` once a conversation about the entry was opened: `session` is its session, `state` is `open` or `ended`, `endedAt` and `endedBy` (`answer` or `keeper`) are `null` while it is open. `null` when none was opened. Since contract 1.38. |
 | `folded` | `number` | How many of the creature's closed entries have left the list so far. |
 
 ### routine.fired
@@ -1136,7 +1163,8 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
 | `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
-| `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`. A session may name it in other words; the name here is always one of those. |
+| `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`, and since contract 1.38 also `"workshop"`, `"mills"`, `"parcels"`, `"bots"`, `"campaigns"`, `"themes"`, `"posture"`, `"stead"`, `"terminal"` or `"screen"`. A session may name it in other words; the name here is always one of those. A `terminal` or `screen` acts on the keeper's machine, so the `show` that sets one out asks the keeper every time (`gate.ask` with `rule: "always"`) and nothing is proposed unless they allow it. |
+| `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project by name or path, another creature's workshop); left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
 | `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening and, since contract 1.33, when the session gave none. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |
@@ -1151,6 +1179,7 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | `setting.weight` | `"lead" \| "support" \| "aside"`, optional | Who should have the large seat when several stand together. With a `from` that stands outside, `lead` drills in. Since contract 1.33. |
 | `setting.mood` | `"calm" \| "brisk" \| "eager" \| "playful" \| "urgent" \| "decisive" \| "tentative"`, optional | How the pane arrives, motion only; absent means the console's own way. `decisive` moves everything at once and lands firmly; `tentative` moves one pane at a time with pauses and lands lightly. Since contract 1.33. |
 | `setting.mark` | `string`, optional | A word or two, at most 24 characters, the session asked the keeper to read on the setting for as long as it is out (`chosen`, `draft`, `done`); absent when it has none. A replacement keeps it unless it names another, and `show.changed` follows a change. Since contract 1.33. |
+| `setting.markTone` | `"good" \| "caution" \| "bad"`, optional | The tone the mark is drawn in; absent means neutral, and it is only ever present with a `mark`. The session gives it with `show` or `arrange` in other words too (success, warning, error); a console draws it in its own palette and never in the critical red. A new mark without a tone is neutral, and a replacement that names no mark keeps the tone. Since contract 1.38. |
 | `setting.agent` | `{ name?, color? }`, optional | Present when an agent outside the session set this out through a creature's MCP server; `name` is the name its client gave, at most 40 characters, and is absent when it gave none. `color` is `cyan`, `magenta`, `green`, `yellow` or `blue` (never red, which a console keeps for errors): the engine gives each agent name one colour, picks a free one while one is free, and keeps it for that name while the server runs and across a restart for as long as one of its settings is kept, so a console draws the agent's square in it. The setting is still the creature's (`origin: "creature"`, the creature's limits, the creature may withdraw it), and a console marks it as the agent's rather than the creature's. Since contract 1.33. |
 | `setting.signal` | `"needs-you" \| "critical"`, optional | How much the setting wants the keeper, which a console draws as an outline: `needs-you` (amber) when the session's work waits on the keeper's answer, `critical` (red, and nothing else in a pane's chrome is red) when something is broken or about to be lost. Absent when it has none. The session raises it with `show` or `arrange` and may say it in other words; the wire carries only these two. A `critical` is raised only with a `why` the session gives, which becomes the setting's `why`; only on a setting the raiser set out itself; at most one at a time for the creature or thread and one for each agent; and it holds the setting out until the keeper has seen it, so its `until` becomes `seen`. Only the one who set the setting out, or the keeper through `DELETE /show/{id}/signal`, lowers a `critical`; a timer never does. An agent raising one is written to the audit with its reason. A replacement keeps the signal unless it names another, and `show.changed` follows a change. A console may also draw its own marks (a new arrival, a pane waiting on a question) that never reach the wire. Since contract 1.35; an older server sends none. |
 

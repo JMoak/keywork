@@ -73,6 +73,12 @@ export function missingSession(): Response {
   return json(404, { error: "no session has that id" });
 }
 
+export function endedConversation(): Response {
+  return json(409, {
+    error: "this conversation has ended and is read-only; open a new one from its ledger entry",
+  });
+}
+
 export async function bodyOf(request: Request): Promise<unknown> {
   try {
     return await request.json();

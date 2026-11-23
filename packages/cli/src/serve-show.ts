@@ -1,7 +1,10 @@
 import { homedir } from "node:os";
+import { basename } from "node:path";
 import {
   type Clock,
+  type CreatureRegistry,
   creatureTagOf,
+  type PlaceBook,
   type SessionStore,
   SettingStore,
   type ShowThread,
@@ -61,6 +64,21 @@ export function workspaceSettingsFile(place: {
 }): string {
   const userRoot = place.userRoot ?? homedir();
   return settingsFileIn(workspaceStateDir(userRoot, place.cwd, place.workspaceSlug));
+}
+
+export interface SteadPlacesOptions {
+  registry: Pick<CreatureRegistry, "list">;
+  cwd: string;
+  workspaceSlug?: string | undefined;
+}
+
+export function steadPlaces({ registry, cwd, workspaceSlug }: SteadPlacesOptions): PlaceBook {
+  const workspace = { name: workspaceSlug ?? basename(cwd), directory: cwd };
+  return {
+    creatures: async () =>
+      (await registry.list()).map(({ slug, file }) => ({ slug, name: file.name })),
+    projects: async () => [workspace],
+  };
 }
 
 export function showThreadOf(store: SessionStore): ShowThread {

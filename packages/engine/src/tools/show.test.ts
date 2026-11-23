@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { Agent } from "../agent.ts";
+import { MockProvider, textTurn, toolCallTurn } from "../mock-provider.ts";
+import { PermissionLedger } from "../permission-ledger.ts";
 import { FakeClock } from "../routines/testing.ts";
 import type { ShowThread } from "../show/lineage.ts";
+import type { PlaceBook } from "../show/places.ts";
 import type { Setting } from "../show/setting.ts";
 import { SettingStore, type SettingStoreOptions } from "../show/store.ts";
 import { type ShowTarget, showTool } from "./show.ts";
@@ -107,8 +111,8 @@ describe("the show tool", () => {
 
   it("says which panes are near when it is asked for one the console does not have", async () => {
     const { tool, proposed } = seated();
-    expect(await tool.execute({ what: { kind: "pane", ref: "terminal" } })).toMatch(
-      /^Not set out: no pane is called "terminal"; the nearest are /,
+    expect(await tool.execute({ what: { kind: "pane", ref: "aquarium" } })).toMatch(
+      /^Not set out: no pane is called "aquarium"; the nearest are /,
     );
     expect(
       await tool.execute({
@@ -276,7 +280,7 @@ describe("the show tool's from", () => {
 
     for (const from of ["stranger", "unknown", hal.proposed[0]?.id ?? ""]) {
       expect(await tool.execute({ what: plan, why: "Look.", from })).toBe(
-        `Not set out: nothing you may grow from has the id ${from}; name a setting you set out that is still out, or a thread of yours.`,
+        `Not set out: from names a place, something of yours that is out or a thread of yours, and nowhere in the stead is called ${JSON.stringify(from)}; say your workshop, the porch, the storehouse or the mill.`,
       );
     }
     expect(settings.open()).toEqual([]);
@@ -519,5 +523,101 @@ describe("the show tool outside", () => {
       "The next thing was not set out: 12 of your settings already stand outside, the most that may at once;",
     );
     expect(settings.open()).toHaveLength(12);
+  });
+});
+
+describe("where a pane rises from", () => {
+  const book: PlaceBook = {
+    creatures: async () => [
+      { slug: "wren", name: "Wren" },
+      { slug: "pip", name: "Pip" },
+    ],
+    projects: async (creature) =>
+      creature === "wren" ? [{ name: "anchor", directory: "C:/work/anchor" }] : [],
+  };
+
+  it("is the creature's own workshop unless a place is named, and an unknown place is refused in plain words", async () => {
+    const { settings } = seated();
+    const tool = showTool({
+      creature: "wren",
+      sessionId: "s1",
+      places: book,
+      settings: () => settings,
+    });
+    const placed = async (from: string | undefined, ref: string) => {
+      await tool.execute({ what: { kind: "note", ref }, ...(from !== undefined && { from }) });
+      return settings.open().find(({ what }) => what.ref === ref)?.place;
+    };
+
+    expect(await placed(undefined, "said nothing")).toEqual({ kind: "workshop", creature: "wren" });
+    expect(await placed("the porch", "porch")).toEqual({ kind: "porch" });
+    expect(await placed("the storehouse", "store")).toEqual({ kind: "store" });
+    expect(await placed("Pip's workshop", "pip")).toEqual({ kind: "workshop", creature: "pip" });
+    expect(await placed("the anchor project", "by name")).toEqual({
+      kind: "project",
+      creature: "wren",
+      directory: "C:/work/anchor",
+    });
+    expect(await placed("C:\\work\\anchor\\", "by path")).toEqual({
+      kind: "project",
+      creature: "wren",
+      directory: "C:/work/anchor",
+    });
+
+    const out = settings.open().length;
+    const refused = await tool.execute({ what: { kind: "note", ref: "lost" }, from: "the barn" });
+
+    expect(refused).toBe(
+      `Not set out: from names a place, something of yours that is out or a thread of yours, and nowhere in the stead is called "the barn"; say your workshop, the porch, the storehouse, the mill, a project by name or path (anchor) or another creature's workshop (pip's workshop).`,
+    );
+    expect(settings.open()).toHaveLength(out);
+  });
+});
+
+describe("a terminal or a screen", () => {
+  it("asks the keeper every time, even under the loosest posture, in a quiet session and after a grant", async () => {
+    const { settings } = seated();
+    const tool = showTool({ creature: "wren", sessionId: "s1", settings: () => settings });
+    const ledger = new PermissionLedger({
+      trusted: true,
+      root: process.cwd(),
+      workspace: { rules: () => [], grant: () => undefined, revoke: () => false },
+      user: () => "allow",
+    });
+    ledger.setQuiet("s1", true);
+    ledger.record("s1", "session", [{ action: "show", resource: "*", effect: "allow" }]);
+    const shows = [
+      { kind: "pane", ref: "terminal" },
+      { kind: "pane", ref: "the screen" },
+      { kind: "note", ref: "Nothing on the machine." },
+      { kind: "pane", ref: "a shell" },
+    ];
+    const asked: string[] = [];
+    const agent = new Agent({
+      provider: new MockProvider([
+        ...shows.map((what, at) =>
+          toolCallTurn({ type: "tool-call", callId: `c${at}`, name: "show", arguments: { what } }),
+        ),
+        textTurn("Done."),
+      ]),
+      tools: [tool],
+      permissions: ledger.resolverFor("s1"),
+      guard: {
+        grantsQuietly: (call, rule) => ledger.grantQuietly("s1", call, rule) !== undefined,
+        confirm: async (call, ask) => {
+          asked.push(`${call.callId} ${ask?.rule}`);
+          return { approved: true, gate: "user", scope: "session" };
+        },
+      },
+    });
+
+    await agent.send("Open the terminal and the screen, then note it, then a shell.");
+
+    expect(asked).toEqual(["c0 always", "c1 always", "c3 always"]);
+    expect(settings.open().map(({ what }) => what.ref)).toEqual([
+      "screen",
+      "Nothing on the machine.",
+      "terminal",
+    ]);
   });
 });

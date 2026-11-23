@@ -35,7 +35,7 @@
       "args": {
         "what": {
           "kind": "pane",
-          "ref": "terminal"
+          "ref": "aquarium"
         }
       },
       "expect": {
@@ -43,7 +43,7 @@
           {
             "type": "text",
             "text": {
-              "$regex": "^Not set out: no pane is called \"terminal\"; the nearest are "
+              "$regex": "^Not set out: no pane is called \"aquarium\"; the nearest are "
             }
           }
         ],

@@ -55,6 +55,16 @@ export {
   stageRooms,
 } from "./placements.ts";
 export {
+  homePlaceOf,
+  noPlaceBook,
+  type PlaceBook,
+  type PlaceCreature,
+  type PlaceProject,
+  type PlaceReading,
+  placeCalled,
+  placeSaid,
+} from "./places.ts";
+export {
   latticeSpan,
   namedSeats,
   type Seat,
@@ -66,8 +76,13 @@ export {
 export {
   type AgentColor,
   agentColors,
+  type MachinePane,
+  type MarkColour,
+  type MarkTone,
   type Mood,
+  machinePanes,
   markLength,
+  markTones,
   moods,
   type Rung,
   rungs,
@@ -90,6 +105,8 @@ export {
   type ShowEventType,
   type ShowProposed,
   type ShowSettled,
+  type SteadPlace,
+  type SteadPlaceKind,
   settingAnswers,
   settingKinds,
   settingOrigins,
@@ -97,6 +114,7 @@ export {
   settingSignals,
   settingSizes,
   settingWeights,
+  steadPlaceKinds,
 } from "./setting.ts";
 export type { StandingPicture, Stood } from "./standing.ts";
 export {
