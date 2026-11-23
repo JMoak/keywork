@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.38",
+    "x-keywork-contract": "1.39",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -23,6 +23,9 @@
         "responses": {
           "200": {
             "description": "The document."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         },
         "security": []
@@ -35,6 +38,9 @@
         "responses": {
           "200": {
             "description": "`{ cartridges }` with id, version, digest, title, description, and stages."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "501": {
             "description": "Campaigns are unavailable."
@@ -49,6 +55,9 @@
         "responses": {
           "200": {
             "description": "`{ campaigns }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "501": {
             "description": "Campaigns are unavailable."
@@ -185,6 +194,9 @@
           },
           "403": {
             "description": "Workspace trust is required."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -240,6 +252,9 @@
           },
           "422": {
             "description": "Destination is outside scope, exists, or cannot be written."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -264,6 +279,9 @@
           },
           "404": {
             "description": "No accessible campaign has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -318,6 +336,9 @@
           },
           "422": {
             "description": "The requested execution cannot be admitted."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -345,6 +366,9 @@
           },
           "404": {
             "description": "Unknown campaign."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -380,6 +404,9 @@
           },
           "404": {
             "description": "Unknown artifact."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -391,6 +418,9 @@
         "responses": {
           "200": {
             "description": "An open text/event-stream."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -402,6 +432,9 @@
         "responses": {
           "200": {
             "description": "The summaries."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -411,6 +444,9 @@
         "responses": {
           "201": {
             "description": "The new session's summary."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -435,6 +471,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -460,6 +499,9 @@
           },
           "409": {
             "description": "A turn is running."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no trash."
@@ -516,6 +558,9 @@
           },
           "409": {
             "description": "The session is a ledger conversation that has ended, so it takes no prompt."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -579,6 +624,9 @@
           },
           "409": {
             "description": "The session is a ledger conversation that has ended, so it takes no prompt."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -603,6 +651,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -614,6 +665,9 @@
         "responses": {
           "200": {
             "description": "The pending asks."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -676,6 +730,9 @@
           },
           "409": {
             "description": "That ask was already answered or timed out."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -687,6 +744,9 @@
         "responses": {
           "200": {
             "description": "The overview, or the inert shape when the workspace is untrusted."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -698,6 +758,9 @@
         "responses": {
           "200": {
             "description": "The staged items and their count."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -725,6 +788,9 @@
           },
           "404": {
             "description": "No staged item has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -752,6 +818,9 @@
           },
           "404": {
             "description": "No staged item has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -763,6 +832,9 @@
         "responses": {
           "200": {
             "description": "The notes."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -787,6 +859,9 @@
           },
           "404": {
             "description": "No note has that name."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -798,6 +873,9 @@
         "responses": {
           "200": {
             "description": "The dates."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -822,6 +900,9 @@
           },
           "400": {
             "description": "The date is not `YYYY-MM-DD`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -833,6 +914,9 @@
         "responses": {
           "200": {
             "description": "The ledger entries."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -860,6 +944,9 @@
           },
           "404": {
             "description": "No ledger entry has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -895,6 +982,9 @@
           },
           "400": {
             "description": "The body is not `{ query, arc? }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -919,6 +1009,9 @@
           },
           "404": {
             "description": "No review is staged for that arc."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -978,6 +1071,9 @@
           },
           "409": {
             "description": "The note is below the delivery bar."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1033,6 +1129,9 @@
           },
           "409": {
             "description": "No other active arc can carry the question."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1060,6 +1159,9 @@
           },
           "404": {
             "description": "No review is staged for that arc."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1103,6 +1205,9 @@
           },
           "404": {
             "description": "No review is staged for that arc."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1152,6 +1257,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1196,6 +1304,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1244,6 +1355,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first. Only returning to the default needs an idle session."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1290,6 +1404,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1317,6 +1434,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1344,6 +1464,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1399,6 +1522,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -1424,6 +1550,9 @@
           },
           "404": {
             "description": "No session has that id. Or `{ error: \"no turn N on this session's path\" }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1448,6 +1577,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1472,6 +1604,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1527,6 +1662,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1572,6 +1710,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -1612,6 +1753,9 @@
           "409": {
             "description": "Loosening needs `confirmed: true`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "501": {
             "description": "This server was started without a preset switch."
           }
@@ -1625,6 +1769,9 @@
         "responses": {
           "200": {
             "description": "The workspace report."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workspace."
@@ -1646,6 +1793,9 @@
           "409": {
             "description": "The root is marked untrusted; only `keywork trust` in a terminal reverses that."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no workspace."
           }
@@ -1665,6 +1815,9 @@
           },
           "404": {
             "description": "No directory at that path."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workspace."
@@ -1695,6 +1848,9 @@
           "415": {
             "description": "The slice holds a NUL byte: a binary file."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no workspace."
           }
@@ -1708,6 +1864,9 @@
         "responses": {
           "200": {
             "description": "The servers."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no MCP registry."
@@ -1735,6 +1894,9 @@
           },
           "404": {
             "description": "No MCP server has that name."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "The registry is stopping, or this host serves none."
@@ -1783,6 +1945,9 @@
           "404": {
             "description": "No MCP server has that name."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "The registry is stopping, or this host serves none."
           }
@@ -1810,6 +1975,9 @@
           "404": {
             "description": "No MCP server has that name."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no MCP registry."
           }
@@ -1826,6 +1994,9 @@
           },
           "403": {
             "description": "The workspace is untrusted, so there are no arcs."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no arcs."
@@ -1865,6 +2036,9 @@
           },
           "409": {
             "description": "An arc with that slug already exists."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no arcs."
@@ -1916,6 +2090,9 @@
           "409": {
             "description": "The arc is not active."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no arcs."
           }
@@ -1945,6 +2122,9 @@
           },
           "404": {
             "description": "No arc has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no arcs."
@@ -2000,6 +2180,9 @@
           "409": {
             "description": "The arc is not active, or no theme has that name."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no arcs."
           }
@@ -2046,6 +2229,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no arcs."
@@ -2097,6 +2283,9 @@
           "409": {
             "description": "A turn is running."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no bots."
           }
@@ -2110,6 +2299,9 @@
         "responses": {
           "200": {
             "description": "The bots."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no bots."
@@ -2158,6 +2350,9 @@
           "409": {
             "description": "A bot with that name already exists."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no bots."
           }
@@ -2171,6 +2366,9 @@
         "responses": {
           "200": {
             "description": "The workspaces."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workspaces."
@@ -2208,6 +2406,9 @@
           "409": {
             "description": "A workspace with that slug already exists."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no workspaces."
           }
@@ -2244,6 +2445,9 @@
           },
           "409": {
             "description": "No workspace has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workspaces."
@@ -2293,6 +2497,9 @@
           "409": {
             "description": "The dir is not a directory, lies outside the root, is the root itself, or is already a focus dir; or the workspace is not declared."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no workspaces."
           }
@@ -2341,6 +2548,9 @@
           "409": {
             "description": "That dir is not a focus dir of the workspace, or the workspace is not declared."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no workspaces."
           }
@@ -2354,6 +2564,9 @@
         "responses": {
           "200": {
             "description": "The themes."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no themes."
@@ -2381,6 +2594,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2426,6 +2642,9 @@
           },
           "404": {
             "description": "No session has that id, or no entry in it has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2475,6 +2694,9 @@
           },
           "404": {
             "description": "No session has that id, or no entry in it has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2523,6 +2745,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2550,6 +2775,9 @@
           },
           "409": {
             "description": "`{ error: \"no baseline\" }`: checkpoints are off for this server, so there is no session start to diff against."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2586,6 +2814,9 @@
           },
           "413": {
             "description": "The working file is over the 20 MiB cap GET /files applies."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2610,6 +2841,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -2666,6 +2900,9 @@
           "404": {
             "description": "No session has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "501": {
             "description": "`{ error: \"verdicts are not wired\" }`: this server's host records no hunk verdicts yet, so the verdict was not written."
           }
@@ -2680,6 +2917,9 @@
           "200": {
             "description": "The trashed sessions."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no trash."
           }
@@ -2691,6 +2931,9 @@
         "responses": {
           "200": {
             "description": "The trash is empty."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no trash."
@@ -2719,6 +2962,9 @@
           "404": {
             "description": "Nothing in the trash has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no trash."
           }
@@ -2746,6 +2992,9 @@
           "404": {
             "description": "Nothing in the trash has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no trash."
           }
@@ -2759,6 +3008,9 @@
         "responses": {
           "200": {
             "description": "`{ trusted, bundle, workspace, session }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2809,6 +3061,9 @@
           },
           "409": {
             "description": "The workspace is not trusted, or the rule is neither one an answered ask would record nor a whole MCP server: a `write` or `edit` rule, a pattern over tool names, an `mcp` rule over part of a server or over several, a wildcard over a delete or `git branch -D`, any force push, hard reset, `git clean` or discarding checkout, or any other shape (`error` names what an answer would record instead, when there is one)."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2872,6 +3127,9 @@
           },
           "409": {
             "description": "The workspace is not trusted, or the rule is neither one an answered ask would record nor a whole MCP server: a `write` or `edit` rule, a pattern over tool names, an `mcp` rule over part of a server or over several, a wildcard over a delete or `git branch -D`, any force push, hard reset, `git clean` or discarding checkout, or any other shape (`error` names what an answer would record instead, when there is one)."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2922,6 +3180,9 @@
           },
           "404": {
             "description": "No workspace grant matches that rule."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -2982,6 +3243,9 @@
           },
           "404": {
             "description": "That session holds no grant matching the rule."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3026,6 +3290,9 @@
           },
           "404": {
             "description": "No session has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3053,6 +3320,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3106,6 +3376,9 @@
           },
           "409": {
             "description": "A turn is running; wait for it or abort it first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3142,6 +3415,9 @@
           },
           "403": {
             "description": "Memory is inert: the workspace is untrusted."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "501": {
             "description": "`{ error: \"this node does not serve forget by source yet\" }`."
@@ -3192,6 +3468,9 @@
           },
           "409": {
             "description": "The dry run is stale; run it again and apply its new digest."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "501": {
             "description": "`{ error: \"this node does not serve forget by source yet\" }`."
@@ -3255,6 +3534,9 @@
           },
           "409": {
             "description": "`to` is past the end of the queue, or the move would cross a steered prompt."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3287,6 +3569,9 @@
           },
           "404": {
             "description": "No session has that id, or `{ error: \"no queued prompt has that id\" }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3325,6 +3610,9 @@
           },
           "415": {
             "description": "The slice holds a NUL byte."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -3336,6 +3624,9 @@
         "responses": {
           "200": {
             "description": "The creatures."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no creatures."
@@ -3483,6 +3774,9 @@
           "409": {
             "description": "A bot already has that slug, or the workspace is not trusted."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The substrate's own command failed while raising the workshop; `error` says what it said."
           },
@@ -3512,6 +3806,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no creatures."
@@ -3700,6 +3997,9 @@
           "404": {
             "description": "No creature has that slug."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no creatures."
           }
@@ -3731,6 +4031,9 @@
           "409": {
             "description": "Not confirmed: `removal` lists what `goes` and what `stays` when it is."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no creatures."
           }
@@ -3757,6 +4060,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
@@ -3809,6 +4115,9 @@
           "409": {
             "description": "`{ promoted: false, refusal, sentence, calibration? }`, with `refusal` one of `one-way-door`, `every-class`, `promoted`, `unanswered`, `uncalibrated` or `blind-review`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
           }
@@ -3856,6 +4165,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet to grade the rows."
@@ -3908,6 +4220,9 @@
           "409": {
             "description": "`{ overturned: false, reason }`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no creatures, knows no node state directory, or cannot load ratchet."
           }
@@ -3935,6 +4250,9 @@
           "404": {
             "description": "No creature has that slug."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no creatures."
           }
@@ -3961,6 +4279,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no creatures."
@@ -3997,6 +4318,9 @@
           },
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host cannot serve the creature project context."
@@ -4042,6 +4366,9 @@
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host cannot serve the creature project context."
           }
@@ -4083,6 +4410,9 @@
           },
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host cannot serve the creature project context."
@@ -4167,6 +4497,9 @@
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host cannot serve the creature project context."
           }
@@ -4249,6 +4582,9 @@
           },
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host cannot serve the creature project context."
@@ -4333,6 +4669,9 @@
           "409": {
             "description": "The project is unbound or the request ID was used for different work."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host cannot serve the creature project context."
           }
@@ -4347,8 +4686,28 @@
           "200": {
             "description": "`{ handoffs }`, every counted pair."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host keeps no hand-off tally."
+          }
+        }
+      }
+    },
+    "/creature-worksites": {
+      "get": {
+        "operationId": "listCreatureWorksites",
+        "summary": "The folders each creature in this workspace has worked in: `{ worksites }`, one row per creature and folder, each `{ creature, directory, root, project, conversations, since, latest, active }`, ordered by `creature`, then `since`, then `directory`. `root` is the directory the conversations started in (this workspace, or a bound project's directory) and `directory` the worksite, an absolute path in the form a session reports its `cwd`. When `root` is a repository (it holds `.git`), every conversation there that had a turn counts toward `root` itself, and its folders are never worksites. Otherwise a conversation counts toward each immediate child folder of `root` in which a `write` or `edit` tool call with a `path` succeeded, and toward `root` itself only for a file changed directly in it. A file changed outside `root` counts toward the nearest folder above it that holds `.git`, as a row whose `root` is that folder, and toward nothing when there is none. Reading, searching, talking and commands count toward nothing, since no command's working directory is recorded, and `.keywork` is never a worksite. A sub-agent's work belongs to the conversation that delegated it. A bound project's threads run in that project's own runtime, which counts them by the same rule for the creature; this server reads those rows from it when it starts, after it starts a thread there, and once a second while one of its threads there is working, and carries them with `project` set to the project's id and `root` to the project's directory. `conversations` is how many of the creature's conversations worked there, `since` and `latest` the first and the latest work there (ISO 8601), and `active` whether a turn is running now in a conversation that has worked there. On Windows two spellings of one folder are one row. Conversations from before contract 1.39 are counted once from the session journals at the first start; after that the server counts work as it happens and keeps the tally for the workspace under the node's state, saved as rows change, so it outlives a restart without reading the journals again. Rows only grow; removing a creature (`DELETE /creatures/{slug}?confirmed=true`) drops its rows. A console follows `creature.worksites` on the event stream after a cold start. With `?visitor=<workspace>` the answer is instead `{ worksites, working }`: the rows of the project threads this server ran for the creatures of that workspace (the identity a creature project request names), with `creature` their slug there, and `working` how many of those threads have a turn running; it is what the creature's own server reads. The tally is for display only: it grants, widens and implies nothing about what any creature may do. Since contract 1.39.",
+        "responses": {
+          "200": {
+            "description": "`{ worksites }`, every counted worksite; `{ worksites, working }` with `?visitor`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no worksite tally."
           }
         }
       }
@@ -4373,6 +4732,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host keeps no creature ledger."
@@ -4412,6 +4774,9 @@
           "409": {
             "description": "The entry is not a finished task."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host keeps no creature ledger."
           }
@@ -4421,7 +4786,7 @@
     "/creatures/{slug}/ledger/{id}/conversation": {
       "post": {
         "operationId": "openLedgerConversation",
-        "summary": "Open a short conversation with the creature about one entry of its ledger, or return the one already opened: the answer is `{ entry }` with `entry.conversation` set, and asking again for the same entry returns the same conversation, open or ended. The conversation is a fresh session of kind `thread` on this server, titled \"About: <entry title>\", whose journal names the entry (`GET /sessions/{id}` carries `ledgerEntry: { creature, id }`), framed with the entry so the creature speaks first. `entry.conversation` is `{ session, state, openedAt, endedAt, endedBy }`: `state` is `open` or `ended`, and `endedBy` is `answer` when the question of the entry was answered (granted, denied or lapsed) or `keeper` when the keeper closed it with `POST /creatures/{slug}/ledger/{id}/conversation/close`. An ended conversation is read-only: `POST /sessions/{id}/prompt` and `/inject` answer 409, `GET /sessions/{id}` still reads it with `endedAt`, the entry keeps pointing at it, and it is no longer among the live `threads` of the creature. When it ends, one line saying what was decided goes into the main conversation of the creature as a creature report. `creature.ledger` fires with `change: \"changed\"` when it opens and when it ends. It is for work on this server only, answers no question and grants nothing: a permission question is answered with `POST /asks/{callId}` as before. Since contract 1.38.",
+        "summary": "Open a short conversation with the creature about one entry of its ledger, or return the one already opened: the answer is `{ entry }` with `entry.conversation` set, and asking again for the same entry returns the same conversation, open or ended. The conversation is a fresh session of kind `thread` on this server, titled \"About: <entry title>\", whose journal names the entry (`GET /sessions/{id}` carries `ledgerEntry: { creature, id }`), framed with the entry so the creature speaks first, on the conversation model of the creature (since contract 1.39; never the model its work threads use). `entry.conversation` is `{ session, state, openedAt, endedAt, endedBy }`: `state` is `open` or `ended`, and `endedBy` is `answer` when the question of the entry was answered (granted, denied or lapsed) or `keeper` when the keeper closed it with `POST /creatures/{slug}/ledger/{id}/conversation/close`. An ended conversation is read-only: `POST /sessions/{id}/prompt` and `/inject` answer 409, `GET /sessions/{id}` still reads it with `endedAt`, the entry keeps pointing at it, and it is no longer among the live `threads` of the creature. When it ends, one line saying what was decided goes into the main conversation of the creature as a creature report. `creature.ledger` fires with `change: \"changed\"` when it opens and when it ends. It is for work on this server only, answers no question and grants nothing: a permission question is answered with `POST /asks/{callId}` as before. Since contract 1.38.",
         "parameters": [
           {
             "name": "slug",
@@ -4449,6 +4814,9 @@
           },
           "409": {
             "description": "The entry is a question already answered, and no conversation was opened about it."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host keeps no creature ledger, or opens no conversations about it."
@@ -4484,6 +4852,9 @@
           },
           "404": {
             "description": "No creature has that slug, its ledger holds no entry with that id, or no conversation was opened about it."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host keeps no creature ledger, or opens no conversations about it."
@@ -4528,6 +4899,9 @@
           },
           "404": {
             "description": "No creature here has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "Creature MCP is not served: the node keeps no audit log without its mesh."
@@ -4604,6 +4978,9 @@
           "404": {
             "description": "No creature here has that slug."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "Creature MCP is not served here."
           }
@@ -4630,6 +5007,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -4662,6 +5042,9 @@
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -5014,6 +5397,9 @@
           },
           "404": {
             "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -5044,6 +5430,9 @@
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5085,6 +5474,9 @@
           },
           "409": {
             "description": "`{ run }`: a run is still in progress, so this one was recorded as skipped."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5120,6 +5512,9 @@
           },
           "409": {
             "description": "The chore has no run in progress."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5171,6 +5566,9 @@
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5206,6 +5604,9 @@
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5217,6 +5618,9 @@
         "responses": {
           "200": {
             "description": "`{ items }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5252,6 +5656,9 @@
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -5293,6 +5700,9 @@
           },
           "413": {
             "description": "The body is larger than the hook takes."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         },
         "security": []
@@ -5305,6 +5715,9 @@
         "responses": {
           "200": {
             "description": "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision }, conversation? }`. Since 1.31, a host-wide report may include `conversation`: `{ provider, model, mode: chat | tools }` or `{ refused, detail }`. Chat mode supports basic creature conversation without tool execution; strong/loop requirements for project work are unchanged. A node-filtered report omits conversation. Neither selection mode proves a successful model response."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no model inventory."
@@ -5352,6 +5765,9 @@
           "400": {
             "description": "The body is not `{ endpoint: http(s) URL, model?, behaviour?, refresh? }`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no model inventory."
           }
@@ -5368,6 +5784,9 @@
           },
           "400": {
             "description": "This operation accepts no request body."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host cannot refresh model connections."
@@ -5412,6 +5831,9 @@
           },
           "400": {
             "description": "The body is not `{ endpoint: http(s) URL, model, license }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host keeps no license acknowledgements."
@@ -5483,6 +5905,9 @@
           "400": {
             "description": "`endpoint` is not an http(s) URL or `model` is missing."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host runs no bench."
           }
@@ -5496,6 +5921,9 @@
         "responses": {
           "200": {
             "description": "`{ workshops }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workshops."
@@ -5621,6 +6049,9 @@
           "409": {
             "description": "The creature already has a workshop, or the host's sbx policy conflicts with its egress."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "501": {
             "description": "The spec asks for something deferred past milestone one, such as a GPU."
           },
@@ -5640,6 +6071,9 @@
         "responses": {
           "200": {
             "description": "`{ substrates, preferred }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no workshops."
@@ -5668,6 +6102,9 @@
           "404": {
             "description": "No workshop has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
           },
@@ -5695,6 +6132,9 @@
           },
           "404": {
             "description": "No workshop has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
@@ -5729,6 +6169,9 @@
           "409": {
             "description": "The workshop cannot be started in its current state."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
           },
@@ -5759,6 +6202,9 @@
           "404": {
             "description": "No workshop has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
           },
@@ -5788,6 +6234,9 @@
           },
           "404": {
             "description": "No workshop has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
@@ -5856,6 +6305,9 @@
           "409": {
             "description": "The workshop is not running."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The substrate's own command failed; `error` carries what it said."
           },
@@ -5886,6 +6338,9 @@
           "404": {
             "description": "No workshop has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "The workshop has no display (a bare host workshop never does), or no workshops are served."
           }
@@ -5899,6 +6354,9 @@
         "responses": {
           "200": {
             "description": "`{ claim, owner, pairs, pending }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "The mesh is not served."
@@ -5955,6 +6413,9 @@
           "400": {
             "description": "The body is not a pairing request."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "502": {
             "description": "The node refused or answered badly; `failed` says why."
           }
@@ -6001,6 +6462,9 @@
           },
           "409": {
             "description": "The attempt ended without a pair; `failed` says why."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6046,6 +6510,9 @@
           },
           "409": {
             "description": "The attempt aborted; `reason` says why."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6070,6 +6537,9 @@
           },
           "404": {
             "description": "No pair has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6081,6 +6551,9 @@
         "responses": {
           "200": {
             "description": "`{ issued, installed }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       },
@@ -6183,6 +6656,9 @@
           },
           "404": {
             "description": "This console is not paired with the target."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6207,6 +6683,9 @@
           },
           "404": {
             "description": "No live grant has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6221,6 +6700,9 @@
           },
           "400": {
             "description": "`order` is neither `oldest` nor `newest`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           }
         }
       }
@@ -6431,6 +6913,9 @@
           "400": {
             "description": "The body is not a screen audit record."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "The mesh is not served."
           }
@@ -6498,6 +6983,9 @@
           },
           "429": {
             "description": "The sender or the receiving conversation reached its hourly limit."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "502": {
             "description": "The receiving machine did not answer, or does not take creature messages yet."
@@ -6598,6 +7086,9 @@
           "429": {
             "description": "The sender or the receiving conversation reached its hourly limit."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "The mesh or creature messages are not served."
           }
@@ -6611,6 +7102,9 @@
         "responses": {
           "200": {
             "description": "`{ self, peers }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "502": {
             "description": "Tailscale did not answer; `error` says why."
@@ -6629,6 +7123,9 @@
           "200": {
             "description": "`{ pairings }`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "The mesh is not served."
           }
@@ -6642,6 +7139,9 @@
         "responses": {
           "200": {
             "description": "`{ settings }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no settings."
@@ -6720,6 +7220,9 @@
           "404": {
             "description": "No setting still out and no session has the id in `from`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no settings."
           }
@@ -6769,6 +7272,9 @@
           "409": {
             "description": "The answer moves nothing: `unpinned` on a setting that is not pinned, or `seen` or `pinned` on one that is."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no settings."
           }
@@ -6798,6 +7304,9 @@
           },
           "409": {
             "description": "The setting carries no signal."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This host serves no settings."
@@ -6936,6 +7445,9 @@
           "404": {
             "description": "No session has that id."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host serves no settings."
           }
@@ -6950,6 +7462,9 @@
           "200": {
             "description": "`{ sessions, asks, children }`."
           },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
           "503": {
             "description": "This host does not report its work."
           }
@@ -6963,6 +7478,9 @@
         "responses": {
           "200": {
             "description": "`{ sessions, asks }`; the process exits right after."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
           "503": {
             "description": "This server was not started by `keywork serve` and cannot stop itself."
@@ -7025,6 +7543,7 @@
               "creature.changed",
               "creature.handoff",
               "creature.ledger",
+              "creature.worksites",
               "routine.fired",
               "routine.finished",
               "routine.needs",

@@ -5,6 +5,7 @@ import {
   formatReference,
   type InferenceBinding,
   isLoopbackEndpoint,
+  ledgerConversationOf,
   type ModelReference,
   type PolicyEnvironment,
   type Provider,
@@ -90,7 +91,7 @@ export function creatureInitialProvider(
     const projectWork = options.projectWork?.(store) === true;
     if (tag === undefined && !projectWork) return undefined;
     const creature = tag === undefined ? undefined : await options.registry.read(tag.creature);
-    const modelClass = projectWork || tag?.kind === "conversation" ? "strong" : "loop";
+    const modelClass = projectWork || talksWithTheKeeper(store) ? "strong" : "loop";
     const slot = projectWork ? "inherit" : creature?.file.models[modelClass];
     if (slot === undefined) return undefined;
     const choice = slot === "inherit" ? options.inherit?.() : slot;
@@ -117,7 +118,7 @@ export function selectedCreatureProvider(
       registrations: options.registrations?.() ?? [binding.registration],
       ...options.policy,
     };
-    if (tag?.kind === "conversation" && !projectWork) {
+    if (talksWithTheKeeper(store) && !projectWork) {
       return conversationProvider(binding.reference, environment, (candidate) =>
         inference.provider(candidate),
       );
@@ -132,6 +133,13 @@ export function selectedCreatureProvider(
     if (resolved.kind === "inherit") return inference.provider(binding);
     return inference.provider(resolved.plan.candidates[0].binding);
   };
+}
+
+function talksWithTheKeeper(store: SessionStore): boolean {
+  const entries = store.entries();
+  return (
+    creatureTagOf(entries)?.kind === "conversation" || ledgerConversationOf(entries) !== undefined
+  );
 }
 
 export function unavailableSelectedProvider(model: ModelReference, message: string): Provider {

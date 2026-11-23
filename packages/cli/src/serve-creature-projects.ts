@@ -4,8 +4,10 @@ import {
   type CreatureHandle,
   CreatureProjectContext,
   CreatureProjectError,
+  type CreatureProjectsPort,
   type CreatureProjectWorkPort,
   CreatureRegistry,
+  type CreatureWorksite,
   type ProjectWorkRequest,
   type WorkspaceSessionRef,
 } from "@keywork/engine";
@@ -23,12 +25,24 @@ export interface ServedCreatureProjectsOptions {
   registry: Pick<CreatureRegistry, "read">;
   start(request: ProjectWorkRequest, generation: string): Promise<WorkspaceSessionRef>;
   discuss(request: ProjectWorkRequest, generation: string): Promise<WorkspaceSessionRef>;
+  projectWorksites?: ProjectWorksites | undefined;
 }
 
-export function servedCreatureProjects(options: ServedCreatureProjectsOptions): {
-  creatureProjects?: CreatureProjectContext;
+export interface ProjectWorksites {
+  visited(project: string, worksites: readonly CreatureWorksite[]): void;
+  quiet(project: string): void;
+}
+
+export interface ServedCreatureProjects {
+  creatureProjects?: CreatureProjectsPort;
   creatureProjectWork?: CreatureProjectWorkPort;
-} {
+  followProjects(creatures: readonly string[]): Promise<void>;
+  close(): void;
+}
+
+export function servedCreatureProjects(
+  options: ServedCreatureProjectsOptions,
+): ServedCreatureProjects {
   const workspace = workspaceIdentity(options.cwd, options.workspaceSlug);
   const trust = new TrustStore({ home: options.userRoot });
   const home = managedHomeFolder(options.userRoot);
@@ -52,9 +66,25 @@ export function servedCreatureProjects(options: ServedCreatureProjectsOptions): 
       },
       discuss: options.discuss,
     });
-    return { creatureProjects };
+    const watches = projectWatches({
+      workspace,
+      projectTicket,
+      worksites: options.projectWorksites,
+      creaturesIn: (project, slugs) => creaturesWorkingIn(creatureProjects, project, slugs),
+    });
+    return {
+      creatureProjects: followingProjectThreads(creatureProjects, watches),
+      followProjects: async (creatures) => {
+        for (const project of await projectsWorkedIn(creatureProjects, creatures)) {
+          watches.follow(project, false);
+        }
+      },
+      close: watches.close,
+    };
   }
   return {
+    followProjects: async () => {},
+    close: () => {},
     creatureProjectWork: {
       start: async (request) => {
         const anchor = resolveAnchor(options.cwd).root;
@@ -89,6 +119,147 @@ export function servedCreatureProjects(options: ServedCreatureProjectsOptions): 
       },
     },
   };
+}
+
+function followingProjectThreads(
+  context: CreatureProjectContext,
+  watches: ProjectWatches,
+): CreatureProjectsPort {
+  return {
+    list: (slug) => context.list(slug),
+    bind: (slug, project) => context.bind(slug, project),
+    unbind: (slug, project) => context.unbind(slug, project),
+    discuss: (slug, project, input) => context.discuss(slug, project, input),
+    run: async (slug, project, input) => {
+      const session = await context.run(slug, project, input);
+      watches.follow(project, true);
+      return session;
+    },
+  };
+}
+
+interface ProjectWatchOptions {
+  workspace: string;
+  projectTicket(project: string): Promise<ServerTicket | undefined>;
+  worksites: ProjectWorksites | undefined;
+  creaturesIn(project: string, slugs: readonly string[]): Promise<ReadonlySet<string>>;
+}
+
+interface ProjectWatches {
+  follow(project: string, wait: boolean): void;
+  close(): void;
+}
+
+const projectWatchMs = 1_000;
+
+function projectWatches(options: ProjectWatchOptions): ProjectWatches {
+  const { worksites } = options;
+  const watching = new Map<string, { again: boolean }>();
+  let closed = false;
+  const visit = async (ticket: ServerTicket, project: string): Promise<number | undefined> => {
+    const path = `/creature-worksites?visitor=${encodeURIComponent(options.workspace)}`;
+    const answer = visitorWorksitesOf(await readProjectJson(ticket, path));
+    if (answer === undefined || worksites === undefined) return undefined;
+    const own = await options.creaturesIn(project, [
+      ...new Set(answer.worksites.map((row) => row.creature)),
+    ]);
+    worksites.visited(
+      project,
+      answer.worksites.filter((row) => own.has(row.creature)),
+    );
+    return answer.working;
+  };
+  const watch = async (project: string, wait: boolean, state: { again: boolean }) => {
+    const ticket = await options.projectTicket(project);
+    if (ticket === undefined) return;
+    for (let first = true; !closed; first = false) {
+      if (wait || !first) await pause(projectWatchMs);
+      if (closed) return;
+      const working = await visit(ticket, project);
+      if (working === undefined) return worksites?.quiet(project);
+      if (working === 0 && !state.again) return;
+      state.again = false;
+    }
+  };
+  return {
+    follow: (project, wait) => {
+      if (closed || worksites === undefined) return;
+      const running = watching.get(project);
+      if (running !== undefined) {
+        running.again = true;
+        return;
+      }
+      const state = { again: false };
+      watching.set(project, state);
+      void watch(project, wait, state)
+        .catch(() => worksites.quiet(project))
+        .finally(() => watching.delete(project));
+    },
+    close: () => {
+      closed = true;
+    },
+  };
+}
+
+async function projectsWorkedIn(
+  context: CreatureProjectContext,
+  creatures: readonly string[],
+): Promise<Set<string>> {
+  const projects = new Set<string>();
+  for (const creature of creatures) {
+    for (const binding of await context.worked(creature).catch(() => [])) {
+      if (binding.threads.length > 0) projects.add(binding.project);
+    }
+  }
+  return projects;
+}
+
+async function creaturesWorkingIn(
+  context: CreatureProjectContext,
+  project: string,
+  slugs: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const working = new Set<string>();
+  for (const slug of slugs) {
+    if ((await projectsWorkedIn(context, [slug])).has(project)) working.add(slug);
+  }
+  return working;
+}
+
+function visitorWorksitesOf(
+  data: unknown,
+): { worksites: CreatureWorksite[]; working: number } | undefined {
+  const worksites = field(data, "worksites");
+  const working = field(data, "working");
+  if (!Array.isArray(worksites) || typeof working !== "number") return undefined;
+  return { worksites: worksites.flatMap(visitedWorksiteOf), working };
+}
+
+function visitedWorksiteOf(row: unknown): CreatureWorksite[] {
+  const [creature, directory, root, since, latest] = [
+    "creature",
+    "directory",
+    "root",
+    "since",
+    "latest",
+  ].map((name) => field(row, name));
+  const conversations = field(row, "conversations");
+  const active = field(row, "active");
+  if (
+    typeof creature !== "string" ||
+    typeof directory !== "string" ||
+    typeof root !== "string" ||
+    typeof since !== "string" ||
+    typeof latest !== "string" ||
+    typeof conversations !== "number" ||
+    typeof active !== "boolean"
+  )
+    return [];
+  return [{ creature, directory, root, project: null, conversations, since, latest, active }];
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref());
 }
 
 function contextFile(home: string): string {

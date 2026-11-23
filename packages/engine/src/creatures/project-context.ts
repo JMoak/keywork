@@ -123,6 +123,15 @@ export class CreatureProjectContext implements CreatureProjectsPort {
     return visible.flatMap((binding) => (binding === undefined ? [] : [binding]));
   }
 
+  async worked(slug: string): Promise<CreatureProjectBinding[]> {
+    const owner = await this.owner(slug);
+    const state = this.read();
+    const projects = new Set(
+      state.requests.filter((row) => sameOwner(row, owner)).map((row) => row.project),
+    );
+    return [...projects].map((project) => bindingOf(state, owner, project));
+  }
+
   bind(slug: string, project: string): Promise<CreatureProjectBinding> {
     return this.serially(async () => {
       const owner = await this.owner(slug);

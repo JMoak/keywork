@@ -43,7 +43,7 @@ export async function placeCalled(
   const workshop = workshopOwnerIn(words, creatures);
   if (workshop !== undefined) return { place: { kind: "workshop", creature: workshop } };
   const project = await projectCalled(said, words, caller, creatures, book);
-  if (project !== undefined) return { place: project };
+  if (project !== undefined) return project;
   return { unknown: await unknownWords(said, caller, creatures, book) };
 }
 
@@ -121,17 +121,25 @@ async function projectCalled(
   caller: string | null,
   creatures: readonly PlaceCreature[],
   book: PlaceBook,
-): Promise<SteadPlace | undefined> {
+): Promise<PlaceReading | undefined> {
   const asked = projectAsked(said, words);
   for (const creature of searchOrder(caller, creatures)) {
-    const found = (await book.projects(creature)).find((project) =>
+    const found = (await book.projects(creature)).filter((project) =>
       asked.path === undefined
         ? project.name.toLowerCase() === asked.name
         : samePath(project.directory, asked.path),
     );
-    if (found !== undefined) return { kind: "project", creature, directory: found.directory };
+    const [only] = found;
+    if (found.length > 1) return { unknown: ambiguousWords(said, found) };
+    if (only !== undefined)
+      return { place: { kind: "project", creature, directory: only.directory } };
   }
   return undefined;
+}
+
+function ambiguousWords(said: string, projects: readonly PlaceProject[]): string {
+  const paths = projects.map(({ directory }) => directory);
+  return `more than one place is called ${quoted(said)}; name it by its path (${listed(paths, "or")})`;
 }
 
 interface ProjectAsked {
@@ -178,14 +186,22 @@ async function unknownWords(
 ): Promise<string> {
   const projects = caller === null ? [] : await book.projects(caller);
   const other = creatures.find(({ slug }) => slug !== caller);
-  const names = projects.slice(0, projectsNamed).map(({ name }) => name);
+  const names = projects.slice(0, projectsNamed).map((project) => sayableName(project, projects));
   const places = [
     ...(caller === null ? [] : ["your workshop"]),
     "the porch",
     "the storehouse",
     "the mill",
-    ...(names.length === 0 ? [] : [`a project by name or path (${listed(names, "or")})`]),
+    ...(names.length === 0 ? [] : [`${projectPlaces} (${listed(names, "or")})`]),
     ...(other === undefined ? [] : [`another creature's workshop (${other.slug}'s workshop)`]),
   ];
   return `nowhere in the stead is called ${quoted(said)}; say ${listed(places, "or")}`;
+}
+
+const projectPlaces = "a project or folder you have worked in by name or path";
+
+function sayableName(project: PlaceProject, among: readonly PlaceProject[]): string {
+  const name = project.name.toLowerCase();
+  const shared = among.filter((other) => other.name.toLowerCase() === name).length > 1;
+  return shared ? project.directory : project.name;
 }

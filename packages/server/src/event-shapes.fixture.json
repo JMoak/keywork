@@ -547,6 +547,34 @@
         "folded": "number"
       }
     ],
+    "creature.worksites": [
+      {
+        "change": "string",
+        "worksite": {
+          "active": "boolean",
+          "conversations": "number",
+          "creature": "string",
+          "directory": "string",
+          "latest": "string",
+          "project": "null",
+          "root": "string",
+          "since": "string"
+        }
+      },
+      {
+        "change": "string",
+        "worksite": {
+          "active": "boolean",
+          "conversations": "number",
+          "creature": "string",
+          "directory": "string",
+          "latest": "string",
+          "project": "string",
+          "root": "string",
+          "since": "string"
+        }
+      }
+    ],
     "routine.fired": {
       "attempt": "number",
       "catchUp": "boolean",

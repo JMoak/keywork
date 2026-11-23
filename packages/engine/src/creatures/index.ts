@@ -229,3 +229,18 @@ export {
   threadSummaryOf,
   threadsAmong,
 } from "./threads.ts";
+export {
+  type CreatureWorksite,
+  type CreatureWorksiteChange,
+  type CreatureWorksiteChangeKind,
+  type CreatureWorksites,
+  type CreatureWorksitesOptions,
+  type CreatureWorksitesPort,
+  changedFileOf,
+  creatureWorksites,
+  type JournalledConversation,
+  type VisitorWorksites,
+  type WorkingConversation,
+  type WorksiteHistory,
+  worksitesFileIn,
+} from "./worksites.ts";

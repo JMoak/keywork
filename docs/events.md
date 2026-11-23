@@ -62,6 +62,13 @@ new event names can arrive in a minor and a client treats unknown ones as noise.
 that make up the envelope (`id`, `ts`, `sessionId`, `type`, `payload`) and the SSE framing
 below never change within a major.
 
+A route whose handler fails in a way the server does not answer as a refusal answers `500` with
+`{ error }`, `internal fault: ` followed by the error's message (never a stack), and the server
+writes the route and the error to its own log (`keywork serve:` lines on its standard error). A
+failure after the answer has begun, such as a stream that breaks off, still ends the connection, and
+is logged the same way. Every operation in `/doc` lists the `500`. Since contract 1.39; an older
+server ended the connection without an answer, which some HTTP stacks deliver as an empty `200`.
+
 A route or an event that is going away is marked first and removed later. In `/doc` the
 operation carries `deprecated: true` and an `x-deprecated` note saying what replaces it and
 which major removes it; the note is set on the route's row (`deprecated` in `RouteSpec`).
@@ -301,7 +308,7 @@ after that it reads and opens from its saved log like any other session. Since c
 
 Fires when the active policy would ask about a tool call and a guard exists to answer. The
 turn waits on the answer; over `keywork serve` a client answers with `POST /asks/{callId}`
-and an unanswered ask times out as a headless denial (after 120 seconds by default). Never fired when no guard can answer,
+and an unanswered ask times out as a headless denial (after seven days by default). Never fired when no guard can answer,
 and never replayed. The session journal keeps each ask as a `permission_ask` entry holding
 `{ tool, callId, rule, rules, change? }`, where `change` is `{ creates, linesBefore,
 linesAfter }` from the preview; the arguments already ride the assistant message, and the
@@ -804,7 +811,10 @@ An entry may carry a short conversation about it (since contract 1.38; a 1.37 se
 `conversation`, which a client reads as `null`). `POST /creatures/{slug}/ledger/{id}/conversation`
 opens one, a fresh session of kind `thread` on this server, titled `About: <entry title>`, its
 journal naming the entry (`keywork.creature.ledger-conversation`, so `GET /sessions/{id}` carries
-`ledgerEntry: { creature, id }`), and framed with the entry so the creature speaks first. Asking
+`ledgerEntry: { creature, id }`), and framed with the entry so the creature speaks first. It talks
+on the creature's conversation model, as its main conversation does, and never needs the model its
+work threads use (since contract 1.39; a 1.38 server chose the work-thread model, so with a model
+that serves only conversations the request failed without an answer). Asking
 again for the same entry answers the same conversation, open or ended; a question already answered
 with no conversation is refused. The conversation ends when the entry's question is answered
 (granted, denied or lapsed, `endedBy: "answer"`) or when the keeper closes it with
@@ -837,6 +847,64 @@ only; a project thread served by another server has none.
 | `entry.about` | `object` | `{ kind: "ask", callId, tool }` (answer it with `POST /asks/{callId}`), `{ kind: "grants", routineId }` (accept it on the chore), `{ kind: "chore", routineId, runId }` or `{ kind: "thread" }`. |
 | `entry.conversation` | `object \| null` | `{ session, state, openedAt, endedAt, endedBy }` once a conversation about the entry was opened: `session` is its session, `state` is `open` or `ended`, `endedAt` and `endedBy` (`answer` or `keeper`) are `null` while it is open. `null` when none was opened. Since contract 1.38. |
 | `folded` | `number` | How many of the creature's closed entries have left the list so far. |
+
+### creature.worksites
+
+Fires when a row of the worksite tally appeared or changed, so a console that draws each folder a
+creature has worked in follows one row without re-fetching `GET /creature-worksites`, which serves
+the whole tally for a cold start. A worksite is a folder a creature worked in, one row per creature
+and folder. With `root` the directory a conversation started in: when `root` is a repository (it
+holds `.git`), every conversation there that had a turn counts toward `root`, from its first turn,
+and no folder inside it is ever a worksite. Otherwise the conversation counts toward each immediate
+child folder of `root` in which it changed a file, and toward `root` itself only for a file changed
+directly in it. A file changed outside `root` counts toward the nearest folder above the file that
+holds `.git`, as a row whose `root` is that folder (a few checks up the path, remembered per
+folder), and toward nothing when no folder above it holds one. A changed file is a `write` or
+`edit` tool call with a `path` that succeeded, as the session journal records it; nothing else
+counts, so talking, reading and searching count toward nothing, and neither does a command, since
+each command is a fresh process started in `root` and the text of a command is never read for a
+folder. `.keywork`, the stead's own state, is never a worksite. A sub-agent's work belongs to the
+conversation that delegated it.
+
+A bound project's threads run in that project's own runtime, and that runtime counts them by the
+same rule, for the creature that sent the work, with `root` the project's directory: a project that
+is a parent folder of several repositories gives a row for each child folder a thread changed files
+in, and a project that is itself a repository gives one row. The creature's own server reads those
+rows from the project's runtime with `GET /creature-worksites?visitor=<its workspace identity>`, over
+the same ticket and the same check it makes before starting a thread there, and carries them as its
+own rows with `project` set to the project's id; this grants nothing new, since it learns only about
+work done for its own creatures. It reads them when it starts, and after it starts a thread there
+once a second for as long as one of that project's visiting threads has a turn running, so a project
+row's `active` and its new rows follow the thread within about a second. A project whose runtime
+does not answer keeps the rows last read, with `active` false. When one folder was worked in both
+from a bound project and from a conversation started here, it is one row carrying the project, and
+its `conversations` adds the two. On Windows two spellings of one folder are one row.
+
+Conversations from before contract 1.39 are counted once, from the session journals (sub-agents'
+included, and in a project's runtime the project threads it ran for other workspaces' creatures),
+when a 1.39 server first starts for the workspace. After that the server counts work as it happens and keeps the tally
+for the workspace under the node's state (`creatures/worksites.json` beside the hand-off tally),
+saved whenever a row is announced, so a restart reads that file and never the journals. Rows only
+grow: later work never takes a building away, and a session moved to the trash keeps its count.
+Removing a creature (a confirmed `DELETE /creatures/{slug}`) drops its rows, with one `dropped` event
+each, so a creature made again under the same slug starts from none. The event never fires for each
+tool call: it fires when a row appears, when its `conversations` changes, or when its `active` flips,
+and `latest` rides along with those; rows a project's runtime keeps for visiting creatures fire
+nothing there. The tally is for display: it grants, widens and implies nothing about what any
+creature may do. Since contract 1.39; an older server sends none and serves no
+`GET /creature-worksites`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"changed" \| "dropped"` | `changed` when the row appeared or changed, carrying it as it now stands; `dropped` when it left the tally with a removed creature, carrying it as it was. |
+| `worksite.creature` | `string` | The creature's slug. |
+| `worksite.directory` | `string` | The worksite, an absolute path in the form a session reports its `cwd`. |
+| `worksite.root` | `string` | The directory the conversations started in: this workspace, or the bound project's directory; for a file changed outside it, the repository folder itself. Equal to `directory` when the root is itself the worksite. |
+| `worksite.project` | `string \| null` | The bound project's id (as in `GET /creatures/{slug}/projects`) when the work ran in a bound project; `null` otherwise. |
+| `worksite.conversations` | `number` | How many of the creature's conversations worked there, at least 1. |
+| `worksite.since` | `string` | The first work there (ISO 8601). |
+| `worksite.latest` | `string` | The latest work there (ISO 8601). For a repository root, a turn's start or end; otherwise a changed file. |
+| `worksite.active` | `boolean` | Whether a turn is running now in a conversation that has worked there. |
 
 ### routine.fired
 
@@ -1164,7 +1232,7 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
 | `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`, and since contract 1.38 also `"workshop"`, `"mills"`, `"parcels"`, `"bots"`, `"campaigns"`, `"themes"`, `"posture"`, `"stead"`, `"terminal"` or `"screen"`. A session may name it in other words; the name here is always one of those. A `terminal` or `screen` acts on the keeper's machine, so the `show` that sets one out asks the keeper every time (`gate.ask` with `rule: "always"`) and nothing is proposed unless they allow it. |
-| `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project by name or path, another creature's workshop); left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
+| `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop). A project is this workspace or, since contract 1.39, a folder in the creature's worksites (`GET /creature-worksites`), named by its path or by its folder name when no other of that creature's places shares the name; `creature` is the creature whose worksite it is and `directory` that worksite's `directory`, so a console finds the building by it. Naming a place grants nothing and reads nothing from the folder. Left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
 | `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening and, since contract 1.33, when the session gave none. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |

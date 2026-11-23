@@ -130,12 +130,13 @@ export interface LedgerConversationSessions {
   lastReply(session: string): Promise<string>;
   end(session: string, ended: ConversationEnded): Promise<void>;
   note(creature: string, text: string, origin: CreatureOrigin): Promise<unknown>;
+  discard(creature: string, session: string): Promise<void>;
   threadsChanged(creature: string): void;
 }
 
 export function conversingLedger(
   ledger: CreatureLedger,
-  sessions: Pick<LedgerConversationSessions, "open" | "begin" | "frame">,
+  sessions: Pick<LedgerConversationSessions, "open" | "begin" | "frame" | "discard">,
 ): CreatureLedgerPort {
   return {
     read: (creature) => ledger.read(creature),
@@ -144,12 +145,17 @@ export function conversingLedger(
     converse: (creature, id) =>
       ledger.conversationAbout(creature, id, async (_creature, entry) => {
         const session = await sessions.open(creature);
-        await sessions.begin(session, { creature, entry: entry.id }, conversationTitleOf(entry));
-        await sessions.frame(session, frameOf(entry), {
-          kind: "creature",
-          creature,
-          thread: session,
-        });
+        try {
+          await sessions.begin(session, { creature, entry: entry.id }, conversationTitleOf(entry));
+          await sessions.frame(session, frameOf(entry), {
+            kind: "creature",
+            creature,
+            thread: session,
+          });
+        } catch (cause) {
+          await sessions.discard(creature, session).catch(() => undefined);
+          throw cause;
+        }
         return session;
       }),
     closeConversation: (creature, id) => ledger.endConversation(creature, id),

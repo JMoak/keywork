@@ -1,7 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { SessionHost } from "./host.ts";
-import { createKeyworkServer, defaultPort, type ServerOptions } from "./server.ts";
+import {
+  createKeyworkServer,
+  defaultPort,
+  faultWords,
+  noticeOf,
+  type ServerOptions,
+} from "./server.ts";
 
 export const loopback = "127.0.0.1";
 
@@ -22,8 +28,12 @@ export async function listen(options: ListenOptions): Promise<ListeningServer> {
   const port = await bind(bound, requested);
   const url = `http://${loopback}:${port}`;
   const server = createKeyworkServer({ ...options, url });
+  const notice = noticeOf(options);
   bound.on("request", (incoming, outgoing) => {
-    answer(server.fetch, url, incoming, outgoing).catch(() => outgoing.destroy());
+    answer(server.fetch, url, incoming, outgoing).catch((cause: unknown) => {
+      notice(`${incoming.method} ${incoming.url} broke off its answer: ${faultWords(cause)}`);
+      outgoing.destroy();
+    });
   });
   return {
     url,

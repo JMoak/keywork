@@ -435,6 +435,34 @@ const samples: Samples = {
       folded: 1,
     },
   ],
+  "creature.worksites": [
+    {
+      change: "changed",
+      worksite: {
+        creature: "pip",
+        directory: "C:/work/anchor/garden",
+        root: "C:/work/anchor",
+        project: null,
+        conversations: 2,
+        since: "2026-11-05T08:00:00.000Z",
+        latest: "2026-11-05T09:02:00.000Z",
+        active: true,
+      },
+    },
+    {
+      change: "dropped",
+      worksite: {
+        creature: "wren",
+        directory: "C:/work/orchard",
+        root: "C:/work/orchard",
+        project: "9c1d2e3f4a5b",
+        conversations: 1,
+        since: "2026-11-04T10:00:00.000Z",
+        latest: "2026-11-04T10:00:00.000Z",
+        active: false,
+      },
+    },
+  ],
   "routine.fired": [
     {
       runId: "wren:triage:1762329600000:1",

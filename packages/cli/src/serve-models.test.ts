@@ -4,13 +4,17 @@ import {
   blankRecord,
   CapabilityCache,
   type CreatureHost,
+  type CreatureLedgerPort,
   InferenceRegistry,
   known,
   ModelInventory,
   type ModelReference,
+  type PermissionResolver,
   type Provider,
   type ProviderRegistration,
   type ProviderRequest,
+  type TurnDelta,
+  toolCallTurn,
   unknownCapability,
 } from "@keywork/engine";
 import { EventLog } from "@keywork/server";
@@ -255,6 +259,40 @@ describe("the creature's first model", () => {
     }
   });
 
+  it("opens a conversation about a waiting question on the conversation's model, which work threads may not use", async () => {
+    const write = { path: "plan.md", content: "the plan\n" };
+    const world = await modelWorld({
+      permissions: () => "ask",
+      localTurns: [
+        toolCallTurn({ type: "tool-call", callId: "w1", name: "write", arguments: write }),
+      ],
+    });
+    try {
+      const id = await world.creature("Pip", localChoice);
+      await world.creatures.update("pip", { models: { loop: localChoice } });
+      await world.host.prompt(id, "write the plan");
+      await vi.waitFor(async () => expect(await world.host.asks()).toHaveLength(1));
+      const ledger = world.host.ledger as CreatureLedgerPort;
+      const question = (await ledger.read("pip"))?.entries[0];
+
+      const opened = await ledger.converse?.("pip", question?.id ?? "");
+
+      expect(opened).toMatchObject({ state: "waiting", conversation: { state: "open" } });
+      await vi.waitFor(() => expect(world.local.calls).toHaveLength(2));
+      await world.host.answerAsk("w1", "granted");
+      await vi.waitFor(async () =>
+        expect((await ledger.read("pip"))?.entries[0]).toMatchObject({
+          state: "answered",
+          answer: "granted",
+          conversation: { state: "ended", endedBy: "answer" },
+        }),
+      );
+      expect(world.cloud.calls).toHaveLength(0);
+    } finally {
+      await world.host.close?.();
+    }
+  });
+
   it("rejects the smaller conversation default for a project work session", async () => {
     const world = await modelWorld({ localContext: 4096 });
     world.nextDefault(world.local);
@@ -367,7 +405,13 @@ describe("the creature's first model", () => {
 const localChoice: ModelReference = { provider: "local", model: "local-model" };
 
 async function modelWorld(
-  options: { localContext?: number; cloudWait?: Promise<void>; projectTrusted?: boolean } = {},
+  options: {
+    localContext?: number;
+    cloudWait?: Promise<void>;
+    projectTrusted?: boolean;
+    permissions?: PermissionResolver;
+    localTurns?: TurnDelta[][];
+  } = {},
 ) {
   vi.stubGlobal(
     "fetch",
@@ -379,7 +423,7 @@ async function modelWorld(
   await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
   await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "models" }));
   const cloud = recordedProvider("cloud", "cloud-model", options.cloudWait);
-  const local = recordedProvider("local", "local-model");
+  const local = recordedProvider("local", "local-model", undefined, options.localTurns);
   let current: Provider = cloud;
   let next: Provider = cloud;
   const registry = new InferenceRegistry();
@@ -432,7 +476,7 @@ async function modelWorld(
       get: async () => ({ status: 404, ok: false, body: {}, text: "" }),
       post: async () => ({ status: 404, ok: false, body: {}, text: "" }),
     },
-    permissions: () => "deny",
+    permissions: options.permissions ?? (() => "deny"),
     checkpoints: "off",
     log: new EventLog(),
   };
@@ -466,7 +510,12 @@ async function modelWorld(
   };
 }
 
-function recordedProvider(name: string, modelId: string, wait?: Promise<void>) {
+function recordedProvider(
+  name: string,
+  modelId: string,
+  wait?: Promise<void>,
+  turns: TurnDelta[][] = [],
+) {
   const calls: ProviderRequest[] = [];
   return {
     name,
@@ -475,6 +524,11 @@ function recordedProvider(name: string, modelId: string, wait?: Promise<void>) {
     async *stream(request: ProviderRequest) {
       calls.push(request);
       await wait;
+      const scripted = turns.shift();
+      if (scripted !== undefined) {
+        yield* scripted;
+        return;
+      }
       yield { type: "text" as const, text: `hello from ${name}` };
       yield { type: "done" as const, usage: { inputTokens: 1, outputTokens: 1 } };
     },

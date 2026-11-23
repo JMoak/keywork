@@ -3,8 +3,11 @@ import { basename } from "node:path";
 import {
   type Clock,
   type CreatureRegistry,
+  type CreatureWorksite,
+  type CreatureWorksitesPort,
   creatureTagOf,
   type PlaceBook,
+  type PlaceProject,
   type SessionStore,
   SettingStore,
   type ShowThread,
@@ -13,6 +16,7 @@ import {
   type ThreadLookup,
 } from "@keywork/engine";
 import { type BusEnvelope, type EventLog, recordedShowEvents } from "@keywork/server";
+import { canonicalPath } from "@keywork/shared";
 import { workspaceStateDir } from "./node/paths.ts";
 import { findSession } from "./sessions/store.ts";
 
@@ -70,15 +74,35 @@ export interface SteadPlacesOptions {
   registry: Pick<CreatureRegistry, "list">;
   cwd: string;
   workspaceSlug?: string | undefined;
+  worksites?: (() => Pick<CreatureWorksitesPort, "list">) | undefined;
 }
 
-export function steadPlaces({ registry, cwd, workspaceSlug }: SteadPlacesOptions): PlaceBook {
+export function steadPlaces({
+  registry,
+  cwd,
+  workspaceSlug,
+  worksites,
+}: SteadPlacesOptions): PlaceBook {
   const workspace = { name: workspaceSlug ?? basename(cwd), directory: cwd };
   return {
     creatures: async () =>
       (await registry.list()).map(({ slug, file }) => ({ slug, name: file.name })),
-    projects: async () => [workspace],
+    projects: async (creature) => [
+      workspace,
+      ...worksitePlacesOf(creature, (await worksites?.().list()) ?? [], cwd),
+    ],
   };
+}
+
+function worksitePlacesOf(
+  creature: string,
+  worksites: readonly CreatureWorksite[],
+  workspace: string,
+): PlaceProject[] {
+  return worksites
+    .filter((row) => row.creature === creature)
+    .filter(({ directory }) => canonicalPath(directory) !== canonicalPath(workspace))
+    .map(({ directory }) => ({ name: basename(directory), directory }));
 }
 
 export function showThreadOf(store: SessionStore): ShowThread {

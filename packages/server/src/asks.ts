@@ -55,7 +55,9 @@ export type AskDecider = (
   announced: PermissionAsk | undefined,
 ) => Promise<Confirmation | undefined>;
 
-export const defaultAskTimeoutMs = 120_000;
+// A question waits for its keeper for a week. It used to lapse after two minutes, which left a
+// creature's ledger full of questions nobody had been given the time to answer.
+export const defaultAskTimeoutMs = 7 * 24 * 60 * 60 * 1000;
 
 export class AskQueue {
   private readonly pending = new Map<string, Waiting>();

@@ -25,6 +25,7 @@ import {
   creatureLedger,
   creatureMail,
   creatureTagOf,
+  creatureWorksites,
   decideForKeeper,
   type EffortLevel,
   flushMemoryNow,
@@ -95,6 +96,7 @@ import {
   type VerdictMark,
   type WakeScheduler,
   type WorkspaceSessionRef,
+  worksitesFileIn,
 } from "@keywork/engine";
 import {
   type AskDecider,
@@ -218,6 +220,7 @@ import {
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
+import { followWorksites, type WorksiteSessionFacts, worksiteHistory } from "./serve-worksites.ts";
 import { composeServedWorkspace, type ServedWorkspace } from "./serve-workspace.ts";
 import {
   budgetOf,
@@ -229,7 +232,7 @@ import {
 import { exportSession } from "./sessions/export.ts";
 import { sessionHtml } from "./sessions/export-html.ts";
 import { heldGrantsOf, recordHeldGrants } from "./sessions/grants-journal.ts";
-import { forkOrigin } from "./sessions/lifecycle.ts";
+import { discardTrashed, forkOrigin } from "./sessions/lifecycle.ts";
 import { moveLeaf, rewindBefore } from "./sessions/ports.ts";
 import {
   type JournaledRestore,
@@ -380,6 +383,7 @@ async function serveListening(
       port: options.port,
       workspace: workspaceInfoOf(options.cwd, options.workspaceSlug),
       stop: () => stopAsked.abort(),
+      notice: (line) => options.printError(`keywork serve: ${line}`),
     });
   } catch (cause) {
     options.printError(`keywork serve: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -521,7 +525,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
         : () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
     projectWork: (store: SessionStore) => projectThreadTag(store.entries()) !== undefined,
   };
-  const places = steadPlaces({ registry, ...place });
+  const places = steadPlaces({ registry, ...place, worksites: () => worksites });
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
     initialProvider: creatureInitialProvider(modelOptions),
@@ -535,6 +539,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     failed: (provider, error) => answers.failed(provider, error),
     settled: (thread) => {
       shown.settings.rested(thread.id);
+      worksites.rested(thread.id);
       void finishThreadQuietly(thread);
     },
     keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
@@ -590,6 +595,45 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     return workspace?.store.trusted === true ? workspace.store : undefined;
   };
   const handoffs = creatureHandoffs({ file: workspaceHandoffsFile(place), creatures, notice });
+  const creatureSlugs = async () => (await registry.list()).map((creature) => creature.slug);
+  const worksites = creatureWorksites({
+    file: workspaceWorksitesFile(place),
+    creatures,
+    history: () =>
+      worksiteHistory({
+        sessionDir,
+        creatures: creatureSlugs,
+        visitingCreatureOf: (entries) => projectThreadTag(entries)?.creature,
+      }),
+    notice,
+  });
+  const unfollowWorksites = followWorksites(
+    log,
+    worksites,
+    (id) => sessions.creatureSessionOf(id) ?? sessions.visitingSessionOf(id),
+  );
+  const {
+    followProjects,
+    close: unfollowProjects,
+    ...projectPorts
+  } = servedCreatureProjects({
+    ...place,
+    registry,
+    start: (request, generation) => sessions.submitProjectRequest(request, generation),
+    discuss: async (request, generation) =>
+      sessions.submitProjectRequest(
+        request,
+        generation,
+        await creatures.threads.conversationFor(request.creature.slug),
+      ),
+    projectWorksites: {
+      visited: (project, rows) => worksites.visited(project, rows),
+      quiet: (project) => worksites.projectQuiet(project),
+    },
+  });
+  void creatureSlugs()
+    .then(followProjects)
+    .catch((cause: unknown) => notice(`bound projects were not read: ${toError(cause).message}`));
   const mail =
     node.mesh === undefined
       ? undefined
@@ -645,20 +689,11 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     ...verbs,
     ...surfaces,
     ...(options.managedHome && { workspace: homeWorkspace }),
-    ...servedCreatureProjects({
-      ...place,
-      registry,
-      start: (request, generation) => sessions.submitProjectRequest(request, generation),
-      discuss: async (request, generation) =>
-        sessions.submitProjectRequest(
-          request,
-          generation,
-          await creatures.threads.conversationFor(request.creature.slug),
-        ),
-    }),
+    ...projectPorts,
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
     creatures,
     handoffs,
+    worksites,
     ledger: conversingLedger(ledger, conversationSessions),
     ...servedCreatureMcp({
       creatures,
@@ -677,6 +712,9 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     close: async () => {
       unhosted();
       handoffs.close();
+      unfollowWorksites();
+      unfollowProjects();
+      worksites.close();
       if (ownsSettings) shown.close();
       routines?.stop();
       const closingCampaigns = campaigns.close();
@@ -1085,6 +1123,19 @@ class LiveSessions {
       (parentStore === undefined ? undefined : creatureTagOf(parentStore.entries()));
     if (tag === undefined) return undefined;
     return { creature: tag.creature, directory: store.header.cwd, parent };
+  }
+
+  visitingSessionOf(id: string): WorksiteSessionFacts | undefined {
+    const store = this.runningStoreOf(id);
+    if (store === undefined) return undefined;
+    const parent = store.header.spawnedBy?.sessionId ?? null;
+    const parentStore = parent === null ? undefined : this.runningStoreOf(parent);
+    const tag =
+      projectThreadTag(store.entries()) ??
+      (parentStore === undefined ? undefined : projectThreadTag(parentStore.entries()));
+    if (tag === undefined) return undefined;
+    const { slug, workspace } = tag.creature;
+    return { creature: slug, directory: store.header.cwd, parent, visitor: workspace };
   }
 
   private runningStoreOf(id: string): SessionStore | undefined {
@@ -2422,6 +2473,13 @@ function ledgerConversationSessions(
     },
     end: async (session, ended) => (await live(session)).end(ended),
     note: (creature, text, origin) => hosted.deliver(creature, text, origin),
+    discard: async (creature, session) => {
+      const trashed = await trashSession(lifecycleOf(sessions), session);
+      if (typeof trashed === "string") return;
+      await discardTrashed(sessions.sessionDir, session);
+      log.record("", "session.removed", { sessionId: session });
+      log.record("", "creature.changed", { slug: creature, change: "threads" });
+    },
     threadsChanged: (slug) => log.record("", "creature.changed", { slug, change: "threads" }),
   };
 }
@@ -2516,6 +2574,12 @@ function workspaceLedgerFile(
   place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
 ): string {
   return ledgerFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
+}
+
+function workspaceWorksitesFile(
+  place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
+): string {
+  return worksitesFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
 }
 
 function servedMail(

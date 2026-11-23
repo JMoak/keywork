@@ -533,7 +533,13 @@ describe("where a pane rises from", () => {
       { slug: "pip", name: "Pip" },
     ],
     projects: async (creature) =>
-      creature === "wren" ? [{ name: "anchor", directory: "C:/work/anchor" }] : [],
+      creature === "wren"
+        ? [{ name: "anchor", directory: "C:/work/anchor" }]
+        : [
+            { name: "orchard", directory: "C:/work/anchor/orchard" },
+            { name: "app", directory: "C:/one/app" },
+            { name: "app", directory: "C:/two/app" },
+          ],
   };
 
   it("is the creature's own workshop unless a place is named, and an unknown place is refused in plain words", async () => {
@@ -563,12 +569,25 @@ describe("where a pane rises from", () => {
       creature: "wren",
       directory: "C:/work/anchor",
     });
+    expect(await placed("orchard", "a worksite")).toEqual({
+      kind: "project",
+      creature: "pip",
+      directory: "C:/work/anchor/orchard",
+    });
+    expect(await placed("C:/two/app", "a shared name by path")).toEqual({
+      kind: "project",
+      creature: "pip",
+      directory: "C:/two/app",
+    });
+    expect(await tool.execute({ what: { kind: "note", ref: "which app" }, from: "app" })).toBe(
+      `Not set out: from names a place, something of yours that is out or a thread of yours, and more than one place is called "app"; name it by its path (C:/one/app or C:/two/app).`,
+    );
 
     const out = settings.open().length;
     const refused = await tool.execute({ what: { kind: "note", ref: "lost" }, from: "the barn" });
 
     expect(refused).toBe(
-      `Not set out: from names a place, something of yours that is out or a thread of yours, and nowhere in the stead is called "the barn"; say your workshop, the porch, the storehouse, the mill, a project by name or path (anchor) or another creature's workshop (pip's workshop).`,
+      `Not set out: from names a place, something of yours that is out or a thread of yours, and nowhere in the stead is called "the barn"; say your workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path (anchor) or another creature's workshop (pip's workshop).`,
     );
     expect(settings.open()).toHaveLength(out);
   });

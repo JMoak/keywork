@@ -82,7 +82,7 @@ export const showToolName = "show";
 export function showTool(target: ShowTarget): Tool {
   return defineTool({
     name: showToolName,
-    description: `Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (${settingPanes.join(", ")}). It opens beside your conversation, or in a window of its own with where "outside"; seat picks its spot ("left-half", "top-right") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.`,
+    description: `Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (${settingPanes.join(", ")}). It opens beside your conversation, or in a window of its own with where "outside"; seat picks its spot ("left-half", "top-right") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.`,
     schema: showArgs,
     alwaysAsks: (args) => machinePaneIn(args) !== undefined,
     run: async (args) => {
@@ -217,7 +217,7 @@ const showArgs = z
       .nullable()
       .optional()
       .describe(
-        "Where it rises from: a place (your workshop, the porch, the storehouse, the mill, a project by name or path, another creature's workshop such as \"pip's workshop\"), or something of yours already out (by id or title), which it then grows from.",
+        "Where it rises from: a place (your workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop such as \"pip's workshop\"), or something of yours already out (by id or title), which it then grows from.",
       ),
   })
   .strict();

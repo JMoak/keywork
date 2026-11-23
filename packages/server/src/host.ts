@@ -16,6 +16,7 @@ import type {
   CreatureProjectsPort,
   CreatureProjectWorkPort,
   CreaturesPort,
+  CreatureWorksitesPort,
   DailyEntry,
   EffortLevel,
   FlushMark,
@@ -396,6 +397,7 @@ export interface SessionHost {
   creatureProjectWork?: CreatureProjectWorkPort;
   creatureMcp?: CreatureMcpPort;
   handoffs?: CreatureHandoffsPort;
+  worksites?: CreatureWorksitesPort;
   ledger?: CreatureLedgerPort;
   routines?: RoutineService;
   campaigns?: CampaignService;

@@ -38,6 +38,7 @@ import { themeFamily } from "./routes/themes.ts";
 import { treeFamily } from "./routes/tree.ts";
 import { workFamily } from "./routes/work.ts";
 import { workshopFamily } from "./routes/workshops.ts";
+import { worksiteFamily } from "./routes/worksites.ts";
 import { workspaceFamily } from "./routes/workspace.ts";
 
 export { contractMajorOf, contractVersion } from "./contract.ts";
@@ -68,6 +69,7 @@ export const routeFamilies = [
   creatureFamily,
   creatureProjectFamily,
   handoffFamily,
+  worksiteFamily,
   ledgerFamily,
   creatureMcpFamily((host) => host.creatureMcp),
   registerRoutineRoutes(({ host }) => host.routines),
@@ -167,11 +169,15 @@ const errorSchema: JsonSchema = {
   properties: { error: { type: "string" } },
 };
 
+const internalFault =
+  "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead.";
+
 export function operationOf(route: RouteSpec): OpenApiOperation {
   const responses: OpenApiOperation["responses"] = {};
   for (const [status, description] of Object.entries(route.responses)) {
     responses[status] = { description };
   }
+  responses["500"] ??= { description: internalFault };
   return {
     operationId: route.operationId,
     summary: route.summary,

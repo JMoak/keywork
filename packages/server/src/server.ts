@@ -1,3 +1,4 @@
+import { toError } from "@keywork/shared";
 import type { EventLog } from "./events.ts";
 import type { SessionHost } from "./host.ts";
 import {
@@ -22,6 +23,7 @@ export interface ServerOptions {
   url?: string;
   workspace?: WorkspaceInfo;
   stop?: () => void;
+  notice?: ((line: string) => void) | undefined;
 }
 
 export interface KeyworkServer {
@@ -66,7 +68,12 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
       if (shutdown !== undefined && startsWork(match.route)) {
         return json(503, { error: "this server is shutting down" });
       }
-      return handlers[match.route.operationId](request, match.params);
+      try {
+        return await handlers[match.route.operationId](request, match.params);
+      } catch (cause) {
+        noticeOf(options)(`${routeWords(request, match.route)} failed: ${faultWords(cause)}`);
+        return json(500, { error: `internal fault: ${toError(cause).message}` });
+      }
     },
     rehost: async (next) => {
       const previous = host;
@@ -84,6 +91,19 @@ export function createKeyworkServer(options: ServerOptions): KeyworkServer {
 
 function startsWork(route: Route): boolean {
   return route.method !== "GET" && route.operationId !== "shutDown";
+}
+
+export function noticeOf(options: Pick<ServerOptions, "notice">): (line: string) => void {
+  return options.notice ?? ((line) => process.stderr.write(`${line}\n`));
+}
+
+export function faultWords(cause: unknown): string {
+  const error = toError(cause);
+  return error.stack ?? error.message;
+}
+
+function routeWords(request: Request, route: Route): string {
+  return `${request.method} ${new URL(request.url).pathname} (${route.operationId})`;
 }
 
 interface RouteMatch {

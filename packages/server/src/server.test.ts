@@ -420,6 +420,38 @@ describe("the socket listener", () => {
       await server.close();
     }
   });
+
+  it("answers a handler's unexpected failure with a 500 that says so, and logs where it came from", async () => {
+    const log = new EventLog();
+    const host = {
+      ...memorySessionHost({ log, provider: new MockProvider([]) }),
+      models: {
+        list: async () => ({ generatedAt: "2026-11-12T00:00:00.000Z", nodes: [] }),
+        probe: async () => ({}),
+        refresh: async (): Promise<object> => {
+          throw new TypeError("the model shelf fell over");
+        },
+      },
+    };
+    const logged: string[] = [];
+    const notice = (line: string) => logged.push(line);
+    const server = await listen({ token, host, log, version: "0.0.1-test", port: 0, notice });
+    try {
+      const failed = await fetch(`${server.url}/models/refresh`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(failed.status).toBe(500);
+      expect(await failed.json()).toEqual({ error: "internal fault: the model shelf fell over" });
+      expect(logged).toEqual([
+        expect.stringMatching(
+          /^POST \/models\/refresh \(refreshModels\) failed: TypeError: the model shelf fell over\n\s+at /,
+        ),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 function hangingProvider(): Provider {

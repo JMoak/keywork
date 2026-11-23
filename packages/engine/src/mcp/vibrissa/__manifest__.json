@@ -264,7 +264,7 @@
     },
     {
       "name": "show",
-      "description": "Here \"you\" is pip, the creature you work through. Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (sessions, arcs, files, context, memory, needs-you, permissions, mcp, workspaces, workshop, mills, parcels, bots, campaigns, themes, posture, stead, terminal, screen). It opens beside your conversation, or in a window of its own with where \"outside\"; seat picks its spot (\"left-half\", \"top-right\") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.",
+      "description": "Here \"you\" is pip, the creature you work through. Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (sessions, arcs, files, context, memory, needs-you, permissions, mcp, workspaces, workshop, mills, parcels, bots, campaigns, themes, posture, stead, terminal, screen). It opens beside your conversation, or in a window of its own with where \"outside\"; seat picks its spot (\"left-half\", \"top-right\") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -620,7 +620,7 @@
             "maxLength": 64
           },
           "from": {
-            "description": "Where it rises from: a place (your workshop, the porch, the storehouse, the mill, a project by name or path, another creature's workshop such as \"pip's workshop\"), or something of yours already out (by id or title), which it then grows from.",
+            "description": "Where it rises from: a place (your workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop such as \"pip's workshop\"), or something of yours already out (by id or title), which it then grows from.",
             "anyOf": [
               {
                 "type": "string",
