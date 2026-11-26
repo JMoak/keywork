@@ -2,6 +2,7 @@ import { z } from "zod";
 import { meansEverything, type OwnPane, paneCalled, sharedNameWords } from "../show/arrangement.ts";
 import { settingIdInput } from "../show/input.ts";
 import { calledOf } from "../show/naming.ts";
+import { placeSaid } from "../show/places.ts";
 import { Reading } from "../show/reading.ts";
 import type { Mood, Setting } from "../show/setting.ts";
 import { standingWords } from "../show/standing.ts";
@@ -32,7 +33,7 @@ export function withdrawTool(target: ShowTarget): Tool {
         mood: wordInput(moodWords)
           .optional()
           .describe(
-            "How it leaves, as motion only: one of show's moods. Leave it out and it leaves in the mood it arrived with.",
+            "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with your temperament, if you have one, else in the mood it arrived with.",
           ),
       })
       .strict(),
@@ -40,7 +41,12 @@ export function withdrawTool(target: ShowTarget): Tool {
       const settings = target.settings();
       if (settings === undefined) return noKeeperSurface;
       const reading = new Reading();
-      const mood = reading.word("mood", moodWords, moodSaid);
+      const named = reading.word("mood", moodWords, moodSaid);
+      const temperament =
+        named === undefined && target.temperament !== undefined
+          ? await target.temperament()
+          : undefined;
+      const mood = named ?? temperament;
       if (reading.problem !== undefined) return `${refusalLead} ${reading.problem}.`;
       const said = typeof id === "string" ? [id] : id;
       const spared = except === undefined ? [] : typeof except === "string" ? [except] : except;
@@ -135,7 +141,7 @@ function oneTakenBack(
 ): string {
   const taken = settings.takeBack(target, id, mood);
   if ("refused" in taken) return `Not withdrawn: ${taken.error}.`;
-  return `Withdrawn: ${taken.id} has left the yard.${grownWords(settings, target, [taken])}`;
+  return `Withdrawn: ${taken.id} has gone back to ${placeSaid(taken.place, target.creature)}.${grownWords(settings, target, [taken])}`;
 }
 
 function grownWords(settings: ShowSettings, target: ShowTarget, gone: readonly Setting[]): string {
@@ -178,7 +184,7 @@ function severalTakenBack(settings: ShowSettings, target: ShowTarget, asked: Ask
   if (gone.length === 0) return `Not withdrawn: ${held.join("; ")}.`;
   const left = ownOf(settings, target).map(({ setting }) => calledOf(setting));
   return [
-    `Withdrawn ${gone.length}: ${listed(gone.map(calledOf), "and")} ${gone.length === 1 ? "has" : "have"} left the yard.${grownWords(settings, target, gone)}`,
+    `Withdrawn ${gone.length}: ${listed(gone.map(calledOf), "and")} ${goneBackWords(gone, target.creature)}.${grownWords(settings, target, gone)}`,
     ...(held.length === 0 ? [] : [`Not withdrawn: ${held.join("; ")}.`]),
     left.length === 0
       ? "Nothing of yours is still out."
@@ -187,3 +193,10 @@ function severalTakenBack(settings: ShowSettings, target: ShowTarget, asked: Ask
 }
 
 const mostLeftNamed = 6;
+
+function goneBackWords(gone: readonly Setting[], caller: string | null): string {
+  const [first] = gone;
+  if (gone.length === 1 && first !== undefined)
+    return `has gone back to ${placeSaid(first.place, caller)}`;
+  return "have gone back where they came from";
+}

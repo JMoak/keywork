@@ -5,7 +5,6 @@ import {
   type CreatureRegistry,
   type CreatureWorksite,
   type CreatureWorksitesPort,
-  creatureTagOf,
   type PlaceBook,
   type PlaceProject,
   type SessionStore,
@@ -18,6 +17,7 @@ import {
 import { type BusEnvelope, type EventLog, recordedShowEvents } from "@keywork/server";
 import { canonicalPath } from "@keywork/shared";
 import { workspaceStateDir } from "./node/paths.ts";
+import { actingCreatureOf } from "./serve-visiting.ts";
 import { findSession } from "./sessions/store.ts";
 
 export interface ServedSettingsOptions {
@@ -107,7 +107,7 @@ function worksitePlacesOf(
 
 export function showThreadOf(store: SessionStore): ShowThread {
   return {
-    creature: creatureTagOf(store.entries())?.creature ?? null,
+    creature: actingCreatureOf(store.entries()),
     parent: store.header.spawnedBy?.sessionId ?? null,
   };
 }

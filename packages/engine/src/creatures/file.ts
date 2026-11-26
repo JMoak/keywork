@@ -8,6 +8,7 @@ import {
   modelPolicySchema,
   modelPolicySlotSchema,
 } from "../models/policy/types.ts";
+import type { Mood } from "../show/setting.ts";
 import { type InboundPolicy, inboundPolicySchema } from "./inbound.ts";
 import { introductionOf } from "./prompt.ts";
 
@@ -21,6 +22,25 @@ export const defaultRoutinesDir = "routines";
 export const seedLimit = 0xffffffff;
 
 export type ModelChoice = ModelPolicySlot;
+
+export const temperaments = [
+  "calm",
+  "brisk",
+  "eager",
+  "playful",
+  "decisive",
+  "tentative",
+] as const satisfies readonly Mood[];
+
+export type Temperament = (typeof temperaments)[number];
+
+export function temperamentOf(file: Pick<CreatureFile, "temperament" | "body">): Temperament {
+  return file.temperament ?? temperamentOfSeed(file.body.seed);
+}
+
+export function isTemperament(value: unknown): value is Temperament {
+  return temperaments.some((temperament) => temperament === value);
+}
 
 export interface CreatureBody {
   skin: string;
@@ -38,6 +58,7 @@ export interface CreatureFile {
   routines: string;
   paused?: CreaturePaused | undefined;
   inbound?: InboundPolicy | undefined;
+  temperament?: Temperament | undefined;
 }
 
 export interface CreaturePaused {
@@ -51,6 +72,7 @@ export interface CreaturePatch {
   models?: Partial<ModelPolicy> | undefined;
   cloudFallback?: boolean | undefined;
   inbound?: InboundPolicy | undefined;
+  temperament?: Temperament | undefined;
 }
 
 export interface CreatureFileDraft {
@@ -62,6 +84,7 @@ export interface CreatureFileDraft {
   workshop?: string | undefined;
   models?: Partial<ModelPolicy> | undefined;
   cloudFallback?: boolean | undefined;
+  temperament?: Temperament | undefined;
 }
 
 export class MalformedCreatureError extends Error {
@@ -88,6 +111,7 @@ export function creatureFileOf(draft: CreatureFileDraft): CreatureFile {
     models: { ...inheritEverywhere(), ...definedChoices(draft.models) },
     ...(draft.cloudFallback !== undefined && { cloudFallback: draft.cloudFallback }),
     routines: defaultRoutinesDir,
+    temperament: draft.temperament ?? temperamentOfSeed(draft.seed),
   };
 }
 
@@ -109,6 +133,7 @@ export function patchedCreatureFile(
     models: { ...file.models, ...definedChoices(patch.models) },
     ...(patch.cloudFallback !== undefined && { cloudFallback: patch.cloudFallback }),
     ...(patch.inbound !== undefined && { inbound: patch.inbound }),
+    temperament: patch.temperament ?? temperamentOf(file),
   };
 }
 
@@ -217,8 +242,18 @@ export const creatureFileSchema = z
       .describe(
         'Who may message this creature over the mesh (RUN-073 to RUN-075): "nobody", "paired" (creatures on this machine or a machine the keeper paired, the default when absent) or { named: [...] }, creature slugs optionally pinned with @machine; a message is plain text and never carries consent.',
       ),
+    temperament: z
+      .enum(temperaments)
+      .optional()
+      .describe(
+        "The creature's standing manner, one of the window tools' moods without urgent: how its panes move when it names no mood. Absent in a file made before it existed, when it is read from the seed, so the same creature always has the same one.",
+      ),
   })
   .strict();
+
+function temperamentOfSeed(seed: number): Temperament {
+  return temperaments[seed % temperaments.length] ?? "brisk";
+}
 
 function definedBody(body: Partial<CreatureBody> | undefined): Partial<CreatureBody> {
   return {

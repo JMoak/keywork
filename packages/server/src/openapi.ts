@@ -19,16 +19,19 @@ import { fileFamily } from "./routes/files.ts";
 import { flushFamily } from "./routes/flush.ts";
 import { forgetFamily } from "./routes/forget.ts";
 import { handoffFamily } from "./routes/handoffs.ts";
+import { honourFamily } from "./routes/honours.ts";
 import { ledgerFamily } from "./routes/ledger.ts";
 import { lifecycleFamily } from "./routes/lifecycle.ts";
 import { creatureMcpFamily } from "./routes/mcp.ts";
 import { memoryFamily } from "./routes/memory.ts";
 import { meshFamily } from "./routes/mesh.ts";
+import { modelWaitFamily } from "./routes/model-waits.ts";
 import { modelFamilyFor } from "./routes/models.ts";
 import { permissionFamily } from "./routes/permissions.ts";
 import { queueFamily } from "./routes/queue.ts";
 import { quietFamily } from "./routes/quiet.ts";
 import { registerRoutineRoutes } from "./routes/routines.ts";
+import { sceneFamily } from "./routes/scenes.ts";
 import { sessionVerbFamily } from "./routes/session-verbs.ts";
 import { sessionFamily } from "./routes/sessions.ts";
 import { showFamily } from "./routes/show.ts";
@@ -70,10 +73,13 @@ export const routeFamilies = [
   creatureProjectFamily,
   handoffFamily,
   worksiteFamily,
+  honourFamily,
+  sceneFamily,
   ledgerFamily,
   creatureMcpFamily((host) => host.creatureMcp),
   registerRoutineRoutes(({ host }) => host.routines),
   modelFamilyFor(({ host }) => host.models),
+  modelWaitFamily,
   workshopFamily((host) => host.workshops),
   meshFamily((host) => host.mesh),
   showFamily((host) => host.show),

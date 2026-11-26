@@ -13,7 +13,7 @@ import { quotedNameOf, saidOnOneLine } from "../show/naming.ts";
 import type { PlacementsReport } from "../show/placements.ts";
 import { Reading } from "../show/reading.ts";
 import { seatWrittenInput } from "../show/seat.ts";
-import type { Setting, SettingSignal } from "../show/setting.ts";
+import type { Mood, Setting, SettingSignal } from "../show/setting.ts";
 import { overlapWords, standingWords } from "../show/standing.ts";
 import type { Marking, Signalled, Signalling } from "../show/store.ts";
 import {
@@ -32,7 +32,8 @@ import {
 import { quoted, wordInput } from "../show/words.ts";
 import type { Tool } from "../tools.ts";
 import { defineTool } from "./define.ts";
-import type { ShowSettings, ShowTarget } from "./show.ts";
+import { forgottenWords, keptSceneWords, machinePaneOfScene, sceneNameInput } from "./scenes.ts";
+import { type ShowSettings, type ShowTarget, sceneSetOutWords } from "./show.ts";
 
 export const arrangeToolName = "arrange";
 
@@ -40,13 +41,17 @@ export function arrangeTool(target: ShowTarget): Tool {
   return defineTool({
     name: arrangeToolName,
     description:
-      'Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {"<id or title>": "left-two-thirds"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and "all" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {"<id>": "done"}} or {mark: {"<id>": {text: "done", tone: "good"}}}, and signal raises or lowers its outline; either can go alone. It moves only the app\'s own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.',
+      'Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {"<id or title>": "left-two-thirds"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and "all" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {"<id>": "done"}} or {mark: {"<id>": {text: "done", tone: "good"}}}, and signal raises or lowers its outline; either can go alone. {keep: "<name>"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: "<name>"} sets a kept scene out again, and {forget: "<name>"} lets one go. It moves only the app\'s own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.',
     schema: arrangeArgs,
+    alwaysAsks: (args) => machinePaneOfScene(target, recordOf(args).scene) !== undefined,
     run: async (args) => {
       const settings = target.settings();
       if (settings === undefined) return noKeeperSurface;
+      const temperament = target.temperament === undefined ? undefined : await target.temperament();
+      const scenes = sceneWork(settings, target, args, temperament);
+      if (scenes !== undefined) return scenes;
       const reading = new Reading();
-      const ask = askOf(args, reading);
+      const ask = askOf(args, reading, temperament);
       if (reading.problem !== undefined) return `Not arranged: ${reading.problem}.`;
       const marks = marksOf(args.mark, settings, target, reading);
       if (reading.problem !== undefined) return `Not arranged: ${reading.problem}.`;
@@ -139,7 +144,7 @@ const arrangeArgs = z
     rest: wordInput(restWords)
       .optional()
       .describe(
-        "What becomes of your other windows outside, the ones this arrangement does not name: stay (the default with seats) leaves them where they stand; beside steps them back beside the conversation as cards, still out, so the panes you name stand alone.",
+        "What becomes of your other windows outside, the ones this arrangement does not name: stay (the default with seats) leaves them where they stand; beside steps them back beside the conversation, still out, so the panes you name stand alone.",
       ),
     back: z
       .boolean()
@@ -155,8 +160,30 @@ const arrangeArgs = z
     mood: wordInput(moodWords)
       .optional()
       .describe(
-        "How the panes move into place, as motion only: one of show's moods, brisk when left out. The answer names the mood it moved with.",
+        "How the panes move into place, as motion only: one of show's moods; left out, your temperament's if you have one, else brisk. The answer names the mood it moved with.",
       ),
+    keep: sceneNameInput
+      .optional()
+      .describe(
+        "Keep what you have out as a scene by this name, as it stands now: each thing, and its seat outside or its place beside your conversation. With panes, only those. Keeping a name you already keep replaces it. You keep up to twelve scenes.",
+      ),
+    from: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2_000)
+      .optional()
+      .describe(
+        "With keep, the place in the stead the scene belongs to, named as show's from names one (a project or folder you have worked in, by name or path); pressing that place sets the scene out. Left out, a scene whose things all rose from one project belongs to it.",
+      ),
+    scene: sceneNameInput
+      .optional()
+      .describe(
+        "Set out a scene you kept, by its name: each thing again where it stood. It goes alone, or with a mood.",
+      ),
+    forget: sceneNameInput
+      .optional()
+      .describe("Let a scene you kept go, by its name. Nothing that is out moves."),
   })
   .strict();
 
@@ -164,7 +191,46 @@ type ArrangeArgs = z.infer<typeof arrangeArgs>;
 
 const noKeeperSurface = "Not arranged: no keeper surface takes settings here.";
 
-function askOf(args: ArrangeArgs, reading: Reading): ArrangementAsk {
+function sceneWork(
+  settings: ShowSettings,
+  target: ShowTarget,
+  args: ArrangeArgs,
+  temperament: Mood | undefined,
+): Promise<string> | string | undefined {
+  const { keep, from, scene, forget, panes, mood, ...layout } = args;
+  if (keep === undefined && scene === undefined && forget === undefined) {
+    return from === undefined ? undefined : fromWithoutKeep;
+  }
+  const laidOut = Object.values(layout).some((given) => given !== undefined);
+  const asked = [keep, scene, forget].filter((name) => name !== undefined).length;
+  if (laidOut || asked > 1) return sceneAlone;
+  if (forget !== undefined)
+    return panes === undefined && mood === undefined && from === undefined
+      ? forgottenWords(target, forget)
+      : sceneAlone;
+  if (scene !== undefined)
+    return panes === undefined && from === undefined
+      ? sceneSetOutWords(settings, target, mood, scene, temperament)
+      : sceneAlone;
+  if (keep === undefined || mood !== undefined) return sceneAlone;
+  const mine = ownPanes(settings, target);
+  const named = panes === undefined ? undefined : typeof panes === "string" ? [panes] : panes;
+  return keptSceneWords(settings, target, { name: keep, panes: named, from }, (said) =>
+    paneCalled(said, mine),
+  );
+}
+
+const fromWithoutKeep =
+  "Not arranged: from names the place a scene belongs to, so it goes with keep; leave it out, or keep the scene.";
+
+const sceneAlone =
+  "Not arranged: keep, scene and forget each go alone (keep may take panes and from, scene a mood); ask for one at a time.";
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function askOf(args: ArrangeArgs, reading: Reading, temperament: Mood | undefined): ArrangementAsk {
   const meansBack = args.shape !== undefined && wordsForBack.has(args.shape.trim().toLowerCase());
   return {
     back: args.back === true || meansBack ? true : undefined,
@@ -176,7 +242,7 @@ function askOf(args: ArrangeArgs, reading: Reading): ArrangementAsk {
     side: reading.word("side", sideWords, args.side),
     over: reading.word("over", reachWords, args.over),
     rest: reading.word("rest", restWords, args.rest),
-    mood: reading.word("mood", moodWords, args.mood),
+    mood: reading.word("mood", moodWords, args.mood) ?? temperament,
   };
 }
 

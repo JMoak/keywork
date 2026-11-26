@@ -138,6 +138,7 @@ describe("a question for the keeper", () => {
       answer: null,
       about: { kind: "ask", callId: "c1", tool: "bash" },
       conversation: null,
+      project: null,
     };
     expect(await ledger.read("pip")).toEqual({ creature: "pip", entries: [waiting], folded: 0 });
 
@@ -263,6 +264,7 @@ describe("a task", () => {
       answer: null,
       about: { kind: "chore", routineId: "triage", runId: "r1" },
       conversation: null,
+      project: null,
     };
     expect(await entriesOf(ledger)).toEqual([running]);
     const id = (await entriesOf(ledger))[0]?.id ?? "";

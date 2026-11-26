@@ -228,7 +228,7 @@ describe("the show tool under keywork serve", () => {
       showTurn("r1", { kind: "report", ref: "r-triage" }, "rests"),
       textTurn("Triage done."),
     ]);
-    const world = await creatureWorld(provider, () => undefined);
+    const world = await creatureWorld(provider, () => undefined, notes("plan.md"));
     try {
       const plain = (await world.host.create()).id;
       await world.host.prompt(plain, "remind me about lunch");
@@ -272,7 +272,7 @@ describe("the show tool under keywork serve", () => {
       showTurn("v3", { kind: "report", ref: "r1" }, "seen"),
       textTurn("Set out the report."),
     ]);
-    const world = await creatureWorld(provider, () => undefined);
+    const world = await creatureWorld(provider, () => undefined, notes("working.md", "plan.md"));
     try {
       await world.json("/creatures", { name: "Pip" });
       const { conversation } = await world.json<{ conversation: string }>("/creatures/pip");
@@ -555,6 +555,13 @@ async function seedRun5Hal(place: { cwd: string; sessionDir: string }): Promise<
   await writeFile(join(bot, "creature.json"), JSON.stringify(hal, null, 2));
   await writeFile(join(bot, "bot.md"), '---\nlearning: "notes"\n---\n');
   await copyFile(run5Journal, join(place.sessionDir, "1793978543601-0001-40008.jsonl"));
+}
+
+function notes(...names: readonly string[]) {
+  return async ({ cwd }: { cwd: string }) => {
+    await mkdir(join(cwd, "notes"), { recursive: true });
+    for (const name of names) await writeFile(join(cwd, "notes", name), "notes\n");
+  };
 }
 
 async function creatureWorld(

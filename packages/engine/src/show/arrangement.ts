@@ -264,7 +264,7 @@ function instructionRefusal(ask: ArrangementAsk): ShowRefusal | undefined {
   if (rest === "stay" && seats === undefined && given.length === 1)
     return refused(
       "invalid",
-      "a shape or a relation re-lays the stage for the panes it names, so your other windows step back beside the conversation as cards; rest stay goes with seats",
+      "a shape or a relation re-lays the stage for the panes it names, so your other windows step back beside the conversation; rest stay goes with seats",
     );
   if (given.length <= 1) return undefined;
   return refused(

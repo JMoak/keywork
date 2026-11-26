@@ -471,6 +471,30 @@
           "id": "string",
           "kind": "string",
           "openedAt": "string",
+          "project": "null",
+          "session": "string",
+          "state": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "creature": "string",
+        "entry": {
+          "about": {
+            "callId": "string",
+            "kind": "string",
+            "tool": "string"
+          },
+          "answer": "null",
+          "closedAt": "null",
+          "conversation": "null",
+          "directory": "string",
+          "id": "string",
+          "kind": "string",
+          "openedAt": "string",
+          "project": "string",
           "session": "string",
           "state": "string",
           "title": "string"
@@ -498,6 +522,7 @@
           "id": "string",
           "kind": "string",
           "openedAt": "string",
+          "project": "null",
           "session": "null",
           "state": "string",
           "title": "string"
@@ -520,6 +545,7 @@
           "id": "string",
           "kind": "string",
           "openedAt": "string",
+          "project": "null",
           "session": "string",
           "state": "string",
           "title": "string"
@@ -540,6 +566,7 @@
           "id": "string",
           "kind": "string",
           "openedAt": "string",
+          "project": "null",
           "session": "null",
           "state": "string",
           "title": "string"
@@ -571,6 +598,90 @@
           "latest": "string",
           "project": "string",
           "root": "string",
+          "since": "string"
+        }
+      }
+    ],
+    "creature.honours": [
+      {
+        "change": "string",
+        "honour": {
+          "earnedAt": "string",
+          "holder": "string",
+          "kind": "string",
+          "proof": "string",
+          "tier": "number",
+          "with": "string"
+        }
+      },
+      {
+        "change": "string",
+        "honour": {
+          "earnedAt": "string",
+          "holder": "null",
+          "kind": "string",
+          "proof": "string",
+          "tier": "number",
+          "with": "null"
+        }
+      }
+    ],
+    "creature.scenes": [
+      {
+        "change": "string",
+        "creature": "string",
+        "scene": {
+          "creature": "string",
+          "holds": [
+            {
+              "kind": "string",
+              "title": "string"
+            }
+          ],
+          "keptAt": "string",
+          "name": "string",
+          "place": {
+            "creature": "string",
+            "directory": "string",
+            "kind": "string"
+          }
+        }
+      },
+      {
+        "change": "string",
+        "creature": "string",
+        "scene": {
+          "creature": "string",
+          "holds": [
+            {
+              "kind": "string",
+              "title": "string"
+            }
+          ],
+          "keptAt": "string",
+          "name": "string",
+          "place": "null"
+        }
+      }
+    ],
+    "model.wait": [
+      {
+        "change": "string",
+        "wait": {
+          "creature": "string",
+          "reason": "string",
+          "server": "string",
+          "session": "string",
+          "since": "string"
+        }
+      },
+      {
+        "change": "string",
+        "wait": {
+          "creature": "null",
+          "reason": "string",
+          "server": "null",
+          "session": "string",
           "since": "string"
         }
       }

@@ -51,7 +51,7 @@ describe("the withdraw tool", () => {
 
     const said = await tool.execute({ id: setting.id });
 
-    expect(said).toBe(`Withdrawn: ${setting.id} has left the yard.`);
+    expect(said).toBe(`Withdrawn: ${setting.id} has gone back to your workshop.`);
     expect(settings.open()).toEqual([]);
     expect(emitted.slice(before)).toEqual([
       {
@@ -135,12 +135,14 @@ describe("the withdraw tool", () => {
     const note = (title: string) => setOut({ what: { kind: "note", ref: `${title}.`, title } });
     const [plan, risks, tests, calls] = ["Plan", "Risks", "Tests", "On call"].map(note);
 
-    expect(await tool.execute({ id: "risks" })).toBe(`Withdrawn: ${risks?.id} has left the yard.`);
+    expect(await tool.execute({ id: "risks" })).toBe(
+      `Withdrawn: ${risks?.id} has gone back to your workshop.`,
+    );
     expect(await tool.execute({ id: ["Tests", "Nothing like it"] })).toBe(
-      `Withdrawn 1: "Tests" (${tests?.id}) has left the yard. Not withdrawn: nothing you set out is out with the id Nothing like it; shown lists what is out. Still out: "Plan" (${plan?.id}) and "On call" (${calls?.id}).`,
+      `Withdrawn 1: "Tests" (${tests?.id}) has gone back to your workshop. Not withdrawn: nothing you set out is out with the id Nothing like it; shown lists what is out. Still out: "Plan" (${plan?.id}) and "On call" (${calls?.id}).`,
     );
     expect(await tool.execute({ id: "all", except: "Plan" })).toBe(
-      `Withdrawn 1: "On call" (${calls?.id}) has left the yard. Still out: "Plan" (${plan?.id}).`,
+      `Withdrawn 1: "On call" (${calls?.id}) has gone back to your workshop. Still out: "Plan" (${plan?.id}).`,
     );
     expect(settings.open().map(({ id }) => id)).toEqual([plan?.id]);
   });
@@ -151,7 +153,7 @@ describe("the withdraw tool", () => {
     const child = setOut({ from: parent.id, what: { kind: "file", ref: "a.ts" } });
 
     expect(await tool.execute({ id: parent.id })).toBe(
-      `Withdrawn: ${parent.id} has left the yard. What grew from it stays out: "a.ts" (${child.id}).`,
+      `Withdrawn: ${parent.id} has gone back to your workshop. What grew from it stays out: "a.ts" (${child.id}).`,
     );
   });
 
@@ -160,7 +162,9 @@ describe("the withdraw tool", () => {
     const first = setOut({ what: { kind: "note", ref: "One.", title: "Plan" } });
     const second = setOut({ what: { kind: "note", ref: "Two.", title: "Plan" } });
 
-    expect(await tool.execute({ id: first.id })).toBe(`Withdrawn: ${second.id} has left the yard.`);
+    expect(await tool.execute({ id: first.id })).toBe(
+      `Withdrawn: ${second.id} has gone back to your workshop.`,
+    );
     expect(settings.open()).toEqual([]);
   });
 

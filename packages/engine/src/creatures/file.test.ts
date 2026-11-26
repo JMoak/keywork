@@ -23,6 +23,7 @@ const defaults: CreatureFile = {
   workshop: "host",
   models: inheritEverywhere(),
   routines: "routines",
+  temperament: "calm",
 };
 
 describe("creature.json", () => {

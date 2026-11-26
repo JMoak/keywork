@@ -22,6 +22,10 @@ export function homePlaceOf(creature: string | null): SteadPlace {
   return creature === null ? { kind: "porch" } : { kind: "workshop", creature };
 }
 
+export function samePlace(one: SteadPlace | undefined, other: SteadPlace | undefined): boolean {
+  return one !== undefined && other !== undefined && JSON.stringify(one) === JSON.stringify(other);
+}
+
 export const noPlaceBook: PlaceBook = {
   creatures: async () => [],
   projects: async () => [],

@@ -111,10 +111,13 @@ export function surfacePorts(options: SurfacePortsOptions): SurfacePorts {
           anchorMemory: anchors,
           requestReopen: () => undefined,
         });
+        const before = workspaceIdentity(cwd, workspaceSlug);
         const { root, vault } = await setup.setUp();
+        const renamed = workspaceIdentity(cwd, workspaceSlug) !== before;
         const { recompose } = options;
-        if (projectTrusted || recompose === undefined) {
-          return { trusted: true, root, vault, reopens: !projectTrusted, recomposed: false };
+        if (projectTrusted || recompose === undefined || renamed) {
+          const reopens = !projectTrusted || renamed;
+          return { trusted: true, root, vault, reopens, recomposed: false };
         }
         await recompose();
         return { trusted: true, root, vault, reopens: false, recomposed: true };

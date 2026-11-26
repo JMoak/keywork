@@ -10,6 +10,7 @@ import {
   type ChangedPath,
   type Checkpoints,
   type ConversationEnded,
+  type CreatureHandle,
   type CreatureHost,
   type CreatureLedger,
   type CreatureMail,
@@ -22,8 +23,10 @@ import {
   conversationEndedOf,
   conversationEndedType,
   creatureHandoffs,
+  creatureHonours,
   creatureLedger,
   creatureMail,
+  creatureScenes,
   creatureTagOf,
   creatureWorksites,
   decideForKeeper,
@@ -32,6 +35,7 @@ import {
   formatReference,
   type GrantRule,
   handoffsFileIn,
+  honoursFileIn,
   hostWorkshop,
   type InferenceBinding,
   isEffortLevel,
@@ -52,6 +56,7 @@ import {
   type MessageEntry,
   type ModelChangeEntry,
   type ModelReference,
+  type Mood,
   messageText,
   modelReferenceOf,
   type PermissionLedger,
@@ -72,6 +77,7 @@ import {
   recordKeeperVerdict,
   rememberFrom,
   restorePointOf,
+  type SceneShelf,
   type SendBehavior,
   type SendOptions,
   type SessionEntry,
@@ -81,6 +87,7 @@ import {
   type ShowTarget,
   type ShowThread,
   type StagedItem,
+  scenesFileIn,
   scopeContains,
   sessionPosture,
   type Tailnet,
@@ -92,8 +99,10 @@ import {
   type TurnSettlement,
   tapJournal,
   tapKeeperVerdicts,
+  temperamentOf,
   type Usage,
   type VerdictMark,
+  visitorLedgerFileIn,
   type WakeScheduler,
   type WorkspaceSessionRef,
   worksitesFileIn,
@@ -172,7 +181,11 @@ import { servedCampaigns } from "./serve-campaigns.ts";
 import { cataloguedInventory, catalogueFileOf, openRouterCatalogue } from "./serve-catalogue.ts";
 import { sessionChanges } from "./serve-changes.ts";
 import { requireProjectModel } from "./serve-conversation-model.ts";
-import { servedCreatureProjects } from "./serve-creature-projects.ts";
+import {
+  homeScenesOver,
+  servedCreatureProjects,
+  tellingTheHome,
+} from "./serve-creature-projects.ts";
 import {
   type CreaturePlace,
   creatureRegistryAt,
@@ -183,6 +196,7 @@ import {
   type SettledThread,
   servedCreatures,
 } from "./serve-creatures.ts";
+import { followHonours } from "./serve-honours.ts";
 import {
   type CreatureSessionFacts,
   choreFactsOver,
@@ -192,10 +206,13 @@ import {
   followLedgerEvents,
   type LedgerConversationSessions,
   ledgeredCreatures,
+  tellingTheHomeOfVisits,
+  visitorThreads,
 } from "./serve-ledger.ts";
 import { type LifecycleSessions, servedLifecycle, trashSession } from "./serve-lifecycle.ts";
 import { keeperAskOver, servedCreatureMcp } from "./serve-mcp.ts";
 import { servedMemory, stagedInbox } from "./serve-memory.ts";
+import { followModelWaits, localServerOf } from "./serve-model-waits.ts";
 import {
   creatureInitialProvider,
   refreshableModels,
@@ -210,6 +227,7 @@ import {
   type ServedRoutines,
   servedRoutines,
 } from "./serve-routines.ts";
+import { servedScenes, stillThere } from "./serve-scenes.ts";
 import {
   type ServedSettings,
   servedSettings,
@@ -220,6 +238,14 @@ import {
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
 import { servedTree } from "./serve-tree.ts";
+import {
+  fileExistsIn,
+  projectThreadTag,
+  projectThreadType,
+  sameHandle,
+  type VisitingSeat,
+  visitingSeat,
+} from "./serve-visiting.ts";
 import { followWorksites, type WorksiteSessionFacts, worksiteHistory } from "./serve-worksites.ts";
 import { composeServedWorkspace, type ServedWorkspace } from "./serve-workspace.ts";
 import {
@@ -526,12 +552,40 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     projectWork: (store: SessionStore) => projectThreadTag(store.entries()) !== undefined,
   };
   const places = steadPlaces({ registry, ...place, worksites: () => worksites });
+  const thisWorkspace = workspaceIdentity(options.cwd, options.workspaceSlug);
+  const visitorLedger = creatureLedger({
+    file: visitorLedgerFileIn(workspaceStateOf(place)),
+    creatures: { subscribe: () => () => undefined },
+    exists: async () => true,
+    notice,
+  });
+  const visits = visitorThreads(visitorLedger);
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
     initialProvider: creatureInitialProvider(modelOptions),
     providerFor: selectedCreatureProvider(modelOptions),
     settings: shown.settings,
     places,
+    scenes: () => scenes,
+    temperamentOf: async (creature) => {
+      const found = await registry.read(creature);
+      return found === undefined ? undefined : temperamentOf(found.file);
+    },
+    visiting: (creature, store) =>
+      visitingSeat(
+        {
+          userRoot: place.userRoot,
+          workspace: thisWorkspace,
+          homeScenes: homeScenesOver(place.userRoot),
+          worksiteOf: (conversation) => worksites.workingIn(conversation),
+          stillThere: (what) => scenes.stillThere(what),
+        },
+        creature,
+        { id: store.header.id, cwd: store.header.cwd },
+      ),
+    fileExists: fileExistsIn(options.cwd),
+    projectThreadOpened: ({ creature, text }, store) =>
+      visits.opened(creature.slug, store.header.id, store.header.cwd, text),
     meter: (turn) => {
       node.usage.record(turn);
       answers.answered(turn.provider);
@@ -540,6 +594,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     settled: (thread) => {
       shown.settings.rested(thread.id);
       worksites.rested(thread.id);
+      if (projectThreadTag(thread.store.entries()) !== undefined) visits.settled(thread);
       void finishThreadQuietly(thread);
     },
     keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
@@ -588,6 +643,16 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
   const unfollowLedger = [
     followAsks(gate.asks, ledger, (id) => sessions.creatureSessionOf(id)),
     followLedgerEvents(log, ledger, notice),
+    followAsks(gate.asks, visitorLedger, (id) => sessions.visitingSessionOf(id)),
+    followLedgerEvents(log, visitorLedger, notice),
+    ...(options.managedHome === true
+      ? []
+      : tellingTheHomeOfVisits(
+          log,
+          visitorLedger,
+          (id) => sessions.visitingSessionOf(id) !== undefined,
+          tellingTheHome(place.userRoot, thisWorkspace),
+        )),
   ];
   const creatures = ledgeredCreatures(hosted, ledger, options.cwd);
   const trustedMemory = (): MemoryStore | undefined => {
@@ -596,24 +661,56 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
   };
   const handoffs = creatureHandoffs({ file: workspaceHandoffsFile(place), creatures, notice });
   const creatureSlugs = async () => (await registry.list()).map((creature) => creature.slug);
+  const journals = once(() =>
+    worksiteHistory({
+      sessionDir,
+      creatures: creatureSlugs,
+      visitingCreatureOf: (entries) => projectThreadTag(entries)?.creature,
+    }),
+  );
   const worksites = creatureWorksites({
     file: workspaceWorksitesFile(place),
     creatures,
-    history: () =>
-      worksiteHistory({
-        sessionDir,
-        creatures: creatureSlugs,
-        visitingCreatureOf: (entries) => projectThreadTag(entries)?.creature,
-      }),
+    history: journals,
     notice,
   });
-  const unfollowWorksites = followWorksites(
-    log,
+  const workingSession = (id: string) =>
+    sessions.creatureSessionOf(id) ?? sessions.visitingSessionOf(id);
+  const unfollowWorksites = followWorksites(log, worksites, workingSession);
+  const honours = creatureHonours({
+    file: honoursFileIn(workspaceStateOf(place)),
+    creatures: {
+      list: async () =>
+        (await registry.list()).map(({ slug, file }) => ({
+          slug,
+          name: file.name,
+          created: file.created,
+        })),
+      subscribe: (listener) => creatures.subscribe(listener),
+    },
+    handoffs,
     worksites,
-    (id) => sessions.creatureSessionOf(id) ?? sessions.visitingSessionOf(id),
-  );
+    history: journals,
+    notice,
+  });
+  const unfollowHonours = followHonours(log, honours, workingSession);
+  const scenes = creatureScenes({
+    file: scenesFileIn(workspaceStateOf(place)),
+    creatures,
+    notice,
+    stillThere: (what) => stillThere(what, options.cwd, (id) => sessions.stored(id)),
+  });
+  const modelWaits = followModelWaits(log, (id) => ({
+    creature: workingSession(id)?.creature ?? null,
+    server: localServerOf(
+      inventory
+        ?.registrations()
+        .find((registration) => registration.name === sessions.providerNameOf(id))?.endpoint,
+    ),
+  }));
   const {
     followProjects,
+    setOutInProject,
     close: unfollowProjects,
     ...projectPorts
   } = servedCreatureProjects({
@@ -629,6 +726,10 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     projectWorksites: {
       visited: (project, rows) => worksites.visited(project, rows),
       quiet: (project) => worksites.projectQuiet(project),
+    },
+    projectHonours: { visited: (project, work) => honours.visited(project, work) },
+    projectLedger: {
+      visited: (project, creature, entries) => ledger.visited(project, creature, entries),
     },
   });
   void creatureSlugs()
@@ -694,13 +795,41 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     creatures,
     handoffs,
     worksites,
-    ledger: conversingLedger(ledger, conversationSessions),
+    honours,
+    scenes: servedScenes({
+      scenes,
+      settings: shown.settings,
+      stillThere: (what) => scenes.stillThere(what),
+      exists: async (slug) => (await registry.read(slug)) !== undefined,
+      conversationOf: async (slug) =>
+        (await registry.read(slug)) === undefined
+          ? undefined
+          : creatures.threads.conversationFor(slug),
+      temperamentOf: async (slug) => {
+        const found = await registry.read(slug);
+        return found === undefined ? undefined : temperamentOf(found.file);
+      },
+      asksTheKeeper: keeperAskOver(gate.asks, log),
+      inProject: setOutInProject,
+      visitors: {
+        userRoot: place.userRoot,
+        workspace: thisWorkspace,
+        threadOf: (creature, kept) => sessions.projectThreadOf(creature, kept),
+      },
+    }),
+    modelWaits,
+    ledger: {
+      ...conversingLedger(ledger, conversationSessions),
+      visiting: async (_visitor, creature) =>
+        (await visitorLedger.read(creature)) ?? { creature, entries: [], folded: 0 },
+    },
     ...servedCreatureMcp({
       creatures,
       sessions,
       mesh: node.mesh,
       settings: shown.settings,
       places,
+      scenes,
       asksTheKeeper: keeperAskOver(gate.asks, log),
     }),
     ...(routines !== undefined && { routines: routines.service }),
@@ -713,8 +842,12 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       unhosted();
       handoffs.close();
       unfollowWorksites();
+      unfollowHonours();
       unfollowProjects();
       worksites.close();
+      honours.close();
+      scenes.close();
+      modelWaits.close();
       if (ownsSettings) shown.close();
       routines?.stop();
       const closingCampaigns = campaigns.close();
@@ -724,6 +857,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       await node.usage.flush();
       for (const unfollow of unfollowLedger) unfollow();
       ledger.close();
+      visitorLedger.close();
     },
   };
 }
@@ -895,33 +1029,11 @@ interface SessionSeams {
   keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
   settings?: ShowSettings | undefined;
   places?: PlaceBook | undefined;
-}
-
-const projectThreadType = "keywork.creature-project";
-
-interface ProjectThreadTag {
-  key: string;
-  creature: ProjectWorkRequest["creature"];
-}
-
-function projectThreadTag(entries: readonly SessionEntry[]): ProjectThreadTag | undefined {
-  for (const entry of entries) {
-    if (
-      entry.type !== "custom" ||
-      entry.customType !== projectThreadType ||
-      typeof entry.data !== "object" ||
-      entry.data === null
-    )
-      continue;
-    const candidate = entry.data as Partial<ProjectThreadTag>;
-    if (
-      typeof candidate.key === "string" &&
-      typeof candidate.creature?.workspace === "string" &&
-      typeof candidate.creature.slug === "string"
-    )
-      return { key: candidate.key, creature: candidate.creature };
-  }
-  return undefined;
+  scenes?(): SceneShelf | undefined;
+  temperamentOf?(creature: string): Promise<Mood | undefined>;
+  visiting?(creature: CreatureHandle, store: SessionStore): VisitingSeat;
+  fileExists?(ref: string): Promise<boolean>;
+  projectThreadOpened?(request: ProjectWorkRequest, store: SessionStore): void;
 }
 
 function projectThreadSeat(store: SessionStore): CreatureSeat | undefined {
@@ -1093,7 +1205,18 @@ class LiveSessions {
       project: request.project,
       source: request.source,
     });
+    this.seams.projectThreadOpened?.(request, store);
     return this.adopt(store);
+  }
+
+  async projectThreadOf(creature: CreatureHandle, kept: string): Promise<string | undefined> {
+    const { stores } = await scanSessions(this.sessionDir);
+    const own = stores.filter((store) =>
+      sameHandle(projectThreadTag(store.entries())?.creature, creature),
+    );
+    if (own.some((store) => store.header.id === kept)) return kept;
+    const latest = await Promise.all(own.map(async (store) => summarize(store)));
+    return latest.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime())[0]?.id;
   }
 
   confine(id: string, posture: ToolPosture, grants: readonly GrantRule[]): void {
@@ -1308,14 +1431,35 @@ class LiveSessions {
   }
 
   private showTargetOf(store: SessionStore): ShowTarget | undefined {
-    const { settings } = this.seams;
+    const { settings, temperamentOf, places, fileExists } = this.seams;
     if (settings === undefined) return undefined;
+    const sessionId = store.header.id;
+    const shared = { sessionId, places, fileExists, settings: () => settings };
+    const visiting = projectThreadTag(store.entries())?.creature;
+    const seat = visiting === undefined ? undefined : this.seams.visiting?.(visiting, store);
+    if (visiting !== undefined && seat !== undefined) {
+      return {
+        ...shared,
+        creature: visiting.slug,
+        scenes: seat.scenes,
+        temperament: seat.temperament,
+        get home() {
+          return seat.home();
+        },
+      };
+    }
+    const creature = creatureTagOf(store.entries())?.creature ?? null;
     return {
-      creature: creatureTagOf(store.entries())?.creature ?? null,
-      sessionId: store.header.id,
-      places: this.seams.places,
-      settings: () => settings,
+      ...shared,
+      creature,
+      scenes: this.seams.scenes?.(),
+      temperament: async () =>
+        creature === null || temperamentOf === undefined ? undefined : temperamentOf(creature),
     };
+  }
+
+  providerNameOf(id: string): string | undefined {
+    return this.live.get(id)?.providerName() ?? this.runningChildren.get(id)?.agent.provider.name;
   }
 
   private confinedResolver(store: SessionStore, shell: PersistentShell): PermissionResolver {
@@ -1483,6 +1627,10 @@ class LiveSession {
 
   private get agent(): Agent {
     return this.bound.agent;
+  }
+
+  providerName(): string {
+    return this.agent.provider.name;
   }
 
   async run(
@@ -2579,7 +2727,21 @@ function workspaceLedgerFile(
 function workspaceWorksitesFile(
   place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
 ): string {
-  return worksitesFileIn(workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug));
+  return worksitesFileIn(workspaceStateOf(place));
+}
+
+function workspaceStateOf(
+  place: Pick<CreaturePlace, "cwd" | "workspaceSlug" | "userRoot">,
+): string {
+  return workspaceStateDir(place.userRoot, place.cwd, place.workspaceSlug);
+}
+
+function once<Value>(make: () => Promise<Value>): () => Promise<Value> {
+  let made: Promise<Value> | undefined;
+  return () => {
+    made ??= make();
+    return made;
+  };
 }
 
 function servedMail(

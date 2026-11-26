@@ -2,18 +2,30 @@ import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import {
   type CreatureHandle,
+  type CreatureLedgerEntry,
   CreatureProjectContext,
   CreatureProjectError,
   type CreatureProjectsPort,
   type CreatureProjectWorkPort,
   CreatureRegistry,
+  type CreatureScene,
   type CreatureWorksite,
+  ledgerEntriesOf,
   type ProjectWorkRequest,
+  type SceneKeeping,
+  type SceneKeepingInput,
+  type VisitorWork,
   type WorkspaceSessionRef,
 } from "@keywork/engine";
-import { contractVersion, readServerTicket, type ServerTicket } from "@keywork/server";
+import {
+  contractVersion,
+  readServerTicket,
+  type SceneSetOutAnswer,
+  type ServerTicket,
+} from "@keywork/server";
 import { canonicalPath, resolveAnchor, TrustStore } from "@keywork/shared";
 import { existingManagedHome, keyworkHome, managedHomeFolder, workspaceIdentity } from "./paths.ts";
+import type { HomeScenes } from "./serve-visiting.ts";
 import { keyworkVersion } from "./version.ts";
 
 export interface ServedCreatureProjectsOptions {
@@ -22,10 +34,16 @@ export interface ServedCreatureProjectsOptions {
   workspaceSlug?: string | undefined;
   managedHome?: boolean | undefined;
   projectTrusted: boolean;
-  registry: Pick<CreatureRegistry, "read">;
+  registry: Pick<CreatureRegistry, "read" | "list">;
   start(request: ProjectWorkRequest, generation: string): Promise<WorkspaceSessionRef>;
   discuss(request: ProjectWorkRequest, generation: string): Promise<WorkspaceSessionRef>;
   projectWorksites?: ProjectWorksites | undefined;
+  projectHonours?: ProjectHonours | undefined;
+  projectLedger?: ProjectLedger | undefined;
+}
+
+export interface ProjectLedger {
+  visited(project: string, creature: string, entries: readonly CreatureLedgerEntry[]): void;
 }
 
 export interface ProjectWorksites {
@@ -33,9 +51,14 @@ export interface ProjectWorksites {
   quiet(project: string): void;
 }
 
+export interface ProjectHonours {
+  visited(project: string, work: readonly VisitorWork[]): void;
+}
+
 export interface ServedCreatureProjects {
   creatureProjects?: CreatureProjectsPort;
   creatureProjectWork?: CreatureProjectWorkPort;
+  setOutInProject(project: string, slug: string, name: string): Promise<SceneSetOutAnswer>;
   followProjects(creatures: readonly string[]): Promise<void>;
   close(): void;
 }
@@ -66,14 +89,33 @@ export function servedCreatureProjects(
       },
       discuss: options.discuss,
     });
+    const creatures = async () => (await options.registry.list()).map(({ slug }) => slug);
     const watches = projectWatches({
       workspace,
       projectTicket,
       worksites: options.projectWorksites,
+      honours: options.projectHonours,
+      ledger: options.projectLedger,
+      creatures,
       creaturesIn: (project, slugs) => creaturesWorkingIn(creatureProjects, project, slugs),
     });
     return {
-      creatureProjects: followingProjectThreads(creatureProjects, watches),
+      creatureProjects: {
+        ...followingProjectThreads(creatureProjects, watches),
+        changed: async (project) => {
+          const worked = await projectsWorkedIn(creatureProjects, await creatures());
+          if (worked.has(project)) watches.follow(project, false);
+        },
+      },
+      setOutInProject: async (project, slug, name) => {
+        const ticket = await projectTicket(project);
+        const visitor = `?visitor=${encodeURIComponent(workspace)}`;
+        const answer =
+          ticket === undefined
+            ? undefined
+            : await sendJson(ticket, "POST", `${scenePath(slug, name)}/set-out${visitor}`);
+        return setOutAnswerOf(answer?.body) ?? projectSilent;
+      },
       followProjects: async (creatures) => {
         for (const project of await projectsWorkedIn(creatureProjects, creatures)) {
           watches.follow(project, false);
@@ -83,6 +125,7 @@ export function servedCreatureProjects(
     };
   }
   return {
+    setOutInProject: async () => projectSilent,
     followProjects: async () => {},
     close: () => {},
     creatureProjectWork: {
@@ -121,6 +164,46 @@ export function servedCreatureProjects(
   };
 }
 
+export function tellingTheHome(userRoot: string, project: string): () => void {
+  let telling: Promise<void> | undefined;
+  let again = false;
+  const tell = async () => {
+    const home = managedHomeIdentity(userRoot);
+    const ticket = home === undefined ? undefined : await homeTicketOf(userRoot, home);
+    if (ticket === undefined) return;
+    await sendJson(ticket, "POST", `/creature-projects/${encodeURIComponent(project)}/changed`, {});
+  };
+  return () => {
+    if (telling !== undefined) {
+      again = true;
+      return;
+    }
+    telling = (async () => {
+      do {
+        again = false;
+        await tell();
+      } while (again);
+    })().finally(() => {
+      telling = undefined;
+    });
+  };
+}
+
+export function homeScenesOver(userRoot: string): HomeScenes {
+  return {
+    keep: async (creature, name, keeping) => {
+      const path = scenePath(creature.slug, name);
+      const answer = await toTheHome(userRoot, creature, "PUT", path, keeping);
+      return keptAtHome(answer, keeping) ?? homeRefused(answer);
+    },
+    forget: async (creature, name) => {
+      const answer = await toTheHome(userRoot, creature, "DELETE", scenePath(creature.slug, name));
+      if (answer.status === 204 || answer.status === 404) return answer.status === 204;
+      return homeRefused(answer);
+    },
+  };
+}
+
 function followingProjectThreads(
   context: CreatureProjectContext,
   watches: ProjectWatches,
@@ -142,6 +225,9 @@ interface ProjectWatchOptions {
   workspace: string;
   projectTicket(project: string): Promise<ServerTicket | undefined>;
   worksites: ProjectWorksites | undefined;
+  honours?: ProjectHonours | undefined;
+  ledger?: ProjectLedger | undefined;
+  creatures(): Promise<readonly string[]>;
   creaturesIn(project: string, slugs: readonly string[]): Promise<ReadonlySet<string>>;
 }
 
@@ -156,9 +242,11 @@ function projectWatches(options: ProjectWatchOptions): ProjectWatches {
   const { worksites } = options;
   const watching = new Map<string, { again: boolean }>();
   let closed = false;
+  const visitor = `?visitor=${encodeURIComponent(options.workspace)}`;
   const visit = async (ticket: ServerTicket, project: string): Promise<number | undefined> => {
-    const path = `/creature-worksites?visitor=${encodeURIComponent(options.workspace)}`;
-    const answer = visitorWorksitesOf(await readProjectJson(ticket, path));
+    const answer = visitorWorksitesOf(
+      await readProjectJson(ticket, `/creature-worksites${visitor}`),
+    );
     if (answer === undefined || worksites === undefined) return undefined;
     const own = await options.creaturesIn(project, [
       ...new Set(answer.worksites.map((row) => row.creature)),
@@ -167,7 +255,28 @@ function projectWatches(options: ProjectWatchOptions): ProjectWatches {
       project,
       answer.worksites.filter((row) => own.has(row.creature)),
     );
+    await visitHonours(ticket, project);
+    await visitLedgers(ticket, project);
     return answer.working;
+  };
+  const visitLedgers = async (ticket: ServerTicket, project: string): Promise<void> => {
+    if (options.ledger === undefined) return;
+    for (const slug of await options.creaturesIn(project, await options.creatures())) {
+      const view = await readProjectJson(
+        ticket,
+        `/creatures/${encodeURIComponent(slug)}/ledger${visitor}`,
+      );
+      options.ledger.visited(project, slug, ledgerEntriesOf(field(view, "entries")));
+    }
+  };
+  const visitHonours = async (ticket: ServerTicket, project: string): Promise<void> => {
+    if (options.honours === undefined) return;
+    const work = visitorWorkOf(await readProjectJson(ticket, `/creature-honours${visitor}`));
+    const own = await options.creaturesIn(project, [...new Set(work.map((row) => row.creature))]);
+    options.honours.visited(
+      project,
+      work.filter((row) => own.has(row.creature)),
+    );
   };
   const watch = async (project: string, wait: boolean, state: { again: boolean }) => {
     const ticket = await options.projectTicket(project);
@@ -233,6 +342,41 @@ function visitorWorksitesOf(
   const working = field(data, "working");
   if (!Array.isArray(worksites) || typeof working !== "number") return undefined;
   return { worksites: worksites.flatMap(visitedWorksiteOf), working };
+}
+
+function visitorWorkOf(data: unknown): VisitorWork[] {
+  const work = field(data, "work");
+  return Array.isArray(work) ? work.flatMap(visitedWorkOf) : [];
+}
+
+function visitedWorkOf(row: unknown): VisitorWork[] {
+  const creature = field(row, "creature");
+  const conversations = times(field(row, "conversations"));
+  const days = times(field(row, "days"));
+  const night = field(row, "night");
+  const tools = field(row, "tools");
+  if (
+    typeof creature !== "string" ||
+    conversations === undefined ||
+    days === undefined ||
+    (night !== null && typeof night !== "string") ||
+    typeof tools !== "object" ||
+    tools === null
+  )
+    return [];
+  const uses = Object.entries(tools).flatMap(([tool, at]): [string, string[]][] => {
+    const said = times(at);
+    return said === undefined ? [] : [[tool, said.slice(0, 10)]];
+  });
+  return [{ creature, conversations, night, tools: Object.fromEntries(uses), days }];
+}
+
+function times(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const said = value.filter(
+    (at): at is string => typeof at === "string" && !Number.isNaN(Date.parse(at)),
+  );
+  return said.length === value.length ? said : undefined;
 }
 
 function visitedWorksiteOf(row: unknown): CreatureWorksite[] {
@@ -376,3 +520,118 @@ function field(data: unknown, name: string): unknown {
 async function refuseUnserved(): Promise<never> {
   throw new CreatureProjectError("unavailable");
 }
+
+interface Answered {
+  status: number;
+  body: unknown;
+}
+
+async function toTheHome(
+  userRoot: string,
+  creature: CreatureHandle,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Answered> {
+  const ticket = await homeTicketOf(userRoot, creature.workspace);
+  const answer = ticket === undefined ? undefined : await sendJson(ticket, method, path, body);
+  return answer ?? homeRefused(undefined);
+}
+
+function keptAtHome(answer: Answered, sent: SceneKeepingInput): SceneKeeping | undefined {
+  if (answer.status === 409) {
+    const scenes = field(answer.body, "scenes");
+    return Array.isArray(scenes) ? { full: scenes as CreatureScene[] } : undefined;
+  }
+  const scene = field(answer.body, "scene");
+  const replaced = field(answer.body, "replaced");
+  if (answer.status !== 200 || typeof field(scene, "name") !== "string") return undefined;
+  if (typeof replaced !== "boolean") return undefined;
+  const kept = { ...(scene as CreatureScene), things: sent.things, keptIn: sent.keptIn };
+  return { kept, replaced };
+}
+
+function homeRefused(answer: Answered | undefined): never {
+  const said = field(answer?.body, "error");
+  throw new Error(
+    typeof said === "string"
+      ? `the stead's home refused: ${said}`
+      : "the stead's home did not answer, so nothing was changed; try again in a moment",
+  );
+}
+
+function managedHomeIdentity(userRoot: string): string | undefined {
+  try {
+    const home = existingManagedHome(userRoot);
+    return home === undefined ? undefined : workspaceIdentity(home);
+  } catch {
+    return undefined;
+  }
+}
+
+async function homeTicketOf(userRoot: string, home: string): Promise<ServerTicket | undefined> {
+  if (!/^[a-f0-9]{12}$/.test(home)) return undefined;
+  const ticket = readServerTicket(join(keyworkHome(userRoot), "workspaces", home, "server.json"));
+  if (ticket === undefined || !localTicket(ticket)) return undefined;
+  const report = await readProjectJson(ticket, "/workspace");
+  const root = field(field(report, "anchor"), "root");
+  if (
+    field(report, "identity") !== home ||
+    typeof root !== "string" ||
+    canonicalPath(root) !== canonicalPath(managedHomeFolder(userRoot))
+  )
+    return undefined;
+  return ticket;
+}
+
+async function sendJson(
+  ticket: ServerTicket,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Answered | undefined> {
+  try {
+    const response = await fetch(new URL(path, ticket.url), {
+      method,
+      headers: { authorization: `Bearer ${ticket.token}`, "content-type": "application/json" },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const text = await response.text();
+    return { status: response.status, body: text === "" ? undefined : JSON.parse(text) };
+  } catch {
+    return undefined;
+  }
+}
+
+function scenePath(slug: string, name: string): string {
+  return `/creatures/${encodeURIComponent(slug)}/scenes/${encodeURIComponent(name)}`;
+}
+
+function setOutAnswerOf(data: unknown): SceneSetOutAnswer | undefined {
+  const out = field(data, "out");
+  const missing = field(data, "missing");
+  const asking = field(data, "asking");
+  const stopped = field(data, "stopped");
+  if (
+    typeof out !== "number" ||
+    !isWords(missing) ||
+    !isWords(asking) ||
+    (stopped !== null && typeof stopped !== "string")
+  )
+    return undefined;
+  return { out, missing, asking, stopped };
+}
+
+function isWords(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((said) => typeof said === "string");
+}
+
+const projectSilent: SceneSetOutAnswer = {
+  out: 0,
+  missing: [],
+  asking: [],
+  stopped:
+    "the scene was kept in a bound project, and that project's runtime did not answer, so nothing was set out; open the project and press again",
+};

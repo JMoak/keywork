@@ -16,6 +16,7 @@ import {
   parseCreatureFile,
   seedLimit,
   serializeCreatureFile,
+  type Temperament,
   validCreatureFile,
 } from "./file.ts";
 import { introductionOf } from "./prompt.ts";
@@ -37,6 +38,7 @@ export interface CreatureDraft {
   skin?: string | undefined;
   workshop?: string | undefined;
   models?: Partial<ModelPolicy> | undefined;
+  temperament?: Temperament | undefined;
 }
 
 export interface CreatureRegistryOptions {
@@ -150,6 +152,7 @@ export class CreatureRegistry {
       skin: draft.skin,
       workshop: draft.workshop,
       models: draft.models,
+      temperament: draft.temperament,
     });
   }
 

@@ -2,9 +2,11 @@ import type {
   CreatureChanged,
   CreatureHandoffChange,
   CreatureLedgerChange,
+  CreatureSceneChange,
   CreatureWorksiteChange,
   EngineEvents,
   EventBus,
+  HonourChange,
   RoutineFinished,
   RoutineFired,
   RoutineNeedsYou,
@@ -27,6 +29,7 @@ import type {
 } from "./mesh-events.ts";
 import type { SurfaceKind } from "./routes/answers.ts";
 import type { InboxTally } from "./routes/memory.ts";
+import type { ModelWaitChange } from "./routes/model-waits.ts";
 import type { TreeChange } from "./routes/tree.ts";
 import type { WorkspaceChanged } from "./workspace-watch.ts";
 
@@ -50,6 +53,9 @@ export interface ServerEvents {
   "creature.handoff": CreatureHandoffChange;
   "creature.ledger": CreatureLedgerChange;
   "creature.worksites": CreatureWorksiteChange;
+  "creature.honours": HonourChange;
+  "creature.scenes": CreatureSceneChange;
+  "model.wait": ModelWaitChange;
   "routine.fired": RoutineFired;
   "routine.finished": RoutineFinished;
   "routine.needs": RoutineNeedsYou;
@@ -82,6 +88,9 @@ export const serverEventTypes = [
   "creature.handoff",
   "creature.ledger",
   "creature.worksites",
+  "creature.honours",
+  "creature.scenes",
+  "model.wait",
   "routine.fired",
   "routine.finished",
   "routine.needs",

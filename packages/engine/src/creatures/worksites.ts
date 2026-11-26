@@ -50,6 +50,7 @@ export interface WorksiteHistory {
 }
 
 export interface CreatureWorksites extends CreatureWorksitesPort {
+  workingIn(conversation: string): string | undefined;
   began(conversation: WorkingConversation): void;
   changedFile(conversation: WorkingConversation, path: string): void;
   rested(conversation: string): void;
@@ -125,6 +126,7 @@ export function creatureWorksites(options: CreatureWorksitesOptions): CreatureWo
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    workingIn: (conversation) => tally.latestSiteOf(conversation),
     began: (conversation) => announce("changed", tally.began(conversation, now())),
     changedFile: (conversation, path) =>
       announce("changed", tally.changedFile(conversation, path, now())),
@@ -188,6 +190,13 @@ class Tally {
       worksites: this.rowsWhere((site) => site.visitor === workspace),
       working: working.length,
     };
+  }
+
+  latestSiteOf(id: string): string | undefined {
+    const [latest] = this.sitesOf(id).sort((left, right) =>
+      right.latest.localeCompare(left.latest),
+    );
+    return latest?.directory;
   }
 
   rowOf(site: Site): CreatureWorksite {

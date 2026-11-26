@@ -78,6 +78,7 @@ describe("a creature's ledger under keywork serve", () => {
         answer: null,
         about: { kind: "ask", callId: "w1", tool: "write" },
         conversation: null,
+        project: null,
       });
       await first.call("POST", "/asks/w1", { verdict: "granted", scope: "once" });
       await first.settled(conversation);

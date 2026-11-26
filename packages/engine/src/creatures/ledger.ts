@@ -42,6 +42,7 @@ export interface CreatureLedgerEntry {
   answer: QuestionAnswer | null;
   about: CreatureLedgerAbout;
   conversation: LedgerConversation | null;
+  project: string | null;
 }
 
 export type LedgerConversationState = "open" | "ended";
@@ -67,7 +68,8 @@ export type LedgerConversationOutcome =
   | "missing-creature"
   | "missing-entry"
   | "already-answered"
-  | "no-conversation";
+  | "no-conversation"
+  | "in-a-project";
 
 export type ConversationOpener = (creature: string, entry: CreatureLedgerEntry) => Promise<string>;
 
@@ -98,6 +100,7 @@ export interface CreatureLedgerPort {
   subscribe(listener: (change: CreatureLedgerChange) => void): () => void;
   converse?(creature: string, id: string): Promise<LedgerConversationOutcome>;
   closeConversation?(creature: string, id: string): Promise<LedgerConversationOutcome>;
+  visiting?(visitor: string, creature: string): Promise<CreatureLedgerView>;
 }
 
 export interface LedgerAsk {
@@ -139,6 +142,7 @@ export interface CreatureLedger extends CreatureLedgerPort {
   choreFinished(run: RunRow): void;
   choreNeeds(needs: RoutineNeedsYou): Promise<void>;
   choresNeeding(items: readonly NeedsYouItem[]): Promise<void>;
+  visited(project: string, creature: string, entries: readonly CreatureLedgerEntry[]): void;
   sessionRemoved(session: string): void;
   sessionRestored(session: string): void;
   close(): void;
@@ -157,6 +161,10 @@ export interface CreatureLedgerOptions {
 
 export function ledgerFileIn(workspaceState: string): string {
   return join(workspaceState, "creatures", "ledger.json");
+}
+
+export function visitorLedgerFileIn(workspaceState: string): string {
+  return join(workspaceState, "creatures", "visitor-ledger.json");
 }
 
 export function creatureLedger(options: CreatureLedgerOptions): CreatureLedger {
@@ -354,6 +362,16 @@ class KeptCreatureLedger implements CreatureLedger {
     for (const needs of chores.values()) await this.choreNeeds(needs);
   }
 
+  visited(project: string, creature: string, entries: readonly CreatureLedgerEntry[]): void {
+    for (const visited of entries) {
+      const held = this.records
+        .get(creature)
+        ?.entries.find((entry) => entry.project === project && entry.id === visited.id);
+      if (held === undefined) this.mirror(project, creature, visited);
+      else this.follow(creature, held, visited);
+    }
+  }
+
   sessionRemoved(session: string): void {
     this.markAway(session, true);
   }
@@ -373,6 +391,7 @@ class KeptCreatureLedger implements CreatureLedger {
   ): Promise<LedgerConversationOutcome> {
     const found = await this.entryOf(creature, id);
     if (typeof found === "string") return found;
+    if (found.project !== null) return "in-a-project";
     if (found.conversation !== null) return wireOf(found);
     if (found.kind === "question" && found.state === "answered") return "already-answered";
     const session = await opener(creature, wireOf(found));
@@ -430,11 +449,42 @@ class KeptCreatureLedger implements CreatureLedger {
       parent: null,
       away: false,
       conversation: null,
+      project: null,
       ...opening,
     };
     record.entries.push(entry);
     this.kept.save(this.records);
     this.announce(creature, "opened", entry);
+  }
+
+  private mirror(project: string, creature: string, visited: CreatureLedgerEntry): void {
+    const record = this.recordOf(creature);
+    if (visited.closedAt !== null && foldsAtOnce(record, visited.closedAt, this.keepsClosed))
+      return;
+    const entry: KeptEntry = {
+      ...visited,
+      project,
+      conversation: null,
+      parent: null,
+      away: false,
+    };
+    record.entries.push(entry);
+    const folded = foldBeyond(record, this.keepsClosed);
+    this.kept.save(this.records);
+    this.announce(creature, "opened", entry);
+    for (const gone of folded) this.announce(creature, "folded", gone);
+  }
+
+  private follow(creature: string, held: KeptEntry, visited: CreatureLedgerEntry): void {
+    const open = held.state === "waiting" || held.state === "running";
+    if (open && visited.state !== held.state) {
+      const { state, answer, title, session } = visited;
+      Object.assign(held, { session });
+      this.settle(creature, held, { state, answer, title }, visited.closedAt ?? undefined);
+      return;
+    }
+    if (held.title !== visited.title || held.session !== visited.session)
+      this.change(creature, held, { title: visited.title, session: visited.session });
   }
 
   private change(creature: string, entry: KeptEntry, patch: Partial<KeptEntry>): void {
@@ -539,6 +589,7 @@ const taskStateOf: Record<ThreadOutcome, CreatureLedgerState> = {
 };
 
 function settleCutOff(entry: KeptEntry, at: string): boolean {
+  if (entry.project !== null) return false;
   if (entry.state === "waiting" && entry.about.kind === "ask") {
     Object.assign(entry, { state: "answered", answer: "lapsed", closedAt: at });
     return true;
@@ -558,6 +609,11 @@ function foldBeyond(record: CreatureRecord, keepsClosed: number): KeptEntry[] {
   record.entries = record.entries.filter((entry) => !gone.has(entry));
   record.folded += folded.length;
   return folded;
+}
+
+function foldsAtOnce(record: CreatureRecord, closedAt: string, keepsClosed: number): boolean {
+  const closed = record.entries.flatMap((entry) => entry.closedAt ?? []);
+  return closed.length >= keepsClosed && closed.every((kept) => kept > closedAt);
 }
 
 function keeperFirst(left: KeptEntry, right: KeptEntry): number {
@@ -596,6 +652,7 @@ function wireOf(entry: KeptEntry): CreatureLedgerEntry {
     answer: entry.answer,
     about: entry.about,
     conversation: entry.conversation,
+    project: entry.project,
   };
 }
 
@@ -657,7 +714,18 @@ const keptEntry = z.strictObject({
   answer: z.enum(["granted", "denied", "lapsed"]).nullable(),
   about: keptAbout,
   conversation: keptConversation.nullable().default(null),
+  project: z.string().min(1).nullable().default(null),
 });
+
+const entryOnTheWire = keptEntry.omit({ parent: true, away: true });
+
+export function ledgerEntriesOf(data: unknown): CreatureLedgerEntry[] {
+  if (!Array.isArray(data)) return [];
+  return data.flatMap((row) => {
+    const parsed = entryOnTheWire.safeParse(row);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
 
 const keptRecord = z.strictObject({
   entries: z.array(keptEntry),
@@ -703,15 +771,18 @@ function keptFormOf(records: ReadonlyMap<string, CreatureRecord>): Record<string
   return Object.fromEntries(
     [...records].map(([creature, { entries, folded }]) => [
       creature,
-      { entries: entries.map(withoutAnUnusedConversation), folded },
+      { entries: entries.map(withoutUnusedFields), folded },
     ]),
   );
 }
 
-function withoutAnUnusedConversation(entry: KeptEntry): KeptEntry {
-  if (entry.conversation !== null) return entry;
-  const { conversation: _none, ...kept } = entry;
-  return kept as KeptEntry;
+function withoutUnusedFields(entry: KeptEntry): KeptEntry {
+  const { conversation, project, ...kept } = entry;
+  return {
+    ...kept,
+    ...(conversation !== null && { conversation }),
+    ...(project !== null && { project }),
+  } as KeptEntry;
 }
 
 function keptFileOf(data: unknown): z.infer<typeof keptFile> {

@@ -46,12 +46,16 @@ export {
   hostWorkshop,
   inheritEverywhere,
   isModelChoice,
+  isTemperament,
   MalformedCreatureError,
   type ModelChoice,
   parseCreatureFile,
   patchedCreatureFile,
   seedLimit,
   serializeCreatureFile,
+  type Temperament,
+  temperamentOf,
+  temperaments,
   validCreatureFile,
 } from "./file.ts";
 export {
@@ -64,6 +68,29 @@ export {
   creatureHandoffs,
   handoffsFileIn,
 } from "./handoffs.ts";
+export {
+  type Calendar,
+  type CreatureHonours,
+  type CreatureHonoursOptions,
+  type CreatureHonoursPort,
+  conversationTiers,
+  creatureHonours,
+  type Honour,
+  type HonourChange,
+  type HonourChangeKind,
+  type HonouredCreature,
+  type HonouredCreatures,
+  type HonouredWork,
+  type HonourKind,
+  honourKinds,
+  honoursFileIn,
+  machineCalendar,
+  partnerTiers,
+  rangeTiers,
+  runTiers,
+  towerTiers,
+  type VisitorWork,
+} from "./honours.ts";
 export {
   type CreatureChange,
   type CreatureChanged,
@@ -116,9 +143,11 @@ export {
   type LedgerConversationState,
   type LedgerSeenOutcome,
   type LedgerThread,
+  ledgerEntriesOf,
   ledgerFileIn,
   ledgerKeepsClosed,
   type QuestionAnswer,
+  visitorLedgerFileIn,
 } from "./ledger.ts";
 export {
   askLine,
@@ -181,6 +210,7 @@ export {
   grantsHeading,
   introductionOf,
   noGrantsSentence,
+  temperamentSentence,
 } from "./prompt.ts";
 export { type CreatureWorkshops, raiseCreature } from "./raise.ts";
 export {

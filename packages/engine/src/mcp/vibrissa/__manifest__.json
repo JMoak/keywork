@@ -14,7 +14,7 @@
   "tools": [
     {
       "name": "arrange",
-      "description": "Here \"you\" is pip, the creature you work through. Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {\"<id or title>\": \"left-two-thirds\"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and \"all\" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {\"<id>\": \"done\"}} or {mark: {\"<id>\": {text: \"done\", tone: \"good\"}}}, and signal raises or lowers its outline; either can go alone. It moves only the app's own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.",
+      "description": "Here \"you\" is pip, the creature you work through. Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {\"<id or title>\": \"left-two-thirds\"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and \"all\" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {\"<id>\": \"done\"}} or {mark: {\"<id>\": {text: \"done\", tone: \"good\"}}}, and signal raises or lowers its outline; either can go alone. {keep: \"<name>\"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: \"<name>\"} sets a kept scene out again, and {forget: \"<name>\"} lets one go. It moves only the app's own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -193,7 +193,7 @@
             "maxLength": 200
           },
           "rest": {
-            "description": "What becomes of your other windows outside, the ones this arrangement does not name: stay (the default with seats) leaves them where they stand; beside steps them back beside the conversation as cards, still out, so the panes you name stand alone.",
+            "description": "What becomes of your other windows outside, the ones this arrangement does not name: stay (the default with seats) leaves them where they stand; beside steps them back beside the conversation, still out, so the panes you name stand alone.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
@@ -211,11 +211,35 @@
             "enum": ["room", "display"]
           },
           "mood": {
-            "description": "How the panes move into place, as motion only: one of show's moods, brisk when left out. The answer names the mood it moved with.",
+            "description": "How the panes move into place, as motion only: one of show's moods; left out, your temperament's if you have one, else brisk. The answer names the mood it moved with.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
             "enum": ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"]
+          },
+          "keep": {
+            "description": "Keep what you have out as a scene by this name, as it stands now: each thing, and its seat outside or its place beside your conversation. With panes, only those. Keeping a name you already keep replaces it. You keep up to twelve scenes.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "from": {
+            "description": "With keep, the place in the stead the scene belongs to, named as show's from names one (a project or folder you have worked in, by name or path); pressing that place sets the scene out. Left out, a scene whose things all rose from one project belongs to it.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "scene": {
+            "description": "Set out a scene you kept, by its name: each thing again where it stood. It goes alone, or with a mood.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "forget": {
+            "description": "Let a scene you kept go, by its name. Nothing that is out moves.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
           }
         },
         "additionalProperties": false
@@ -264,7 +288,7 @@
     },
     {
       "name": "show",
-      "description": "Here \"you\" is pip, the creature you work through. Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (sessions, arcs, files, context, memory, needs-you, permissions, mcp, workspaces, workshop, mills, parcels, bots, campaigns, themes, posture, stead, terminal, screen). It opens beside your conversation, or in a window of its own with where \"outside\"; seat picks its spot (\"left-half\", \"top-right\") and shape lays out several at once. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.",
+      "description": "Here \"you\" is pip, the creature you work through. Set out something for the keeper, the person you work with, to see in their app: a file, a diff, a report, a thread, a chore, a link, a short markdown note, or one of the app's own panes by name (sessions, arcs, files, context, memory, needs-you, permissions, mcp, workspaces, workshop, mills, parcels, bots, campaigns, themes, posture, stead, terminal, screen). Reach for it when you have changed what the keeper asked about, or they ask to see something or be walked through it. It opens beside your conversation, or in a window of its own with where \"outside\"; seat picks its spot (\"left-half\", \"top-right\") and shape lays out several at once. keep names what this call sets out as a scene, so arrange with scene sets it out again. A terminal or a screen acts on the keeper's machine, so the keeper is asked every time, in a scene too. It rises from a place: your workshop, unless from names another (the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop) or something of yours already out, which it grows from. Showing the same thing again changes it in place; a note with the same title is the same note. mark puts a word or two on it, with a tone; signal outlines it when your work waits on the keeper (needs-you) or something is broken (critical, with why). Every answer gives its id, for arrange and withdraw.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -548,7 +572,7 @@
             "enum": ["lead", "support", "aside"]
           },
           "mood": {
-            "description": "How it moves in, motion only: calm (slow and soft), brisk (the default, plain), eager (quick, close together), playful (out of turn, in a rhythm), urgent (all at once, fast), decisive (all at once, landing firmly) or tentative (a little slow, one at a time with pauses, landing lightly).",
+            "description": "How it moves in, motion only: calm (slow and soft), brisk (the default, plain), eager (quick, close together), playful (out of turn, in a rhythm), urgent (all at once, fast), decisive (all at once, landing firmly) or tentative (a little slow, one at a time with pauses, landing lightly). Left out, it moves with your temperament, if you have one.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
@@ -631,6 +655,12 @@
                 "type": "null"
               }
             ]
+          },
+          "keep": {
+            "description": "A name to keep what this call sets out under, as a scene: each thing and where it stands. arrange with scene sets it out again. Keeping a name you already keep replaces it; you keep up to twelve.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
           }
         },
         "required": ["what"],
@@ -639,7 +669,7 @@
     },
     {
       "name": "shown",
-      "description": "Here \"you\" is pip, the creature you work through. List what is open for the keeper, whoever opened it, one JSON line each: id, what, place (where in the stead it rose from), from (the id of what it grew from, or null), where it stands now (beside your conversation, outside in its own window with its seat such as \"left-half\", or inside the app), by (who put it there last: you, the keeper or the app), mark, tone, signal, state and when it goes. origin keeper means the keeper opened it; agent names an agent that set it out through you. A last line says how much room your windows have outside. It changes nothing. Use the ids with from, arrange and withdraw.",
+      "description": "Here \"you\" is pip, the creature you work through. List what is open for the keeper, whoever opened it, one JSON line each: id, what, place (where in the stead it rose from), from (the id of what it grew from, or null), where it stands now (beside your conversation, outside in its own window with its seat such as \"left-half\", or inside the app), by (who put it there last: you, the keeper or the app), mark, tone, signal, state and when it goes. origin keeper means the keeper opened it; agent names an agent that set it out through you. A line says how much room your windows have outside, and a last line names the scenes you keep. It changes nothing. Use the ids with from, arrange and withdraw, and the scene names with arrange.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -704,7 +734,7 @@
             ]
           },
           "mood": {
-            "description": "How it leaves, as motion only: one of show's moods. Leave it out and it leaves in the mood it arrived with.",
+            "description": "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with your temperament, if you have one, else in the mood it arrived with.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,

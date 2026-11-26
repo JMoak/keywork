@@ -34,6 +34,7 @@ import {
   type StagedItem,
   type TaggedSession,
   type ThreadOutcome,
+  temperamentSentence,
   turnFactsOf,
   type WakeScheduler,
   type Workshops,
@@ -122,6 +123,7 @@ export function creatureSeats(
       injection: () =>
         [
           creatureInjection(creature.file, options.grants(sessionId)),
+          temperamentSentence(creature.file),
           workshopState,
           inboundSection(creature.slug, store.contextEntries(), options.staged?.() ?? []),
         ]

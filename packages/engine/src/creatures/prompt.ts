@@ -1,8 +1,12 @@
 import type { PermissionRule } from "@keywork/shared";
-import type { CreatureFile } from "./file.ts";
+import { type CreatureFile, temperamentOf } from "./file.ts";
 
 export function introductionOf(name: string, keeper: string): string {
   return `You are ${name}, ${keeper}'s creature; you keep work moving between conversations and you ask before anything that cannot be undone.`;
+}
+
+export function temperamentSentence(creature: Pick<CreatureFile, "temperament" | "body">): string {
+  return `Your temperament is ${temperamentOf(creature)}: it is your standing manner, and the way your panes move when you set them out, arrange them or take them back without naming a mood.`;
 }
 
 export function creatureInjection(

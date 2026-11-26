@@ -15,7 +15,8 @@ import type {
 } from "@keywork/engine";
 import type { AskQueue, EventLog, WirePayload } from "@keywork/server";
 import { toError } from "@keywork/shared";
-import { firstSentenceOf } from "./serve-creatures.ts";
+import { firstLineOf, firstSentenceOf, type SettledThread } from "./serve-creatures.ts";
+import { excerpt } from "./text.ts";
 
 export interface CreatureSessionFacts {
   creature: string;
@@ -100,6 +101,53 @@ export function ledgeredCreatures<Host extends Pick<CreatureHost, "openThread" |
   };
 }
 
+export interface VisitorThreads {
+  opened(creature: string, session: string, directory: string, asked: string): void;
+  settled(thread: SettledThread): void;
+}
+
+export function visitorThreads(
+  ledger: Pick<CreatureLedger, "threadOpened" | "threadReported">,
+): VisitorThreads {
+  return {
+    opened: (creature, session, directory, asked) =>
+      ledger.threadOpened({
+        creature,
+        session,
+        directory,
+        title: openingWordsOf(asked),
+        about: { kind: "thread" },
+      }),
+    settled: ({ id, store, outcome, lastReply }) =>
+      ledger.threadReported(id, {
+        title: store.name() ?? "",
+        outcome,
+        summary: firstLineOf(lastReply),
+      }),
+  };
+}
+
+function openingWordsOf(asked: string): string {
+  const words = excerpt(asked.replace(/\s+/g, " ").trim(), openingWordsLength);
+  return words === "" ? untitledThread : words;
+}
+
+const openingWordsLength = 60;
+
+export function tellingTheHomeOfVisits(
+  log: Pick<EventLog, "subscribe">,
+  ledger: Pick<CreatureLedger, "subscribe">,
+  visiting: (sessionId: string) => boolean,
+  tell: () => void,
+): (() => void)[] {
+  return [
+    ledger.subscribe(() => tell()),
+    log.subscribe(({ sessionId, type, payload }) => {
+      if (type === "turn.started" && !replayed(payload) && visiting(sessionId)) tell();
+    }),
+  ];
+}
+
 export function choreFactsOver(
   routines: () => Pick<RoutineService, "read"> | undefined,
   workspace: string,
@@ -118,6 +166,14 @@ export function choreFactsOver(
 }
 
 const untitledThread = "untitled thread";
+
+function replayed(payload: unknown): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    (payload as { replay?: unknown }).replay === true
+  );
+}
 
 function unheardNeeds(needs: WirePayload<"routine.needs">, cause: unknown): string {
   return `the ledger missed what chore ${needs.routineId} of ${needs.creature} needs: ${toError(cause).message}`;

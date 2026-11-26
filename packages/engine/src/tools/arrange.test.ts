@@ -102,7 +102,7 @@ describe("the arrange tool", () => {
     );
 
     expect(await answering).toBe(
-      `Arranged 1 pane in the seats you composed. Outside now: "The plan" (${plan.id}) in the center. Back beside the conversation as a card (stepped back as you asked): "Three things." (${notes.id}). Name it in arrange to set it out again.`,
+      `Arranged 1 pane in the seats you composed. Outside now: "The plan" (${plan.id}) in the center. Back beside the conversation (stepped back as you asked): "Three things." (${notes.id}). Name it in arrange to set it out again.`,
     );
     expect(arranged.at(-1)).toMatchObject({ panes: [plan.id], rest: "beside" });
     expect(await tool.execute({ shape: "grid", rest: "stay" })).toMatch(
@@ -294,7 +294,7 @@ describe("the arrange tool", () => {
     );
 
     expect(await answering).toBe(
-      `Arranged 3 panes as grid. Outside now: "The plan" (${plan.id}) in the left half; "Three things." (${card.id}) in the right half. Back beside the conversation as a card (no room outside): "One more." (${extra.id}). Name it in arrange to set it out again.`,
+      `Arranged 3 panes as grid. Outside now: "The plan" (${plan.id}) in the left half; "Three things." (${card.id}) in the right half. Back beside the conversation (no room outside): "One more." (${extra.id}). Name it in arrange to set it out again.`,
     );
     expect(arranged).toEqual([
       expect.objectContaining({ panes: [plan.id, card.id, extra.id], shape: "grid" }),

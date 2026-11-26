@@ -61,7 +61,7 @@
           {
             "type": "text",
             "text": {
-              "$regex": "^Withdrawn 2: \"Drop me\" [(][0-9a-f-]{36}[)] and \"Drop me too\" [(][0-9a-f-]{36}[)] have left the yard[.] Still out: "
+              "$regex": "^Withdrawn 2: \"Drop me\" [(][0-9a-f-]{36}[)] and \"Drop me too\" [(][0-9a-f-]{36}[)] have gone back where they came from[.] Still out: "
             }
           }
         ],

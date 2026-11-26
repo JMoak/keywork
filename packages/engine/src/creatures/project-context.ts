@@ -51,6 +51,7 @@ export interface CreatureProjectsPort {
     project: string,
     input: ProjectDiscussionInput,
   ): Promise<WorkspaceSessionRef>;
+  changed?(project: string): Promise<void>;
 }
 
 export interface CreatureProjectWorkPort {

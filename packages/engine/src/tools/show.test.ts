@@ -7,7 +7,10 @@ import type { ShowThread } from "../show/lineage.ts";
 import type { PlaceBook } from "../show/places.ts";
 import type { Setting } from "../show/setting.ts";
 import { SettingStore, type SettingStoreOptions } from "../show/store.ts";
+import { answeringConsole } from "../show/testing.ts";
+import { findTool } from "../tools.ts";
 import { type ShowTarget, showTool } from "./show.ts";
+import { yardTools } from "./yard.ts";
 
 const t0 = Date.parse("2026-11-08T09:00:00Z");
 
@@ -35,13 +38,13 @@ function growsFrom(setting: Setting | undefined): string {
 }
 
 describe("the show tool", () => {
-  it("sets out a card on the creature's thread by default and says what the yard decides", async () => {
+  it("sets out a pane beside the creature's thread by default and says what the app decides", async () => {
     const { tool, settings } = seated();
 
     const said = await tool.execute({ what: plan, why: "The plan you asked about changed." });
 
     expect(said).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(settings.open()[0])}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(settings.open()[0])}`,
     );
     expect(settings.open()).toEqual([
       expect.objectContaining({
@@ -67,7 +70,7 @@ describe("the show tool", () => {
         until: "rests",
       }),
     ).toBe(
-      `Set out to unfold; the yard decides whether it unfolds or stays a card. It goes when this thread rests. ${growsFrom(proposed.at(-1))}`,
+      `Set out to unfold; the app decides whether it unfolds or stays a small pane. It goes when this thread rests. ${growsFrom(proposed.at(-1))}`,
     );
     expect(
       await tool.execute({
@@ -77,7 +80,7 @@ describe("the show tool", () => {
         until: "2026-11-08T10:00:00-06:00",
       }),
     ).toBe(
-      `Set out for the stage; only the keeper or a yard rule stages it, so the yard decides how it shows. It goes at 2026-11-08T10:00:00-06:00. It replaces what you set out for this before. ${growsFrom(proposed.at(-1))}`,
+      `Set out for the stage; only the keeper or one of their rules stages it, so the app decides how it shows. It goes at 2026-11-08T10:00:00-06:00. It replaces what you set out for this before. ${growsFrom(proposed.at(-1))}`,
     );
     expect(
       await tool.execute({
@@ -191,7 +194,7 @@ describe("the show tool", () => {
     const { tool, proposed } = seated();
 
     expect(await tool.execute({ what: plan, until: "10 minutes", mark: "  needs   review " })).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It goes in 10 minutes, at 2026-11-08T09:10:00.000Z. The keeper reads "needs review" on it. ${growsFrom(proposed.at(-1))}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It goes in 10 minutes, at 2026-11-08T09:10:00.000Z. The keeper reads "needs review" on it. ${growsFrom(proposed.at(-1))}`,
     );
     expect(proposed.at(-1)).toMatchObject({
       until: "2026-11-08T09:10:00.000Z",
@@ -205,14 +208,14 @@ describe("the show tool", () => {
     expect(
       await tool.execute({ what: { ...plan, title: "The plan" }, signal: "waiting on you" }),
     ).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. The keeper sees it outlined in amber, as needing them, until they answer it or you lower it with arrange and signal null. It reads needs-you, the nearest signal to "waiting on you". ${growsFrom(proposed.at(-1))}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It stays until the keeper has seen it. The keeper sees it outlined in amber, as needing them, until they answer it or you lower it with arrange and signal null. It reads needs-you, the nearest signal to "waiting on you". ${growsFrom(proposed.at(-1))}`,
     );
     expect(proposed.at(-1)).toMatchObject({ signal: "needs-you" });
     expect(await tool.execute({ what: plan, signal: "loud" })).toBe(
       'Not set out: signal is needs-you, critical or none, not "loud".',
     );
     expect(await tool.execute({ what: plan, signal: null })).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. It replaces what you set out for this before. Its signal is lowered: the keeper no longer sees it outlined. ${growsFrom(proposed.at(-1))}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It stays until the keeper has seen it. It replaces what you set out for this before. Its signal is lowered: the keeper no longer sees it outlined. ${growsFrom(proposed.at(-1))}`,
     );
     expect(proposed.at(-1)).not.toHaveProperty("signal");
   });
@@ -232,7 +235,7 @@ describe("the show tool", () => {
         until: "10 minutes",
       }),
     ).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. It is critical: the keeper sees it outlined in red with your reason, and it is the one critical you may hold; only you or the keeper lower it. Critical holds it out until then, past the time you gave. ${growsFrom(proposed.at(-1))}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It stays until the keeper has seen it. It is critical: the keeper sees it outlined in red with your reason, and it is the one critical you may hold; only you or the keeper lower it. Critical holds it out until then, past the time you gave. ${growsFrom(proposed.at(-1))}`,
     );
     expect(proposed.at(-1)).toMatchObject({ signal: "critical", until: "seen" });
     expect(await tool.execute({ what: plan, signal: "red", why: "The disk is full." })).toBe(
@@ -265,7 +268,7 @@ describe("the show tool's from", () => {
     const said = await tool.execute({ what: plan, why: "The file it touches.", from: diff?.id });
 
     expect(said).toBe(
-      `Set out as a card; the yard decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(proposed[1])}`,
+      `Set out as a pane beside the conversation; the app decides whether it unfolds. It stays until the keeper has seen it. ${growsFrom(proposed[1])}`,
     );
     expect(proposed.map(({ from, origin }) => ({ from, origin }))).toEqual([
       { from: null, origin: "creature" },
@@ -298,7 +301,7 @@ describe("the show tool's from", () => {
 describe("the show tool outside", () => {
   const stage = { room: "beside", cardsAcross: 4, cardsDown: 3, consoleMaximised: false } as const;
 
-  function staged() {
+  function staged(seams: Pick<ShowTarget, "fileExists"> = {}) {
     const clock = new FakeClock(t0);
     const proposed: Setting[] = [];
     const settings = new SettingStore({
@@ -307,7 +310,12 @@ describe("the show tool outside", () => {
         if (type === "show.proposed" && "setting" in payload) proposed.push(payload.setting);
       },
     });
-    const target: ShowTarget = { creature: "wren", sessionId: "s1", settings: () => settings };
+    const target: ShowTarget = {
+      creature: "wren",
+      sessionId: "s1",
+      settings: () => settings,
+      ...seams,
+    };
     const unanswered = () => clock.advanceTo(clock.now() + 1_500, async () => undefined);
     const last = () => proposed.at(-1) as Setting;
     return { tool: showTool(target), settings, proposed, unanswered, last };
@@ -437,7 +445,9 @@ describe("the show tool outside", () => {
     expect(await tool.execute({ what: plan, where: "outside" })).toBe(
       "Not set out: 12 of your settings already stand outside, the most that may at once; withdraw one that has gone stale, or leave where out and this sets out beside the conversation.",
     );
-    expect(await tool.execute({ what: plan })).toContain("Set out as a card");
+    expect(await tool.execute({ what: plan })).toContain(
+      "Set out as a pane beside the conversation",
+    );
     expect(settings.open()).toHaveLength(13);
   });
 
@@ -463,15 +473,17 @@ describe("the show tool outside", () => {
     expect(replacement).toMatchObject({ where: "outside", seat: { x: 0, y: 0, w: 6, h: 12 } });
   });
 
-  it("sets out several things in one call, each in its own seat, and says where each stands", async () => {
-    const { tool, settings, proposed } = staged();
+  it("sets out several things in one call, each in its own seat, says where each stands, and says plainly a file that is not there was left out", async () => {
+    const { tool, settings, proposed } = staged({ fileExists: async (ref) => ref !== "gone.md" });
     const note = (title: string, seat: string) => ({ kind: "note", ref: `${title}.`, title, seat });
+    const gone = { kind: "file", ref: "gone.md", seat: "bottom-left" };
 
     const answering = tool.execute({
-      what: [note("Plan A", "left-half"), note("Plan B", "right quarter")],
+      what: [note("Plan A", "left-half"), gone, note("Plan B", "right quarter")],
       mood: "playful",
       mark: "draft",
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const [a, b] = proposed as [Setting, Setting];
     await settings.placed("s1", {
       stage,
@@ -482,7 +494,10 @@ describe("the show tool outside", () => {
     });
 
     expect(await answering).toBe(
-      `Set out 2: "Plan A" (${a.id}) in the left half; "Plan B" (${b.id}) in the right quarter. They arrived playfully. They stay until the keeper has seen them. Marked: "Plan A" as "draft"; "Plan B" as "draft". Name any of them by its title or its id in from, arrange or withdraw.`,
+      `Set out 2: "Plan A" (${a.id}) in the left half; "Plan B" (${b.id}) in the right quarter. They arrived playfully. They stay until the keeper has seen them. Marked: "Plan A" as "draft"; "Plan B" as "draft". Name any of them by its title or its id in from, arrange or withdraw. There is no file at "gone.md", so nothing was set out for it.`,
+    );
+    expect(await tool.execute({ what: gone })).toBe(
+      'Not set out: there is no file at "gone.md", so nothing was set out for it.',
     );
     expect(proposed.map(({ mark, mood }) => [mark, mood])).toEqual([
       ["draft", "playful"],
@@ -637,6 +652,51 @@ describe("a terminal or a screen", () => {
       "screen",
       "Nothing on the machine.",
       "terminal",
+    ]);
+  });
+});
+
+interface Moving {
+  mood?: string;
+}
+
+describe("a creature's temperament", () => {
+  it("moves its panes when it names no mood, and a mood it names wins for that call", async () => {
+    const desk = answeringConsole();
+    const moods: unknown[] = [];
+    const settings = new SettingStore({
+      emit: (sessionId, type, payload) => {
+        const heard = payload as unknown as Moving & { setting?: Moving; arrangement?: Moving };
+        moods.push([type, (heard.setting ?? heard.arrangement ?? heard).mood]);
+        desk.emit(sessionId, type, payload);
+      },
+    });
+    desk.answerTo(settings);
+    const tools = yardTools({
+      creature: "wren",
+      sessionId: "s1",
+      temperament: async () => "playful",
+      settings: () => settings,
+    });
+    const use = (name: string, args: Record<string, unknown>) =>
+      findTool(tools, name).execute(args);
+
+    const unnamed = await use("show", { what: plan, where: "outside" });
+    const named = await use("show", {
+      what: { kind: "note", ref: "n" },
+      seat: "left",
+      mood: "calm",
+    });
+    await use("arrange", { shape: "columns" });
+    await use("withdraw", { id: "n" });
+
+    expect(unnamed).toContain("It arrived playfully.");
+    expect(named).toContain("It arrived calmly.");
+    expect(moods).toEqual([
+      ["show.proposed", "playful"],
+      ["show.proposed", "calm"],
+      ["show.arranged", "playful"],
+      ["show.settled", "playful"],
     ]);
   });
 });

@@ -5,13 +5,15 @@ import type { ToolCallPart } from "../messages.ts";
 import { minuteMs } from "../routines/clock.ts";
 import { quotedNameOf } from "../show/naming.ts";
 import type { PlaceBook } from "../show/places.ts";
+import type { SceneShelf } from "../show/scenes.ts";
 import {
   agentNameLength,
+  type Mood,
   type Setting,
   type SettingAgent,
   type SteadPlace,
 } from "../show/setting.ts";
-import { machinePaneIn, type ShowSettings, type ShowTarget } from "../tools/show.ts";
+import { machinePaneAsked, type ShowSettings, type ShowTarget } from "../tools/show.ts";
 import { yardRefused, yardToolNames, yardTools } from "../tools/yard.ts";
 import { findTool, type Tool } from "../tools.ts";
 
@@ -27,6 +29,8 @@ export interface CreatureYard {
   toldAt: Map<string, number>;
   places?: PlaceBook | undefined;
   asksTheKeeper?: KeeperAsker | undefined;
+  scenes?: SceneShelf | undefined;
+  temperamentOf?: ((slug: string) => Promise<Mood | undefined>) | undefined;
 }
 
 export type KeeperAsker = (conversation: string, call: ToolCallPart) => Promise<boolean>;
@@ -35,6 +39,8 @@ export interface CreatureYardSeams {
   now?: (() => number) | undefined;
   places?: PlaceBook | undefined;
   asksTheKeeper?: KeeperAsker | undefined;
+  scenes?: SceneShelf | undefined;
+  temperamentOf?: ((slug: string) => Promise<Mood | undefined>) | undefined;
 }
 
 export interface YardListing {
@@ -50,8 +56,8 @@ export type YardAnswer =
   | { invalid: z.ZodError };
 
 export function creatureYard(settings: ShowSettings, seams: CreatureYardSeams = {}): CreatureYard {
-  const { now = Date.now, places, asksTheKeeper } = seams;
-  return { settings, now, toldAt: new Map(), places, asksTheKeeper };
+  const { now = Date.now, places, asksTheKeeper, scenes, temperamentOf } = seams;
+  return { settings, now, toldAt: new Map(), places, asksTheKeeper, scenes, temperamentOf };
 }
 
 export function yardListingsFor(slug: string): YardListing[] {
@@ -91,9 +97,10 @@ export async function answeredInItsName(
 ): Promise<YardAnswer> {
   const made: YardMade = {};
   const raised: Setting[] = [];
-  const tool = findTool(yardTools(seatOf(yard, seat, { made, raised })), name);
+  const target = seatOf(yard, seat, { made, raised });
+  const tool = findTool(yardTools(target), name);
   try {
-    const declined = await declinedByTheKeeper(yard, seat, tool, args);
+    const declined = await declinedByTheKeeper(yard, seat, tool, args, target);
     if (declined !== undefined) return declined;
     const said = await tool.execute(args);
     const refused = yardRefused(said);
@@ -114,8 +121,9 @@ async function declinedByTheKeeper(
   seat: YardSeat,
   tool: Tool,
   args: Record<string, unknown>,
+  target: ShowTarget,
 ): Promise<YardAnswer | undefined> {
-  const pane = machinePaneIn(args);
+  const pane = machinePaneAsked(target, args);
   if (tool.alwaysAsks?.(args) !== true || pane === undefined) return undefined;
   const call: ToolCallPart = {
     type: "tool-call",
@@ -197,6 +205,8 @@ function seatOf(
     agent,
     home: atThePorch,
     places: yard.places,
+    scenes: yard.scenes,
+    temperament: async () => yard.temperamentOf?.(slug),
     settings: () => settings,
   };
 }

@@ -59,6 +59,7 @@ const pip: CreatureSummary = {
   threads: 0,
   paused: null,
   inbound: "paired",
+  temperament: "playful",
 };
 
 const pipReport: CreatureReport = {

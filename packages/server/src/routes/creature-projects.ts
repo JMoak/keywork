@@ -68,6 +68,15 @@ export const creatureProjectRoutes = [
   },
   {
     method: "POST",
+    path: "/creature-projects/{project}/changed",
+    operationId: "creatureProjectChanged",
+    summary:
+      "A bound project's runtime says something changed in the work it runs for this workspace's creatures (a turn began, a question was asked or answered, a task opened or settled), whoever started that work. The body is ignored and nothing in it is trusted: this server reads that project's worksites, honours and ledger entries itself, over the same ticket and check as always, at once and then once a second while a thread there works. For the project's runtime, not for display. Since contract 1.40.",
+    authenticated: true,
+    responses: { "202": "The project will be read.", ...refusals },
+  },
+  {
+    method: "POST",
     path: "/creature-project-work",
     operationId: "receiveCreatureProjectWork",
     summary:
@@ -124,6 +133,11 @@ export const creatureProjectFamily = {
           }),
           notify(slug),
         );
+      }),
+      creatureProjectChanged: projects(async (port, _request, { project }) => {
+        if (port.changed === undefined) return json(503, { error: "this host reads no projects" });
+        await port.changed(project ?? "");
+        return json(202, { reading: true });
       }),
       receiveCreatureProjectWork: work(async (port, request) => {
         const input = projectWorkRequest.safeParse(await bodyOf(request));

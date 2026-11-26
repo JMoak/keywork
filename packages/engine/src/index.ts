@@ -1002,7 +1002,12 @@ export {
   type OpenAiResponsesOptions,
   OpenAiResponsesProvider,
 } from "./providers/openai-responses.ts";
-export { RetryingProvider, type RetryOptions, type Sleep } from "./providers/retry.ts";
+export {
+  type ProviderWait,
+  RetryingProvider,
+  type RetryOptions,
+  type Sleep,
+} from "./providers/retry.ts";
 export {
   type AuthHeaders,
   bearerHeaders,
@@ -1397,6 +1402,12 @@ export {
   realPtyRuntimeFacts,
 } from "./tools/pty.ts";
 export { readTool } from "./tools/read.ts";
+export {
+  machinePaneAmong,
+  type SceneSeat,
+  type SceneSetOut,
+  setOutScene,
+} from "./tools/scenes.ts";
 export { type ScheduleTarget, scheduleTool, type WakeScheduler } from "./tools/schedule.ts";
 export {
   type InteractiveShell,

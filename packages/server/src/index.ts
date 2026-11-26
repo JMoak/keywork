@@ -220,7 +220,16 @@ export {
   meshTrustRoutes,
   pairedManifestReader,
 } from "./routes/mesh.ts";
+export {
+  type ModelWait,
+  type ModelWaitChange,
+  type ModelWaitChangeKind,
+  type ModelWaitReason,
+  type ModelWaitsPort,
+  modelWaitReasons,
+} from "./routes/model-waits.ts";
 export type { ModelsFilter, ModelsPort, ModelsProbeRequest } from "./routes/models.ts";
+export type { CreatureScenesPort, SceneSetOutAnswer } from "./routes/scenes.ts";
 export type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 export type { PromptBehavior } from "./routes/sessions.ts";
 export { recordedShowEvents, type ShowPort, showRoutes } from "./routes/show.ts";

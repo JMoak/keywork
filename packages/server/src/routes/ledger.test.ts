@@ -26,6 +26,7 @@ const waiting: CreatureLedgerEntry = {
   answer: null,
   about: { kind: "ask", callId: "c1", tool: "bash" },
   conversation: null,
+  project: null,
 };
 
 const finished: CreatureLedgerEntry = {
@@ -40,6 +41,7 @@ const finished: CreatureLedgerEntry = {
   answer: null,
   about: { kind: "chore", routineId: "triage", runId: "r1" },
   conversation: null,
+  project: null,
 };
 
 function fakeLedger(views: Record<string, CreatureLedgerView>) {

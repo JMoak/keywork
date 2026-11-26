@@ -9,6 +9,7 @@ import {
   type InboundPolicy,
   inboundPolicySchema,
   isRefused,
+  isTemperament,
   MalformedCreatureError,
   type ModelClass,
   type ModelPolicy,
@@ -28,6 +29,8 @@ import {
   seedLimit,
   slugOf,
   substrateKinds,
+  type Temperament,
+  temperaments,
 } from "@keywork/engine";
 import type { SessionHost } from "../host.ts";
 import { servedBy, unserved } from "./answers.ts";
@@ -90,6 +93,7 @@ const creatureBody: JsonSchema = {
       properties: Object.fromEntries(modelClasses.map((modelClass) => [modelClass, modelChoice])),
       additionalProperties: false,
     },
+    temperament: { enum: [...temperaments] },
   },
   additionalProperties: false,
 };
@@ -116,6 +120,7 @@ const patchBody: JsonSchema = {
     },
     models: policyBody,
     cloudFallback: { type: "boolean" },
+    temperament: { enum: [...temperaments] },
     inbound: {
       oneOf: [
         { enum: ["nobody", "paired"] },
@@ -138,11 +143,11 @@ const patchBody: JsonSchema = {
   additionalProperties: false,
 };
 
-const draftShape =
-  'the body must be { name: string, skin?: string, workshop?: string, substrate?: "sbx" | "compose" | "host", models?: { strong | loop | decide | vision: "inherit" | { provider, model } } }, naming a workshop or a substrate, not both';
+const temperamentsSaid = temperaments.map((temperament) => `"${temperament}"`).join(" | ");
 
-const patchShape =
-  'the body must change at least one of { name?: string, body?: { skin?: string, seed?: integer }, models?: { strong | loop | decide | vision: "inherit" | { provider, model } }, cloudFallback?: boolean, inbound?: "nobody" | "paired" | { named: string[] } }';
+const draftShape = `the body must be { name: string, skin?: string, workshop?: string, substrate?: "sbx" | "compose" | "host", models?: { strong | loop | decide | vision: "inherit" | { provider, model } }, temperament?: ${temperamentsSaid} }, naming a workshop or a substrate, not both`;
+
+const patchShape = `the body must change at least one of { name?: string, body?: { skin?: string, seed?: integer }, models?: { strong | loop | decide | vision: "inherit" | { provider, model } }, cloudFallback?: boolean, inbound?: "nobody" | "paired" | { named: string[] }, temperament?: ${temperamentsSaid} }`;
 
 const removalShape = "the query takes confirmed=true and keepWorkshop=true|false only";
 
@@ -172,7 +177,7 @@ export const creatureRoutes = [
     path: "/creatures",
     operationId: "listCreatures",
     summary:
-      "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, and `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs. A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
+      "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, and its `temperament`, its standing manner: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent`, which its panes move with when it names no mood (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
     authenticated: true,
     responses: { "200": "The creatures.", "503": "This host serves no creatures." },
   },
@@ -181,7 +186,7 @@ export const creatureRoutes = [
     path: "/creatures",
     operationId: "createCreature",
     summary:
-      'Make a creature: writes `.keywork/bots/<slug>/bot.md` byte for byte as `POST /bots` would (so the creature is a bot first) and `creature.json` beside it, with the slug derived from `name` (REQ-003: the name stays editable in the file, the slug is its handle). `skin` defaults to the stead\'s first skin, every model class to `inherit`; the seed is drawn here. Where it works: `workshop` names an existing workshop id or `host` (the bare node, the default), or `substrate` (`sbx`, `compose` or `host`, as `GET /workshops/substrates` lists them) raises a new workshop for it first, exactly as `POST /workshops` would, records its id, then starts it as `POST /workshops/{id}/start` would, so the workshop reads `running` before the creature\'s first turn; the two are exclusive. A workshop that will not start leaves the creature made: its first tool call starts it (one line in that tool\'s output says so), and when it still cannot, the tool answers why in words and the creature tells the keeper. A substrate this node does not support is refused before anything is written, and a workshop raised for a creature that then cannot be written is removed again. The creature composes its one introduction sentence at creation and keeps it in `creature.json`, where the keeper can edit it. Needs a trusted workspace, as project bots do. Nothing is opened yet: the conversation is created lazily by the first `GET /creatures/{slug}`. A `creature.changed` event with `change: "created"` follows, after `workshop.changed` when one was raised and before its `change: "started"`.',
+      'Make a creature: writes `.keywork/bots/<slug>/bot.md` byte for byte as `POST /bots` would (so the creature is a bot first) and `creature.json` beside it, with the slug derived from `name` (REQ-003: the name stays editable in the file, the slug is its handle). `skin` defaults to the stead\'s first skin, every model class to `inherit`; the seed is drawn here, and `temperament`, when none is given, is read from it (since contract 1.40). Where it works: `workshop` names an existing workshop id or `host` (the bare node, the default), or `substrate` (`sbx`, `compose` or `host`, as `GET /workshops/substrates` lists them) raises a new workshop for it first, exactly as `POST /workshops` would, records its id, then starts it as `POST /workshops/{id}/start` would, so the workshop reads `running` before the creature\'s first turn; the two are exclusive. A workshop that will not start leaves the creature made: its first tool call starts it (one line in that tool\'s output says so), and when it still cannot, the tool answers why in words and the creature tells the keeper. A substrate this node does not support is refused before anything is written, and a workshop raised for a creature that then cannot be written is removed again. The creature composes its one introduction sentence at creation and keeps it in `creature.json`, where the keeper can edit it. Needs a trusted workspace, as project bots do. Nothing is opened yet: the conversation is created lazily by the first `GET /creatures/{slug}`. A `creature.changed` event with `change: "created"` follows, after `workshop.changed` when one was raised and before its `change: "started"`.',
     authenticated: true,
     requestBody: creatureBody,
     responses: {
@@ -212,7 +217,7 @@ export const creatureRoutes = [
     path: "/creatures/{slug}",
     operationId: "updateCreature",
     summary:
-      'Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback` and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: "updated"` follows.',
+      'Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback`, its `temperament` (since contract 1.40) and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: "updated"` follows.',
     authenticated: true,
     requestBody: patchBody,
     responses: {
@@ -430,10 +435,11 @@ export function creatureDraftOf(body: unknown): CreatureRequest | undefined {
     workshop: unknown;
     substrate: unknown;
     models: unknown;
+    temperament: unknown;
   }>(body);
   if (
     fields === undefined ||
-    !onlyKeys(fields, ["name", "skin", "workshop", "substrate", "models"])
+    !onlyKeys(fields, ["name", "skin", "workshop", "substrate", "models", "temperament"])
   ) {
     return undefined;
   }
@@ -442,8 +448,10 @@ export function creatureDraftOf(body: unknown): CreatureRequest | undefined {
   const workshop = optionalString(fields.workshop, (value) => value.trim() !== "");
   const substrate = optionalString(fields.substrate, isSubstrateKind);
   const models = modelsOf(fields.models);
+  const temperament = temperamentPatchOf(fields.temperament);
   if (name === undefined || name.length > 64) return undefined;
   if (skin === null || workshop === null || substrate === null || models === null) return undefined;
+  if (temperament === null) return undefined;
   if (workshop !== undefined && substrate !== undefined) return undefined;
   return {
     name,
@@ -451,6 +459,7 @@ export function creatureDraftOf(body: unknown): CreatureRequest | undefined {
     ...(workshop !== undefined && { workshop }),
     ...(substrate !== undefined && { substrate: substrate as SubstrateKind }),
     ...(models !== undefined && { models }),
+    ...(temperament !== undefined && { temperament }),
   };
 }
 
@@ -461,8 +470,9 @@ export function creaturePatchOf(body: unknown): CreaturePatch | undefined {
     models: unknown;
     cloudFallback: unknown;
     inbound: unknown;
+    temperament: unknown;
   }>(body);
-  const keys = ["name", "body", "models", "cloudFallback", "inbound"] as const;
+  const keys = ["name", "body", "models", "cloudFallback", "inbound", "temperament"] as const;
   if (fields === undefined || !onlyKeys(fields, keys)) return undefined;
   if (!keys.some((key) => fields[key] !== undefined)) return undefined;
   const name = fields.name === undefined ? undefined : nonBlank(fields.name);
@@ -473,14 +483,21 @@ export function creaturePatchOf(body: unknown): CreaturePatch | undefined {
   if (creatureBody === null || models === null) return undefined;
   if (cloudFallback !== undefined && typeof cloudFallback !== "boolean") return undefined;
   const inbound = inboundPatchOf(fields.inbound);
-  if (inbound === null) return undefined;
+  const temperament = temperamentPatchOf(fields.temperament);
+  if (inbound === null || temperament === null) return undefined;
   return {
     ...(name !== undefined && { name }),
     ...(creatureBody !== undefined && { body: creatureBody }),
     ...(models !== undefined && { models }),
     ...(cloudFallback !== undefined && { cloudFallback }),
     ...(inbound !== undefined && { inbound }),
+    ...(temperament !== undefined && { temperament }),
   };
+}
+
+function temperamentPatchOf(value: unknown): Temperament | undefined | null {
+  if (value === undefined) return undefined;
+  return isTemperament(value) ? value : null;
 }
 
 function inboundPatchOf(value: unknown): InboundPolicy | undefined | null {

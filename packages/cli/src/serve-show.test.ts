@@ -30,6 +30,7 @@ const hourlyLimit = 5;
 describe("a served workspace's settings", () => {
   it("come back exactly after the host stops and starts, pins and lineage included, past their time gone, the hour still counted", async () => {
     const place = await workspacePlace();
+    await sourceFiles(place, "a.ts");
     const before = await startedHost(
       place,
       scripted([
@@ -87,6 +88,7 @@ describe("a served workspace's settings", () => {
 
   it("drop without a word, after a crash, a rests setting and the live settings of a thread that is gone", async () => {
     const place = await workspacePlace();
+    await sourceFiles(place, "b.ts");
     const reading = deferred();
     const before = await startedHost(
       place,
@@ -284,6 +286,11 @@ async function workspacePlace(): Promise<Place> {
   await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
   await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "kept" }));
   return { cwd, sessionDir: await scratch(), userRoot: await scratch() };
+}
+
+async function sourceFiles(place: Place, ...names: readonly string[]): Promise<void> {
+  await mkdir(join(place.cwd, "src"), { recursive: true });
+  for (const name of names) await writeFile(join(place.cwd, "src", name), "export {};\n");
 }
 
 function keptSettingsIn(place: Place): readonly Setting[] {

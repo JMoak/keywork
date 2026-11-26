@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { type KeeperReport, readKeeperReport } from "./decisions/report.ts";
-import { type CreaturePatch, type ModelPolicy, patchedCreatureFile } from "./file.ts";
+import {
+  type CreaturePatch,
+  type ModelPolicy,
+  patchedCreatureFile,
+  type Temperament,
+  temperamentOf,
+} from "./file.ts";
 import { type InboundPolicy, inboundOf } from "./inbound.ts";
 import {
   type CreatureChores,
@@ -36,6 +42,7 @@ export interface CreatureSummary {
   threads: number;
   paused: string | null;
   inbound: InboundPolicy;
+  temperament: Temperament;
 }
 
 export interface CreatureReport extends KeeperReport {
@@ -293,6 +300,7 @@ function summaryOf(creature: Creature, owned: readonly TaggedSession[]): Creatur
     threads: threadsAmong(owned).length,
     paused: creature.file.paused?.since ?? null,
     inbound: inboundOf(creature.file),
+    temperament: temperamentOf(creature.file),
   };
 }
 

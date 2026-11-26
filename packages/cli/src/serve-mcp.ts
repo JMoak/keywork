@@ -12,6 +12,7 @@ import {
   messageGuard,
   type PlaceBook,
   type RelayedExchange,
+  type SceneShelf,
   type SelfIdentity,
   type SessionStore,
   type ShowSettings,
@@ -36,6 +37,7 @@ export interface ServedCreatureMcpOptions {
   mesh: CreatureMcpMesh | undefined;
   settings?: ShowSettings | undefined;
   places?: PlaceBook | undefined;
+  scenes?: SceneShelf | undefined;
   asksTheKeeper?: KeeperAsker | undefined;
   now?: (() => number) | undefined;
 }
@@ -47,11 +49,12 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
   if (mesh === undefined) return {};
   const now = options.now ?? Date.now;
   const own = { guard: messageGuard(defaultMessageLimits, now), limits: defaultMessageLimits };
-  const { places, asksTheKeeper } = options;
+  const { places, asksTheKeeper, scenes } = options;
+  const temperamentOf = async (slug: string) => (await options.creatures.read(slug))?.temperament;
   const yard =
     options.settings === undefined
       ? undefined
-      : creatureYard(options.settings, { now, places, asksTheKeeper });
+      : creatureYard(options.settings, { now, places, asksTheKeeper, scenes, temperamentOf });
   return {
     creatureMcp: {
       answer: (slug, message, caller, mail = own) =>

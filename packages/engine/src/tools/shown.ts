@@ -5,6 +5,7 @@ import type { Setting } from "../show/setting.ts";
 import { overlapWords, type StandingPicture, type Stood, stageWords } from "../show/standing.ts";
 import type { Tool } from "../tools.ts";
 import { defineTool } from "./define.ts";
+import { scenesListedWords } from "./scenes.ts";
 import type { ShowTarget } from "./show.ts";
 
 export const shownToolName = "shown";
@@ -13,12 +14,15 @@ export function shownTool(target: ShowTarget): Tool {
   return defineTool({
     name: shownToolName,
     description:
-      'List what is open for the keeper, whoever opened it, one JSON line each: id, what, place (where in the stead it rose from), from (the id of what it grew from, or null), where it stands now (beside your conversation, outside in its own window with its seat such as "left-half", or inside the app), by (who put it there last: you, the keeper or the app), mark, tone, signal, state and when it goes. origin keeper means the keeper opened it; agent names an agent that set it out through you. A last line says how much room your windows have outside. It changes nothing. Use the ids with from, arrange and withdraw.',
+      'List what is open for the keeper, whoever opened it, one JSON line each: id, what, place (where in the stead it rose from), from (the id of what it grew from, or null), where it stands now (beside your conversation, outside in its own window with its seat such as "left-half", or inside the app), by (who put it there last: you, the keeper or the app), mark, tone, signal, state and when it goes. origin keeper means the keeper opened it; agent names an agent that set it out through you. A line says how much room your windows have outside, and a last line names the scenes you keep. It changes nothing. Use the ids with from, arrange and withdraw, and the scene names with arrange.',
     schema: z.object({}).strict(),
     run: async () => {
       const settings = target.settings();
       if (settings === undefined) return nothingListedHere;
-      return listed(settings.standingFor(target), target.creature);
+      return [
+        listed(settings.standingFor(target), target.creature),
+        ...scenesListedWords(target),
+      ].join("\n");
     },
   });
 }

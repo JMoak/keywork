@@ -17,7 +17,7 @@
           {
             "type": "text",
             "text": {
-              "$regex": "^Set out as a card; the yard decides whether it unfolds[.] It stays until the keeper has seen it[.]"
+              "$regex": "^Set out as a pane beside the conversation; the app decides whether it unfolds[.] It stays until the keeper has seen it[.]"
             }
           }
         ],

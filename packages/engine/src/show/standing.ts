@@ -123,7 +123,7 @@ function putBackWords(held: readonly Stood[]): string[] {
   const reason = first?.note === undefined ? "" : ` (${first.note})`;
   const again = held.length === 1 ? "it" : "them";
   return [
-    `Back beside the conversation as ${held.length === 1 ? "a card" : "cards"}${reason}: ${called}. Name ${again} in arrange to set ${again} out again.`,
+    `Back beside the conversation${reason}: ${called}. Name ${again} in arrange to set ${again} out again.`,
   ];
 }
 

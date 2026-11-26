@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.39",
+    "x-keywork-contract": "1.40",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -1782,7 +1782,7 @@
     "/workspace/trust": {
       "post": {
         "operationId": "trustWorkspace",
-        "summary": "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `keywork serve` composes itself again before it answers: the project's config, permissions, MCP servers, arcs and bots load, open sessions close (a running turn is interrupted and keeps what it had) and reopen on their next request, pending asks are refused, and the URL, the token, the ticket and the event stream stay as they were. `recomposed: true` says that happened, and `GET /permissions` reflects trust as soon as the answer arrives; `surface.changed` fires with `kind: \"workspaces\"` and, after a recompose, `kind: \"permissions\"`. `reopens: true` says this host cannot recompose itself (an embedded host) and must be restarted before the decision takes effect; a client that owns the process restarts it. Already trusted is not an error and answers both false. This route never untrusts and never forgets a decision.",
+        "summary": "Trust the served workspace and set it up, exactly what `/init` in the terminal and `keywork trust` do: the decision is written for this root and no other (the body is ignored, so no path can be smuggled in) to the user's trust store, and `.keywork/workspace.json` plus the memory vault are created when missing. Trust is read when a server composes, so `keywork serve` composes itself again before it answers: the project's config, permissions, MCP servers, arcs and bots load, open sessions close (a running turn is interrupted and keeps what it had) and reopen on their next request, pending asks are refused, and the URL, the token, the ticket and the event stream stay as they were. `recomposed: true` says that happened, and `GET /permissions` reflects trust as soon as the answer arrives; `surface.changed` fires with `kind: \"workspaces\"` and, after a recompose, `kind: \"permissions\"`. `reopens: true` says this host cannot recompose itself (an embedded host) and must be restarted before the decision takes effect; a client that owns the process restarts it. It also says so, without a recompose, when setting the folder up gave it a new workspace identity (a folder that is neither a repository nor declared is known by its path until its declaration is written, and by its declaration after): a running server stays filed under the identity it started with (its ticket and its sessions), so it must start again to be found under the new one, as a bound project or anywhere else, and a client reads `GET /workspace` again after the restart (since contract 1.40). Already trusted is not an error and answers both false. This route never untrusts and never forgets a decision.",
         "responses": {
           "200": {
             "description": "`{ trusted: true, root, vault, reopens, recomposed }`; `root` names the directory the decision covers."
@@ -3620,7 +3620,7 @@
     "/creatures": {
       "get": {
         "operationId": "listCreatures",
-        "summary": "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, and `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs. A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
+        "summary": "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, and its `temperament`, its standing manner: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent`, which its panes move with when it names no mood (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
         "responses": {
           "200": {
             "description": "The creatures."
@@ -3635,7 +3635,7 @@
       },
       "post": {
         "operationId": "createCreature",
-        "summary": "Make a creature: writes `.keywork/bots/<slug>/bot.md` byte for byte as `POST /bots` would (so the creature is a bot first) and `creature.json` beside it, with the slug derived from `name` (REQ-003: the name stays editable in the file, the slug is its handle). `skin` defaults to the stead's first skin, every model class to `inherit`; the seed is drawn here. Where it works: `workshop` names an existing workshop id or `host` (the bare node, the default), or `substrate` (`sbx`, `compose` or `host`, as `GET /workshops/substrates` lists them) raises a new workshop for it first, exactly as `POST /workshops` would, records its id, then starts it as `POST /workshops/{id}/start` would, so the workshop reads `running` before the creature's first turn; the two are exclusive. A workshop that will not start leaves the creature made: its first tool call starts it (one line in that tool's output says so), and when it still cannot, the tool answers why in words and the creature tells the keeper. A substrate this node does not support is refused before anything is written, and a workshop raised for a creature that then cannot be written is removed again. The creature composes its one introduction sentence at creation and keeps it in `creature.json`, where the keeper can edit it. Needs a trusted workspace, as project bots do. Nothing is opened yet: the conversation is created lazily by the first `GET /creatures/{slug}`. A `creature.changed` event with `change: \"created\"` follows, after `workshop.changed` when one was raised and before its `change: \"started\"`.",
+        "summary": "Make a creature: writes `.keywork/bots/<slug>/bot.md` byte for byte as `POST /bots` would (so the creature is a bot first) and `creature.json` beside it, with the slug derived from `name` (REQ-003: the name stays editable in the file, the slug is its handle). `skin` defaults to the stead's first skin, every model class to `inherit`; the seed is drawn here, and `temperament`, when none is given, is read from it (since contract 1.40). Where it works: `workshop` names an existing workshop id or `host` (the bare node, the default), or `substrate` (`sbx`, `compose` or `host`, as `GET /workshops/substrates` lists them) raises a new workshop for it first, exactly as `POST /workshops` would, records its id, then starts it as `POST /workshops/{id}/start` would, so the workshop reads `running` before the creature's first turn; the two are exclusive. A workshop that will not start leaves the creature made: its first tool call starts it (one line in that tool's output says so), and when it still cannot, the tool answers why in words and the creature tells the keeper. A substrate this node does not support is refused before anything is written, and a workshop raised for a creature that then cannot be written is removed again. The creature composes its one introduction sentence at creation and keeps it in `creature.json`, where the keeper can edit it. Needs a trusted workspace, as project bots do. Nothing is opened yet: the conversation is created lazily by the first `GET /creatures/{slug}`. A `creature.changed` event with `change: \"created\"` follows, after `workshop.changed` when one was raised and before its `change: \"started\"`.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3757,6 +3757,9 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "temperament": {
+                    "enum": ["calm", "brisk", "eager", "playful", "decisive", "tentative"]
                   }
                 },
                 "additionalProperties": false
@@ -3817,7 +3820,7 @@
       },
       "patch": {
         "operationId": "updateCreature",
-        "summary": "Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback` and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows.",
+        "summary": "Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback`, its `temperament` (since contract 1.40) and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows.",
         "parameters": [
           {
             "name": "slug",
@@ -3957,6 +3960,9 @@
                   },
                   "cloudFallback": {
                     "type": "boolean"
+                  },
+                  "temperament": {
+                    "enum": ["calm", "brisk", "eager", "playful", "decisive", "tentative"]
                   },
                   "inbound": {
                     "oneOf": [
@@ -4592,6 +4598,45 @@
         }
       }
     },
+    "/creature-projects/{project}/changed": {
+      "post": {
+        "operationId": "creatureProjectChanged",
+        "summary": "A bound project's runtime says something changed in the work it runs for this workspace's creatures (a turn began, a question was asked or answered, a task opened or settled), whoever started that work. The body is ignored and nothing in it is trusted: this server reads that project's worksites, honours and ledger entries itself, over the same ticket and check as always, at once and then once a second while a thread there works. For the project's runtime, not for display. Since contract 1.40.",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The project will be read."
+          },
+          "400": {
+            "description": "Invalid creature, project, request, or qualified session reference."
+          },
+          "403": {
+            "description": "The project is not currently authorized for creature work."
+          },
+          "404": {
+            "description": "The creature or selected project session is missing."
+          },
+          "409": {
+            "description": "The project is unbound or the request ID was used for different work."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host cannot serve the creature project context."
+          }
+        }
+      }
+    },
     "/creature-project-work": {
       "post": {
         "operationId": "receiveCreatureProjectWork",
@@ -4712,10 +4757,175 @@
         }
       }
     },
+    "/creature-honours": {
+      "get": {
+        "operationId": "listCreatureHonours",
+        "summary": "What the creatures of this workspace, and the stead itself, have earned: `{ honours }`, each `{ holder, kind, tier, with, earnedAt, proof }`, ordered by `earnedAt`, oldest first. `holder` is a creature's slug, or null for the stead's own. A creature earns `conversations` (tiers at 10, 100 and 1,000 of its conversations that had a turn), `night` (a turn of its work finished between midnight and five in the morning, this machine's time), `partners` (10 and 100 hand-offs with one partner, both directions together, `with` the partner), `tower` (30 and 300 conversations in one folder of `GET /creature-worksites`, `with` the folder), `standing` (each full year since it was made), `range` (4, 8 and 12 kinds of tool, each used successfully ten times; a kind is a tool's name as called) and `run` (7, 30 and 100 days in a row, this machine's calendar, each with a finished turn of its work). The stead earns `first-creature`, `hamlet` (three creatures at once), `town` (eight), `paved-road` (the first pair to reach 20 hand-offs both ways together, `with` the two slugs joined by `+` in alphabetical order) and `first-tower` (the first `tower` of any creature, `with` the folder). Each tier is its own row; a row is named by `holder`, `kind`, `tier` and `with`. `earnedAt` is when it was truly earned, or, where the engine kept no finer fact (hand-offs and folders counted before contract 1.40), the latest time it is known to have been held by, which `proof` says in words: `proof` is one plain sentence a keeper can check. A sub-agent's work belongs to the creature that delegated it, and a creature's threads in a bound project count exactly as its work here: that project's runtime keeps the facts and this server reads them as it reads that project's worksites. Earned honours are never taken away and never re-earned; the answer carries what was earned and never a count in progress. Honours from before contract 1.40 are counted once from the session journals and the hand-off and worksite tallies at the first start, and fire no event; after that the server keeps them as work happens, saved for the workspace under the node's state. Removing a creature drops its honours; the stead's own stay. A console follows `creature.honours` on the event stream after a cold start. With `?visitor=<workspace>` the answer is instead `{ work }`: the dated facts this server kept of the project threads it ran for the creatures of that workspace (`{ creature, conversations, night, tools, days }`: when each conversation first had a turn, the first turn finished at night or null, the first ten successful uses of each tool by name, and the first finished turn of each day), which the creature's own server merges; it is for that server, not for display. Honours are for display only: they grant, widen and imply nothing about what any creature may do. Since contract 1.40.",
+        "responses": {
+          "200": {
+            "description": "`{ honours }`, every honour held; `{ work }` with `?visitor`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no honours."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/scenes": {
+      "get": {
+        "operationId": "listCreatureScenes",
+        "summary": "The scenes a creature keeps, newest first: `{ scenes }`, each `{ creature, name, place, holds, keptAt }`. A scene is an arrangement the creature kept by name with its window tools (`arrange` with `keep`) and sets out again (`show` or `arrange` with `scene`): what it had out, and where each thing stood. `name` is as the creature gave it, trimmed and at most 40 characters, one per creature and name compared without regard to case. `place` is the place in the stead the scene belongs to, in the shape a setting's `place` has, or null: pressing that place sets the scene out. `holds` lists `{ kind, title }` for each thing in it, in order, for a list to print. A creature keeps at most 12; keeping a thirteenth is refused in words that name the limit. A console follows `creature.scenes` on the event stream after a cold start. Removing a creature drops its scenes. Since contract 1.40.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ scenes }`, newest first."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no scenes."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/scenes/{name}/set-out": {
+      "post": {
+        "operationId": "setOutCreatureScene",
+        "summary": "Set a kept scene out now, at the keeper's press, as the creature's own panes in its conversation, each thing where it stood and rising from the place the scene belongs to. It passes the gate and the limits that setting each thing out by hand passes: each thing spends one of the creature's settings an hour and takes room among the twelve it may have outside, and the first thing refused stops the rest. A terminal or a screen acts on the keeper's machine, so it is not set out at once: the keeper is asked in the creature's conversation, as for any terminal or screen, and it is set out when they allow it. A scene the creature kept in a thread of a bound project is set out by that project's runtime, in that thread (or the creature's latest thread there when it is gone), where its files are; when that runtime does not answer nothing is set out and `stopped` says so. Answers `{ out, missing, asking, stopped }`: how many things were set out now; the titles of those that no longer exist (a file that is gone, a thread that was removed), which were left out while the rest went out; the titles waiting on the keeper's yes; and null, or the sentence saying why the rest were not set out. With `?visitor=<workspace>` a project's runtime sets out, in its own thread, a scene that creature of that workspace kept there; that form is for the creature's own server, not for display. Since contract 1.40.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ out, missing, asking, stopped }`."
+          },
+          "404": {
+            "description": "The creature keeps no scene by that name."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no scenes."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/scenes/{name}": {
+      "put": {
+        "operationId": "keepCreatureScene",
+        "summary": "Keep a scene for a creature that a bound project's runtime kept for it, as `arrange` with `keep` does in a thread there: the body is `{ place, things, keptIn }`, where `place` is the place the scene belongs to or null, `things` is what it sets out (`{ what, where, seat?, weight?, size? }` each) and `keptIn` is `{ workspace, session }`, the project and thread it was kept in. It counts against the same twelve as every scene of the creature, replaces a scene of the same name, and `creature.scenes` follows with `change: \"kept\"`. Answers `{ scene, replaced }`, or 409 with `{ error, scenes }` when the creature already keeps twelve. It is for the project's runtime, not for display, and grants nothing: setting the scene out passes the gate as before. Since contract 1.40.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ scene, replaced }`."
+          },
+          "400": {
+            "description": "The body is not a scene to keep."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "409": {
+            "description": "`{ error, scenes }`: the creature already keeps twelve scenes."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no scenes."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "forgetCreatureScene",
+        "summary": "Forget a scene a creature keeps, as the keeper's press. Nothing that is out moves; `creature.scenes` follows with `change: \"forgotten\"`. Since contract 1.40.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The scene was forgotten."
+          },
+          "404": {
+            "description": "The creature keeps no scene by that name."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no scenes."
+          }
+        }
+      }
+    },
     "/creatures/{slug}/ledger": {
       "get": {
         "operationId": "readCreatureLedger",
-        "summary": "The creature's ledger for the keeper's console, its questions for the keeper first and then its tasks: `{ creature, entries, folded }`. Not the keeper ledger behind `GET /creatures/{slug}/report`, nor the memory ledger. Each entry is `{ id, kind, state, title, directory, session, openedAt, closedAt, answer, about, conversation }`: `id` is stable, `title` is plain words, `directory` is the working directory of the session the work lives in (the workspace for a chore held on grants), `session` is that session while it is in the session directory and `null` once it is trashed (it comes back with `POST /trash/{id}/restore`) or when the entry never had one, `closedAt` is `null` while the entry is open, `answer` is `null` except on an answered question, and `conversation` is `null` until a short conversation about the entry is opened (`POST /creatures/{slug}/ledger/{id}/conversation`, since contract 1.38). A question (`kind: \"question\"`) is `waiting`, then `answered`, with `answer` `granted`, `denied` or `lapsed` (nobody answered: the ask timed out or its session or the server closed first, or the chore stopped needing the acceptance some other way). `about: { kind: \"ask\", callId, tool }` is a permission ask on one of the creature's sessions (its conversation, a chore run, a thread, or a sub-agent of one), waiting from when `GET /asks` lists it until it leaves, whether the keeper answered it with `POST /asks/{callId}`, a promoted rule class decided it, or it lapsed; `about: { kind: \"grants\", routineId }` is a chore held on a write or act grant set the keeper has not accepted, waiting while `GET /routines/needs-you` lists its `grants` item and `granted` once the keeper accepts it. A task (`kind: \"task\"`) is `running`, then `finished` (it ended and the keeper has not looked at it yet), then `done` once `POST /creatures/{slug}/ledger/{id}/seen` says the keeper looked; or it is `blocked` instead of `finished` when it failed, timed out, ran over budget or could not deliver. `about: { kind: \"chore\", routineId, runId }` is a chore run, running from its thread's opening to its `routine.finished`; `about: { kind: \"thread\" }` is a thread of kind `thread`, running until its first report reaches the conversation. The conversation's own turns are not tasks, and a sub-agent's work belongs to the session that delegated it. Entries come waiting questions first, then running tasks, then closed entries, each group newest first. The server writes each change as it happens and keeps the ledger for the workspace under the node's state, so it outlives a restart and the sessions it names; it is never rebuilt from history and began empty with contract 1.37, except that the grant sets chores are held on are read from the chore journal at every start. No ask or turn outlives the server, so an ask a stopped server left waiting is `answered` as `lapsed` and a task it left running is `blocked` when the next one starts. Each creature keeps its 50 most recent closed entries; older ones leave the list and `folded` counts them. Open entries are always kept. Removing a creature (`DELETE /creatures/{slug}?confirmed=true`) drops its ledger, so a creature made again under the same slug starts from none. A console follows `creature.ledger` on the event stream after a cold start. The ledger is a record for display: it grants, widens and implies nothing about what any creature may do, and a question is answered only where it was asked, never here. Since contract 1.37.",
+        "summary": "The creature's ledger for the keeper's console, its questions for the keeper first and then its tasks: `{ creature, entries, folded }`. Not the keeper ledger behind `GET /creatures/{slug}/report`, nor the memory ledger. Each entry is `{ id, kind, state, title, directory, session, openedAt, closedAt, answer, about, conversation }`: `id` is stable, `title` is plain words, `directory` is the working directory of the session the work lives in (the workspace for a chore held on grants), `session` is that session while it is in the session directory and `null` once it is trashed (it comes back with `POST /trash/{id}/restore`) or when the entry never had one, `closedAt` is `null` while the entry is open, `answer` is `null` except on an answered question, and `conversation` is `null` until a short conversation about the entry is opened (`POST /creatures/{slug}/ledger/{id}/conversation`, since contract 1.38). A question (`kind: \"question\"`) is `waiting`, then `answered`, with `answer` `granted`, `denied` or `lapsed` (nobody answered: the ask timed out or its session or the server closed first, or the chore stopped needing the acceptance some other way). `about: { kind: \"ask\", callId, tool }` is a permission ask on one of the creature's sessions (its conversation, a chore run, a thread, or a sub-agent of one), waiting from when `GET /asks` lists it until it leaves, whether the keeper answered it with `POST /asks/{callId}`, a promoted rule class decided it, or it lapsed; `about: { kind: \"grants\", routineId }` is a chore held on a write or act grant set the keeper has not accepted, waiting while `GET /routines/needs-you` lists its `grants` item and `granted` once the keeper accepts it. A task (`kind: \"task\"`) is `running`, then `finished` (it ended and the keeper has not looked at it yet), then `done` once `POST /creatures/{slug}/ledger/{id}/seen` says the keeper looked; or it is `blocked` instead of `finished` when it failed, timed out, ran over budget or could not deliver. `about: { kind: \"chore\", routineId, runId }` is a chore run, running from its thread's opening to its `routine.finished`; `about: { kind: \"thread\" }` is a thread of kind `thread`, running until its first report reaches the conversation. The conversation's own turns are not tasks, and a sub-agent's work belongs to the session that delegated it. Entries come waiting questions first, then running tasks, then closed entries, each group newest first. The server writes each change as it happens and keeps the ledger for the workspace under the node's state, so it outlives a restart and the sessions it names; it is never rebuilt from history and began empty with contract 1.37, except that the grant sets chores are held on are read from the chore journal at every start. No ask or turn outlives the server, so an ask a stopped server left waiting is `answered` as `lapsed` and a task it left running is `blocked` when the next one starts. Each creature keeps its 50 most recent closed entries; older ones leave the list and `folded` counts them. Open entries are always kept. Removing a creature (`DELETE /creatures/{slug}?confirmed=true`) drops its ledger, so a creature made again under the same slug starts from none. A console follows `creature.ledger` on the event stream after a cold start. The ledger is a record for display: it grants, widens and implies nothing about what any creature may do, and a question is answered only where it was asked, never here. `project` is null for work on this server; work in a bound project runs in that project's own runtime, which keeps its questions and tasks for the creature by the same rules, and this server reads them from it as it reads that project's worksites (at start, as soon as that runtime says something changed there with `POST /creature-projects/{project}/changed`, however the turn began, and once a second while a thread there works) and carries them with `project` set to the project's id (as in `GET /creatures/{slug}/projects`, since contract 1.40): such a question is answered on that project's server, with `POST /asks/{callId}` there, and its entry follows within about a second; an entry of a project is not settled when this server restarts, since its work did not stop with it. With `?visitor=<workspace>` the answer is instead the entries this server keeps of the project threads it ran for that workspace's creature, for that creature's own server and not for display. Since contract 1.37.",
         "parameters": [
           {
             "name": "slug",
@@ -4786,7 +4996,7 @@
     "/creatures/{slug}/ledger/{id}/conversation": {
       "post": {
         "operationId": "openLedgerConversation",
-        "summary": "Open a short conversation with the creature about one entry of its ledger, or return the one already opened: the answer is `{ entry }` with `entry.conversation` set, and asking again for the same entry returns the same conversation, open or ended. The conversation is a fresh session of kind `thread` on this server, titled \"About: <entry title>\", whose journal names the entry (`GET /sessions/{id}` carries `ledgerEntry: { creature, id }`), framed with the entry so the creature speaks first, on the conversation model of the creature (since contract 1.39; never the model its work threads use). `entry.conversation` is `{ session, state, openedAt, endedAt, endedBy }`: `state` is `open` or `ended`, and `endedBy` is `answer` when the question of the entry was answered (granted, denied or lapsed) or `keeper` when the keeper closed it with `POST /creatures/{slug}/ledger/{id}/conversation/close`. An ended conversation is read-only: `POST /sessions/{id}/prompt` and `/inject` answer 409, `GET /sessions/{id}` still reads it with `endedAt`, the entry keeps pointing at it, and it is no longer among the live `threads` of the creature. When it ends, one line saying what was decided goes into the main conversation of the creature as a creature report. `creature.ledger` fires with `change: \"changed\"` when it opens and when it ends. It is for work on this server only, answers no question and grants nothing: a permission question is answered with `POST /asks/{callId}` as before. Since contract 1.38.",
+        "summary": "Open a short conversation with the creature about one entry of its ledger, or return the one already opened: the answer is `{ entry }` with `entry.conversation` set, and asking again for the same entry returns the same conversation, open or ended. The conversation is a fresh session of kind `thread` on this server, titled \"About: <entry title>\", whose journal names the entry (`GET /sessions/{id}` carries `ledgerEntry: { creature, id }`), framed with the entry so the creature speaks first, on the conversation model of the creature (since contract 1.39; never the model its work threads use). `entry.conversation` is `{ session, state, openedAt, endedAt, endedBy }`: `state` is `open` or `ended`, and `endedBy` is `answer` when the question of the entry was answered (granted, denied or lapsed) or `keeper` when the keeper closed it with `POST /creatures/{slug}/ledger/{id}/conversation/close`. An ended conversation is read-only: `POST /sessions/{id}/prompt` and `/inject` answer 409, `GET /sessions/{id}` still reads it with `endedAt`, the entry keeps pointing at it, and it is no longer among the live `threads` of the creature. When it ends, one line saying what was decided goes into the main conversation of the creature as a creature report. `creature.ledger` fires with `change: \"changed\"` when it opens and when it ends. It is for work on this server only, so an entry whose `project` is set is refused, answers no question and grants nothing: a permission question is answered with `POST /asks/{callId}` as before. Since contract 1.38.",
         "parameters": [
           {
             "name": "slug",
@@ -4813,7 +5023,7 @@
             "description": "No creature has that slug, or its ledger holds no entry with that id."
           },
           "409": {
-            "description": "The entry is a question already answered, and no conversation was opened about it."
+            "description": "The entry is a question already answered, and no conversation was opened about it, or its work runs in a bound project's runtime."
           },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
@@ -5910,6 +6120,23 @@
           },
           "503": {
             "description": "This host runs no bench."
+          }
+        }
+      }
+    },
+    "/model-waits": {
+      "get": {
+        "operationId": "listModelWaits",
+        "summary": "The turns waiting on a model that is not answering yet, oldest first: `{ waits }`, each `{ session, creature, server, reason, since }`. Only waits the engine already observes are reported: a turn whose model request failed and that is waiting to try again, `limited` when the provider said it is rate limited (429) and `busy` when it said it is overloaded or timed out (408, or 500 and above). A provider that cannot be reached is not a busy model and is not reported, and the engine keeps no queue of its own for this. `creature` is the creature whose work waits (a sub-agent's wait is its creature's), or null; `server` is the origin of the local model server it waits on, as `GET /models` gives a server's `root`, or null for a cloud provider; `since` is when the wait began. A wait shorter than two seconds is never reported: `model.wait` fires `waiting` once a wait has lasted two seconds, carrying the session's id, and `over` when that turn's model answers, the turn ends, or it waits no longer. Nothing carries a retry time or an attempt, so nothing can count down. For display only. Since contract 1.40.",
+        "responses": {
+          "200": {
+            "description": "`{ waits }`, oldest first."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host reports no waits on a model."
           }
         }
       }
@@ -7544,6 +7771,9 @@
               "creature.handoff",
               "creature.ledger",
               "creature.worksites",
+              "creature.honours",
+              "creature.scenes",
+              "model.wait",
               "routine.fired",
               "routine.finished",
               "routine.needs",

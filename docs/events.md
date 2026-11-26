@@ -807,6 +807,25 @@ The ledger is a record for display: it grants, widens and implies nothing about 
 may do, and a question is answered only where it was asked. Since contract 1.37; an older server
 sends none and serves no `GET /creatures/{slug}/ledger`.
 
+Work in a bound project is on the creature's ledger too (since contract 1.40). A project's threads
+run in that project's own runtime, which keeps their questions and their tasks for the home's
+creature by the same rules (a permission ask on the thread or a sub-agent of it is a question; the
+thread is a task, running until its first turn settles, titled with the opening words of what was
+asked until the thread has a title of its own). This server reads them from that runtime with
+`GET /creatures/{slug}/ledger?visitor=<its workspace identity>` at the moments it reads that
+project's worksites: at start, as soon as that runtime says something changed there
+(`POST /creature-projects/{project}/changed`, sent when a turn of one of its threads begins or one of
+its questions or tasks changes, whether the turn was started from here or from the project's own
+console), and then once a second while a thread there has a turn running. It carries each as its own
+entry with `project` set to the project's id: opened, changed and folded as any entry, and marked
+seen here. Such a question is answered on the project's server, with
+`POST /asks/{callId}` there, where it waits in that server's `GET /asks`; its entry here follows
+within about a second. A restart of this server does not settle a project's entries, since their
+work did not stop with it; a project's runtime that stops answers its own open questions `lapsed` and
+its running tasks `blocked` when it starts again, and this server learns that the next time it reads
+that project. A project's entry takes no short conversation, which runs only on the server where the
+work runs.
+
 An entry may carry a short conversation about it (since contract 1.38; a 1.37 server sends no
 `conversation`, which a client reads as `null`). `POST /creatures/{slug}/ledger/{id}/conversation`
 opens one, a fresh session of kind `thread` on this server, titled `About: <entry title>`, its
@@ -829,7 +848,8 @@ it.`). Both survive a restart, and a question the stop answers `lapsed` ends its
 the next start. Each change fires this event with `change: "changed"`. The conversation answers no
 question and grants nothing: a permission question is still answered with `POST /asks/{callId}`, and
 the conversation's own tool calls pass the same gate as any thread's. It is for work on this server
-only; a project thread served by another server has none.
+only: an entry whose `project` is set is refused with 409, since its work runs in that project's
+runtime.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -846,6 +866,7 @@ only; a project thread served by another server has none.
 | `entry.answer` | `"granted" \| "denied" \| "lapsed" \| null` | On an answered question: what the answer was, or `lapsed` when nobody answered (the ask timed out, its session or the server closed first, or the chore stopped needing the acceptance some other way). `null` otherwise. |
 | `entry.about` | `object` | `{ kind: "ask", callId, tool }` (answer it with `POST /asks/{callId}`), `{ kind: "grants", routineId }` (accept it on the chore), `{ kind: "chore", routineId, runId }` or `{ kind: "thread" }`. |
 | `entry.conversation` | `object \| null` | `{ session, state, openedAt, endedAt, endedBy }` once a conversation about the entry was opened: `session` is its session, `state` is `open` or `ended`, `endedAt` and `endedBy` (`answer` or `keeper`) are `null` while it is open. `null` when none was opened. Since contract 1.38. |
+| `entry.project` | `string \| null` | The bound project's id (as in `GET /creatures/{slug}/projects`) when the work runs in that project's runtime: `session` and `directory` are then that runtime's, and a question is answered there. `null` for work on this server. Since contract 1.40. |
 | `folded` | `number` | How many of the creature's closed entries have left the list so far. |
 
 ### creature.worksites
@@ -905,6 +926,113 @@ creature may do. Since contract 1.39; an older server sends none and serves no
 | `worksite.since` | `string` | The first work there (ISO 8601). |
 | `worksite.latest` | `string` | The latest work there (ISO 8601). For a repository root, a turn's start or end; otherwise a changed file. |
 | `worksite.active` | `boolean` | Whether a turn is running now in a conversation that has worked there. |
+
+### creature.honours
+
+Fires when a creature or the stead earned an honour while the server runs, or when a removed
+creature's honours left with it, so a console plays its ring of light on what was just earned
+without re-fetching `GET /creature-honours`, which serves every honour held for a cold start. An
+honour is a fact with its proof: once earned it is never taken away, never re-earned and never
+counts down, and the event and the route carry only what was earned, never a count in progress,
+so no surface can show how close anything is.
+
+A creature earns `conversations` at 10, 100 and 1,000 of its conversations that had a turn;
+`night` when a turn of its work finished between midnight and five in the morning, this machine's
+time; `partners` at 10 and 100 hand-offs with one partner, both directions of the hand-off tally
+together (`with` the partner, one row per partner and tier); `tower` at 30 and 300 conversations in
+one folder of the worksite tally (`with` the folder); `standing` at each full year since it was
+made; `range` at 4, 8 and 12 kinds of tool, each used successfully ten times, where a kind is a
+tool's name as it was called; and `run` at 7, 30 and 100 days in a row, this machine's calendar,
+each with a finished turn of its work. When a run ends nothing is said and nothing changes. The
+stead earns `first-creature`, `hamlet` (three creatures at once), `town` (eight at once),
+`paved-road` (the first pair to reach 20 hand-offs both ways together, `with` the two slugs joined
+by `+` in alphabetical order) and `first-tower` (the first `tower` of any creature, `with` the
+folder). A sub-agent's work belongs to the creature that delegated it. A creature's threads in a
+bound project count exactly as its work here: that project's runtime keeps the dated facts of the
+threads it ran for this workspace's creatures, and this server reads them with
+`GET /creature-honours?visitor=<its workspace identity>` at the moments it reads that project's
+worksites, so a turn finished in a project thread counts toward `conversations`, `night`, `range`
+and `run` within about a second.
+
+Honours from before contract 1.40 are counted once, from the session journals, the hand-off tally,
+the worksite tally and the creatures' own files, when a 1.40 server first starts for the workspace,
+and fire no event; so does anything learnt later that was earned before this server started, such as
+a project's facts read after a start. After that the server weighs honours as work happens and keeps
+them, with the facts they are weighed from, for the workspace under the node's state
+(`creatures/honours.json` beside the hand-off tally), so a restart reads that file and never the
+journals. Removing a creature (a confirmed `DELETE /creatures/{slug}`) drops its honours, with one
+`dropped` event each; the stead's own stay. Honours are for display: they grant, widen and imply
+nothing about what any creature may do. Since contract 1.40; an older server sends none and serves
+no `GET /creature-honours`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"earned" \| "dropped"` | `earned` when the honour was earned while this server runs; `dropped` when it left with a removed creature. |
+| `honour.holder` | `string \| null` | The creature's slug, or `null` for the stead's own. |
+| `honour.kind` | `"conversations" \| "night" \| "partners" \| "tower" \| "standing" \| "range" \| "run" \| "first-creature" \| "hamlet" \| "town" \| "paved-road" \| "first-tower"` | What was earned. |
+| `honour.tier` | `number` | 1 for the first step of a kind, 2 for the next, and so on; a creature that reached 100 conversations holds tiers 1 and 2 as two rows. |
+| `honour.with` | `string \| null` | The partner for `partners`, the folder for `tower` and `first-tower`, the pair for `paved-road`; `null` otherwise. A row is named by `holder`, `kind`, `tier` and `with`. |
+| `honour.earnedAt` | `string` | When it was earned (ISO 8601). For hand-offs and folders counted before contract 1.40 the engine kept no finer fact, so it is the latest time the honour is known to have been held by, and `proof` says "counted by". |
+| `honour.proof` | `string` | One plain sentence a keeper can check, such as `Ten conversations; the tenth began on 20 November 2026.` |
+
+### creature.scenes
+
+Fires when a creature kept a scene or one was forgotten, so a console's list of a creature's scenes
+follows without re-fetching `GET /creatures/{slug}/scenes`, which serves them for a cold start. A
+scene is an arrangement a creature keeps by name with its window tools and sets out again: what it
+had out, and where each thing stood. The creature keeps one with `arrange` and `keep` (what it has
+out, or the `panes` it names, as they stand now), sets it out again with `arrange` and `scene`, and
+lets it go with `arrange` and `forget`; the keeper sets one out with
+`POST /creatures/{slug}/scenes/{name}/set-out` and forgets one with
+`DELETE /creatures/{slug}/scenes/{name}`. A scene may belong to a place in the stead (the place
+`from` names when it is kept, or the one project all its things rose from), and pressing that place
+sets it out. Setting a scene out passes the same gate and limits as setting each thing out by hand:
+a terminal or a screen in it asks the keeper every time, each thing spends one of the creature's
+settings an hour, and no more than twelve stand outside at once. A creature keeps at most 12; the
+thirteenth is refused in words that name the limit, and keeping a name it already keeps replaces
+that scene. The server keeps scenes for the workspace under the node's state
+(`creatures/scenes.json`). Removing a creature drops its scenes, with one `forgotten` event each.
+A creature working in a thread of a bound project keeps its scenes here too: that project's runtime
+reads the creature's scenes from this server's keeping and sends a scene kept there with
+`PUT /creatures/{slug}/scenes/{name}`, so it is listed, counted against the same twelve and
+announced here like any other, and it belongs to that project's place unless `from` named
+another. Its things are the project's, so it is set out in the project: from a thread there, or at
+the keeper's press here, which this server passes to that project's runtime (`stopped` says so when
+that runtime does not answer); setting it out from a thread elsewhere is refused in words. Since
+contract 1.40; an older server sends none.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `creature` | `string` | The creature's slug. |
+| `change` | `"kept" \| "forgotten"` | `kept` when the creature kept a scene, new or replacing one of the same name; `forgotten` when it was forgotten or left with a removed creature. |
+| `scene.creature` | `string` | The creature's slug. |
+| `scene.name` | `string` | As the creature named it, trimmed, at most 40 characters; one per creature and name, compared without regard to case. |
+| `scene.place` | `object \| null` | The place in the stead it belongs to, in the shape a setting's `place` has, or `null`. |
+| `scene.holds` | `object[]` | `{ kind, title }` for each thing it sets out, in order: `kind` a setting's `what.kind`, `title` its title or, without one, its ref. |
+| `scene.keptAt` | `string` | When it was kept (ISO 8601). |
+
+### model.wait
+
+Fires when a turn has waited two seconds on a model that is not answering yet, and again when that
+wait is over, so the stead can show what is holding work up; `GET /model-waits` serves the waits
+standing now for a cold start. Unlike the other server events it carries the waiting session's id
+in the envelope. Only waits the engine already observes are reported, and no queue is kept for
+this: a turn whose model request failed and that is waiting to try again. A wait is `limited` when
+the provider said it is rate limited (429) and `busy` when it said it is overloaded or timed out
+(408, or 500 and above). A provider that cannot be reached is not a busy model and is not reported.
+The wait lasts across the tries of one turn until the model answers or the turn ends. A wait
+shorter than two seconds is never reported, and `over` fires only for a wait that was. No retry
+time, attempt or count is carried, so nothing can count down. For display only. Since contract
+1.40; an older server sends none and serves no `GET /model-waits`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"waiting" \| "over"` | `waiting` once the wait has lasted two seconds; `over` when the model answered, the turn ended, or the session settled. |
+| `wait.session` | `string` | The waiting session, the same as the envelope's `sessionId`. |
+| `wait.creature` | `string \| null` | The creature whose work waits (a sub-agent's wait is its creature's), or `null`. |
+| `wait.server` | `string \| null` | The origin of the local model server it waits on, as `GET /models` gives a server's `root` (for example `http://127.0.0.1:11434`); `null` for a cloud provider. |
+| `wait.reason` | `"busy" \| "limited"` | Why the model is not answering yet. |
+| `wait.since` | `string` | When the wait began (ISO 8601). |
 
 ### routine.fired
 
@@ -1229,10 +1357,10 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | Field | Type | Meaning |
 |---|---|---|
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
-| `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. |
+| `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. A thread a bound project's runtime runs for a creature of the stead's home is that creature's: the setting carries its slug, its temperament is the mood when it names none, and the limits it counts against are the creature's own on that runtime (since contract 1.40; before, such a thread set out as no creature). |
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
 | `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`, and since contract 1.38 also `"workshop"`, `"mills"`, `"parcels"`, `"bots"`, `"campaigns"`, `"themes"`, `"posture"`, `"stead"`, `"terminal"` or `"screen"`. A session may name it in other words; the name here is always one of those. A `terminal` or `screen` acts on the keeper's machine, so the `show` that sets one out asks the keeper every time (`gate.ask` with `rule: "always"`) and nothing is proposed unless they allow it. |
-| `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop). A project is this workspace or, since contract 1.39, a folder in the creature's worksites (`GET /creature-worksites`), named by its path or by its folder name when no other of that creature's places shares the name; `creature` is the creature whose worksite it is and `directory` that worksite's `directory`, so a console finds the building by it. Naming a place grants nothing and reads nothing from the folder. Left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
+| `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop). A project is this workspace or, since contract 1.39, a folder in the creature's worksites (`GET /creature-worksites`), named by its path or by its folder name when no other of that creature's places shares the name; `creature` is the creature whose worksite it is and `directory` that worksite's `directory`, so a console finds the building by it. Naming a place grants nothing and reads nothing from the folder. Left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. In a thread a bound project's runtime runs for a home creature it is that creature's project place, `{ kind: "project", creature, directory }` with `directory` the worksite the thread most recently worked in (the row `GET /creature-worksites` at home carries with that project's id), or the thread's own directory before it has worked in one (since contract 1.40). A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
 | `setting.rung` | `"lantern" \| "card" \| "unfold" \| "stage"` | The rung proposed, `card` unless the tool call asked otherwise. A console may use a lower one; the glyph is rung zero and never proposed. |
 | `setting.why` | `string` | One sentence for the card, at most 200 characters; empty for a keeper's opening and, since contract 1.33, when the session gave none. |
 | `setting.at` | `string` | When it was set out (ISO 8601). |

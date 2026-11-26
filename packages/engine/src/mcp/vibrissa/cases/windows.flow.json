@@ -89,7 +89,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Withdrawn: {{plan}} has left the yard."
+            "text": "Withdrawn: {{plan}} has gone back to the porch."
           }
         ],
         "structuredContent": {

@@ -44,6 +44,7 @@ describe("the creatures port", () => {
       threads: 0,
       paused: null,
       inbound: "paired",
+      temperament: "brisk",
     });
     await host.create({ name: "Mo" });
     await host.openThread("pip", "thread");

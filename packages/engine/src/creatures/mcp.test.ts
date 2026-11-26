@@ -316,7 +316,7 @@ describe("a creature's windows placed over MCP", () => {
       agent: { name: "keywork", color: freeColorFor("keywork", new Set()) },
     };
     expect(first.isError).toBe(false);
-    expect(first.text).toMatch(/^Set out as a card; /);
+    expect(first.text).toMatch(/^Set out as a pane beside the conversation; /);
     expect(first.text).toContain(" square as keywork's.");
     expect(second.text).not.toContain("square");
     expect(settings.open()).toEqual([expect.objectContaining(pips), expect.objectContaining(pips)]);
@@ -383,7 +383,7 @@ describe("a creature's windows placed over MCP", () => {
     expect(arranged.text).toMatch(/^Arranged 1 pane as grid\./);
     expect((await connection.callTool("shown", {})).text).toContain(`"id":"${plan?.id}"`);
     expect(await connection.callTool("withdraw", { id: plan?.id })).toMatchObject({
-      text: `Withdrawn: ${plan?.id} has left the yard.`,
+      text: `Withdrawn: ${plan?.id} has gone back to the porch.`,
       isError: false,
     });
     expect(desk.events.map(({ type }) => type)).toEqual([

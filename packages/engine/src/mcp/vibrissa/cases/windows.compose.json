@@ -84,7 +84,7 @@
           {
             "type": "text",
             "text": {
-              "$regex": "^Withdrawn: [0-9a-f-]{36} has left the yard[.] It left calmly[.] Outside now: \"Option B\""
+              "$regex": "^Withdrawn: [0-9a-f-]{36} has gone back to the porch[.] It left calmly[.] Outside now: \"Option B\""
             }
           }
         ],

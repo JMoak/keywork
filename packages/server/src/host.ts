@@ -11,6 +11,7 @@ import type {
   ContextEditMark,
   CostRollup,
   CreatureHandoffsPort,
+  CreatureHonoursPort,
   CreatureLedgerPort,
   CreatureMcpPort,
   CreatureProjectsPort,
@@ -64,7 +65,9 @@ import type {
 import type { AnswerOutcome, AskVerdict, Denial, PendingAsk } from "./asks.ts";
 import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type { MeshConsole } from "./routes/mesh.ts";
+import type { ModelWaitsPort } from "./routes/model-waits.ts";
 import type { ModelsPort } from "./routes/models.ts";
+import type { CreatureScenesPort } from "./routes/scenes.ts";
 import type { ShowPort } from "./routes/show.ts";
 import type { WorkPort } from "./routes/work.ts";
 import type { WorkshopsPort } from "./routes/workshops.ts";
@@ -398,6 +401,9 @@ export interface SessionHost {
   creatureMcp?: CreatureMcpPort;
   handoffs?: CreatureHandoffsPort;
   worksites?: CreatureWorksitesPort;
+  honours?: CreatureHonoursPort;
+  scenes?: CreatureScenesPort;
+  modelWaits?: ModelWaitsPort;
   ledger?: CreatureLedgerPort;
   routines?: RoutineService;
   campaigns?: CampaignService;
