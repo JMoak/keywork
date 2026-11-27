@@ -380,6 +380,7 @@ function openCheckpoints(options: CompositionOptions): Promise<Checkpoints | und
   return Checkpoints.open({
     worktree: options.cwd,
     gitDir: options.checkpointsGitDir ?? snapshotGitDir(options.cwd, options.workspaceSlug),
+    notice: options.notice,
   }).catch((cause: unknown) => {
     options.reportCheckpointsUnavailable?.(toError(cause).message);
     return undefined;

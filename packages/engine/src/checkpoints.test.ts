@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
 import { describe, expect, it } from "vitest";
@@ -310,7 +311,47 @@ describe("Checkpoints", () => {
     expect(await second.undo()).toBe(true);
     expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("v2");
   });
+
+  it("takes its checkpoint past a lock: one left by an engine that stopped is removed, one a running engine holds is waited out", async () => {
+    const { worktree, gitDir } = await scratchProject();
+    const notices: string[] = [];
+    const store = await Checkpoints.open({
+      worktree,
+      gitDir,
+      notice: (text) => notices.push(text),
+    });
+    await seed(worktree, { "a.txt": "one" });
+    const lock = join(gitDir, "index.lock");
+    const holdLock = async (engine: number) => {
+      const marks = join(gitDir, "keywork-running");
+      const aMinuteAgo = new Date(Date.now() - 60_000);
+      await writeFile(lock, "");
+      await utimes(lock, aMinuteAgo, aMinuteAgo);
+      await mkdir(marks, { recursive: true });
+      await writeFile(join(marks, String(engine)), "");
+    };
+
+    await holdLock(stoppedProcess());
+    const first = await store.captureTree();
+    expect(notices).toEqual([expect.stringContaining("removed index.lock")]);
+
+    await holdLock(process.ppid);
+    await seed(worktree, { "a.txt": "two" });
+    const second = store.captureTree();
+    await new Promise((done) => setTimeout(done, 400));
+    expect(existsSync(lock)).toBe(true);
+    await rm(lock);
+
+    expect(await second).not.toBe(first);
+    expect(notices).toHaveLength(1);
+  });
 });
+
+function stoppedProcess(): number {
+  const { pid } = spawnSync(process.execPath, ["-e", ""]);
+  if (pid === undefined) throw new Error("no process to stand for a stopped engine");
+  return pid;
+}
 
 describe("Checkpoints reads", () => {
   it("lists changes since the session-start baseline with line counts", async () => {

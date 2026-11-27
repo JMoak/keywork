@@ -41,7 +41,9 @@ export interface CarriedAnswer {
   denial: Denial;
 }
 
-export type CarriedResume = (ask: KeptAsk, answer: CarriedAnswer) => void;
+// Resolves once the answer's turn has started; rejects when it could not start, and then the
+// question waits again as it was.
+export type CarriedResume = (ask: KeptAsk, answer: CarriedAnswer) => Promise<void>;
 
 export type AskVerdict = "granted" | "denied";
 export type { Denial, DenyReason } from "@keywork/engine";
@@ -171,8 +173,13 @@ export class AskQueue {
     if (waiting === undefined) {
       return this.settled.includes(callId) ? "already-settled" : "missing";
     }
+    if (waiting.answered === true) return "already-settled";
     const granted: AskScope = verdict === "granted" ? scope : "once";
     if (granted !== "once" && waiting.ask.carried === true) return "carried-once";
+    if (waiting.ask.carried === true) {
+      this.carryOn(waiting, verdict, denial);
+      return "settled";
+    }
     if (granted !== "once") {
       const refusal = grantRefusal(waiting.ask.tool, waiting.ask.rules);
       if (refusal !== undefined) return refusal;
@@ -209,27 +216,43 @@ export class AskQueue {
     const lapsesIn = Date.parse(kept.askedAt) + this.timeoutMs - this.now().getTime();
     if (!(lapsesIn > 0)) return;
     const ask: KeptAsk = { ...kept, carried: true };
-    const resolve = (confirmation: Confirmation) => this.carriedAnswered(ask, confirmation);
-    this.pending.set(ask.callId, { ask, resolve, timer: this.lapseAfter(ask.callId, lapsesIn) });
+    this.pending.set(ask.callId, {
+      ask,
+      resolve: () => undefined,
+      timer: this.lapseAfter(ask.callId, lapsesIn),
+    });
   }
 
-  private carriedAnswered(ask: KeptAsk, confirmation: Confirmation): void {
-    if (typeof confirmation === "boolean" || confirmation.gate !== "user") return;
-    const verdict = confirmation.approved ? "granted" : "denied";
-    if (verdict === "granted") {
-      const allowed = this.allowed.get(ask.sessionId) ?? [];
-      this.allowed.set(ask.sessionId, [...allowed, callKey(ask.tool, ask.arguments)]);
-    }
-    const denial: Denial = {
-      ...(confirmation.reason !== undefined && { reason: confirmation.reason }),
-      ...(confirmation.note !== undefined && { note: confirmation.note }),
-    };
-    this.resume?.(ask, { verdict, denial });
+  private carryOn(waiting: Waiting, verdict: AskVerdict, denial: Denial): void {
+    const { ask } = waiting;
+    const allowance = callKey(ask.tool, ask.arguments);
+    waiting.answered = true;
+    if (verdict === "granted") this.allow(ask.sessionId, allowance);
+    this.started(ask, { verdict, denial }).then(
+      () => this.settle(ask.callId, verdict, "once", denial),
+      () => {
+        waiting.answered = false;
+        if (verdict === "granted") this.spendAllowance(ask.sessionId, allowance);
+      },
+    );
+  }
+
+  private async started(ask: KeptAsk, answer: CarriedAnswer): Promise<void> {
+    if (this.resume === undefined) throw new Error("nothing here carries the work on");
+    await this.resume(ask, answer);
+  }
+
+  private allow(sessionId: string, key: string): void {
+    this.allowed.set(sessionId, [...(this.allowed.get(sessionId) ?? []), key]);
   }
 
   private takeAllowance(sessionId: string, call: ToolCallPart): boolean {
+    return this.spendAllowance(sessionId, callKey(call.name, call.arguments));
+  }
+
+  private spendAllowance(sessionId: string, key: string): boolean {
     const allowed = this.allowed.get(sessionId) ?? [];
-    const at = allowed.indexOf(callKey(call.name, call.arguments));
+    const at = allowed.indexOf(key);
     if (at < 0) return false;
     this.allowed.set(
       sessionId,
@@ -326,4 +349,5 @@ interface Waiting {
   ask: KeptAsk;
   resolve: (confirmation: Confirmation) => void;
   timer: ReturnType<typeof setTimeout>;
+  answered?: boolean;
 }

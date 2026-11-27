@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createTailnet,
@@ -20,10 +20,14 @@ import { describe, expect, it, vi } from "vitest";
 import { pingFailure } from "../../engine/src/mesh/transport/ping.ts";
 import { parseStatus } from "../../engine/src/mesh/transport/status.ts";
 import { recordedText } from "../../engine/src/mesh/transport/testing/recorded.ts";
+import { workspaceStateDir } from "./node/paths.ts";
 import { type ServedHostOptions, servedHost } from "./serve.ts";
+import { keptAsksFileIn } from "./serve-carried-asks.ts";
 import { followNotifications } from "./serve-notifications.ts";
 
 const tempDir = scratchDirs("keywork-carried-asks-");
+
+const underLoad = { timeout: 10_000 };
 
 describe("a question that waits through a stop", () => {
   it("waits again after the engine starts, and its answer lets that one call through once", async () => {
@@ -103,7 +107,7 @@ describe("a question that waits through a stop", () => {
     const pip = await killed.creatures?.create({ name: "Pip" });
     const conversation = (await killed.creatures?.read(pip?.slug ?? ""))?.conversation ?? "";
     await killed.prompt(conversation, "Rename largest to best in a.ts, b.ts and c.ts.", "queue");
-    await vi.waitFor(async () => expect(await killed.asks()).toHaveLength(1));
+    await vi.waitFor(async () => expect(await killed.asks()).toHaveLength(1), underLoad);
 
     const log = new EventLog({ capacity: 10_000 });
     const after = await served(log);
@@ -112,9 +116,7 @@ describe("a question that waits through a stop", () => {
         expect.objectContaining({ callId: "c1", carried: true }),
       ]);
       expect(await after.answerAsk("c1", "granted")).toBe("settled");
-      await vi.waitFor(() => expect(deliveredIn(log, conversation)).toHaveLength(1), {
-        timeout: 10_000,
-      });
+      await vi.waitFor(() => expect(deliveredIn(log, conversation)).toHaveLength(1), underLoad);
 
       expect(resultsIn(heard.find(carriesTheAnswer) ?? [])).toEqual({
         a1: expect.objectContaining({ isError: false }),
@@ -131,8 +133,10 @@ describe("a question that waits through a stop", () => {
           files: renamed.map((path) => ({ path, added: 1, deleted: 1 })),
         }),
       ]);
-      await vi.waitFor(async () =>
-        expect((await after.list()).find(({ id }) => id === conversation)?.working).toBe(false),
+      await vi.waitFor(
+        async () =>
+          expect((await after.list()).find(({ id }) => id === conversation)?.working).toBe(false),
+        underLoad,
       );
       const read = await after.read(conversation);
       expect(read?.outcomes.map(({ outcome }) => outcome)).toEqual(["shutdown", "completed"]);
@@ -140,7 +144,68 @@ describe("a question that waits through a stop", () => {
       await after.close?.();
       await killed.close?.();
     }
-  });
+  }, 60_000);
+
+  it("keeps the question waiting when its answer cannot start a turn, so the keeper can answer it again", async () => {
+    const cwd = await tempDir();
+    const sessionDir = await tempDir();
+    const userRoot = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "refused" }));
+    const notices: string[] = [];
+    const served = (log: EventLog) =>
+      servedHost({
+        cwd,
+        sessionDir,
+        userRoot,
+        projectTrusted: true,
+        provider: planWriter,
+        tailnet: recordedTailnet(),
+        permissions: () => "ask",
+        checkpoints: "off",
+        log,
+        notice: (text) => notices.push(text),
+      });
+    const before = await served(new EventLog());
+    const { id } = await before.create();
+    await before.prompt(id, "Write the plan.", "queue");
+    await vi.waitFor(async () => expect(await before.asks()).toHaveLength(1), underLoad);
+    await before.close?.();
+
+    const log = new EventLog();
+    const after = await served(log);
+    const keptFile = keptAsksFileIn(workspaceStateDir(userRoot, cwd));
+    const asked = await after.asks();
+    const kept = await readFile(keptFile, "utf8");
+    const [conversationFile = ""] = (await readdir(sessionDir))
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => join(sessionDir, name));
+    const aside = join(await tempDir(), "conversation.jsonl");
+    try {
+      expect(asked).toEqual([expect.objectContaining({ callId: "w1", carried: true })]);
+      await rename(conversationFile, aside);
+      expect(await after.answerAsk("w1", "granted")).toBe("settled");
+      await vi.waitFor(
+        () => expect(notices).toContainEqual(expect.stringMatching(/w1 could not start its turn/)),
+        underLoad,
+      );
+
+      expect(await after.asks()).toEqual(asked);
+      expect(await readFile(keptFile, "utf8")).toBe(kept);
+      expect(payloadsIn(log, id, "gate.permission")).toEqual([]);
+      expect(existsSync(join(cwd, "plan.md"))).toBe(false);
+
+      await rename(aside, conversationFile);
+      expect(await after.answerAsk("w1", "granted")).toBe("settled");
+      await vi.waitFor(
+        async () => expect((await after.asks()).map((ask) => ask.callId)).toEqual(["w3"]),
+        underLoad,
+      );
+      expect(existsSync(join(cwd, "plan.md"))).toBe(true);
+    } finally {
+      await after.close?.();
+    }
+  }, 60_000);
 
   it("rings once: the engine starting again does not announce it a second time", () => {
     let kept: readonly KeptAsk[] = [];

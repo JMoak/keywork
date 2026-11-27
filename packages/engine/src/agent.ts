@@ -822,8 +822,12 @@ export class Agent {
 
   private async checkpointOnce(): Promise<void> {
     if (this.checkpointed) return;
+    await this.guard?.beforeMutation?.().catch((cause: unknown) => {
+      throw new Error(
+        `not run: the checkpoint before this change could not be taken (${errorOf(cause).message}), so nothing changed. Making the call again tries the checkpoint again.`,
+      );
+    });
     this.checkpointed = true;
-    await this.guard?.beforeMutation?.();
   }
 }
 

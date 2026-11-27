@@ -2,11 +2,13 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
+import { type GitRun, inTurn, runPastLocks, type ShadowRepo } from "./checkpoint-locks.ts";
 
 export interface CheckpointsOptions {
   worktree: string;
   gitDir: string;
   limit?: number;
+  notice?: ((text: string) => void) | undefined;
 }
 
 export interface ChangedPath {
@@ -70,17 +72,25 @@ export class Checkpoints implements CheckpointReads {
   private turnsAttributed = 0;
   private baselineTree: string | undefined;
   private turnTag: string | undefined;
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly repo: ShadowRepo;
 
   private constructor(
     private readonly worktree: string,
     private readonly gitDir: string,
     private readonly limit: number,
-  ) {}
+    notice: ((text: string) => void) | undefined,
+  ) {
+    this.repo = { gitDir, notice };
+  }
 
   static async open(options: CheckpointsOptions): Promise<Checkpoints> {
-    const store = new Checkpoints(options.worktree, options.gitDir, options.limit ?? defaultLimit);
-    await store.initShadowRepo();
+    const store = new Checkpoints(
+      options.worktree,
+      options.gitDir,
+      options.limit ?? defaultLimit,
+      options.notice,
+    );
+    await store.serialized(() => store.initShadowRepo());
     return store;
   }
 
@@ -306,9 +316,7 @@ export class Checkpoints implements CheckpointReads {
   }
 
   private serialized<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.queue.then(task, task);
-    this.queue = run.catch(() => {});
-    return run;
+    return inTurn(this.repo, task);
   }
 
   private git(...args: string[]): Promise<string> {
@@ -319,7 +327,13 @@ export class Checkpoints implements CheckpointReads {
     return this.gitIn(join(this.gitDir, "index"), args);
   }
 
-  private gitIn(index: string, args: readonly string[], input?: string): Promise<string> {
+  private async gitIn(index: string, args: readonly string[], input?: string): Promise<string> {
+    const run = await runPastLocks(this.repo, () => this.spawnGit(index, args, input));
+    if (run.code === 0) return run.stdout;
+    throw new Error(`git ${args[0]} failed: ${run.stderr.trim() || `exit ${run.code}`}`);
+  }
+
+  private spawnGit(index: string, args: readonly string[], input?: string): Promise<GitRun> {
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn("git", args, {
         cwd: this.worktree,
@@ -341,10 +355,7 @@ export class Checkpoints implements CheckpointReads {
       });
       child.on("error", rejectPromise);
       child.stdin.end(input);
-      child.on("close", (code) => {
-        if (code === 0) resolvePromise(stdout);
-        else rejectPromise(new Error(`git ${args[0]} failed: ${stderr.trim() || `exit ${code}`}`));
-      });
+      child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
     });
   }
 }

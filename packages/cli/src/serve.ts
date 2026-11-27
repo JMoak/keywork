@@ -953,13 +953,14 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
   void hosted
     .keepManners()
     .catch((cause: unknown) => notice(`temperaments were not kept: ${toError(cause).message}`));
-  gate.asks.resumeWith((ask, answer) => {
-    sessions
-      .carryOn(ask, answer)
-      .catch((cause: unknown) =>
-        notice(`the answer to ${ask.callId} did not move its work: ${toError(cause).message}`),
+  gate.asks.resumeWith((ask, answer) =>
+    sessions.carryOn(ask, answer).catch((cause: unknown) => {
+      notice(
+        `the answer to ${ask.callId} could not start its turn, so the question waits again: ${toError(cause).message}`,
       );
-  });
+      throw cause;
+    }),
+  );
   gate.asks.decideWith(
     keeperDecider({
       nodeState: node.state,
@@ -1300,7 +1301,6 @@ class LiveSessions {
   private readonly changes: ChangesFeed;
   private readonly frozenChanges = new Map<string, ChangesSummary>();
   private readonly confinements = new Map<string, ToolPosture>();
-  private readonly answering = new Map<string, KeptAsk>();
   private readonly unjournalGrants: () => void;
   private workspace: Promise<ServedWorkspace> | undefined;
 
@@ -1472,14 +1472,12 @@ class LiveSessions {
   }
 
   async carryOn(ask: KeptAsk, answer: CarriedAnswer): Promise<void> {
-    this.answering.set(ask.callId, ask);
-    const live = await this.open(ask.sessionId).finally(() => this.answering.delete(ask.callId));
-    if (live === undefined) return;
-    try {
-      await live.carryOn(ask, answer);
-    } finally {
-      this.gate.asks.forgetAllowances(ask.sessionId);
+    const live = await this.open(ask.sessionId);
+    if (live === undefined) {
+      throw new Error(`its conversation ${ask.sessionId.slice(0, 8)} could not be opened`);
     }
+    const { ended } = await live.carryOn(ask, answer);
+    void ended.finally(() => this.gate.asks.forgetAllowances(ask.sessionId));
   }
 
   async open(id: string): Promise<LiveSession | undefined> {
@@ -1689,8 +1687,7 @@ class LiveSessions {
       botNamed: workspace.botNamed,
       ...creature,
     };
-    const waiting = [...this.gate.asks.list(), ...this.answering.values()];
-    await settleStoppedSession(store, waiting, composition.checkpoints);
+    await settleStoppedSession(store, this.gate.asks.list(), composition.checkpoints);
     const live = new LiveSession(store, shell, runtime);
     this.live.set(id, live);
     await workspace.attached(store);
@@ -1932,12 +1929,12 @@ class LiveSession {
     return outcome;
   }
 
-  async carryOn(ask: KeptAsk, answer: CarriedAnswer): Promise<void> {
+  async carryOn(ask: KeptAsk, answer: CarriedAnswer): Promise<{ ended: Promise<void> }> {
+    await this.prepareProvider();
     const verdict = this.recordCarriedVerdict(ask, answer);
     this.agent.bus.emit("gate.permission", { decision: verdict.decision });
     const origin = answerOriginOf(ask, answer);
     const text = carriedPrompt(ask, answer);
-    await this.prepareProvider();
     await this.report(text, origin, "frame");
     this.staged = undefined;
     const turn = this.agent.send(text, { origin }).then(
@@ -1946,7 +1943,7 @@ class LiveSession {
     );
     this.settled = this.settled.then(() => turn);
     this.announce();
-    await this.settled;
+    return { ended: this.settled };
   }
 
   private recordCarriedVerdict(ask: KeptAsk, answer: CarriedAnswer): AnsweredAsk {
