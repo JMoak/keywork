@@ -7,7 +7,7 @@
 │                               ││                                                                 │
 │                               ││ █ shout the middle line                                         │
 │                               ││ ▓ Shouting the middle line of notes.txt now.                    │
-│                               ││ ░ write notes.txt · failed · declined by user · not now, thoug… │
+│                               ││ ░ write notes.txt · failed · declined by user · not now         │
 │                               ││ ▓ Left it alone.                                                │
 │                               ││   turn 1                                                        │
 │                               ││ █ shout the middle line                                         │
