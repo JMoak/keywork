@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import {
   type Agent,
@@ -16,6 +16,7 @@ import {
   type CreatureMail,
   CreatureProjectError,
   type CreatureSessionTag,
+  carriedTurnsOf,
   childDirFor,
   claimSession,
   compactionDue,
@@ -27,23 +28,33 @@ import {
   creatureLedger,
   creatureMail,
   creatureScenes,
+  creatureStorehouse,
   creatureTagOf,
   creatureWorksites,
+  cutTurnAlong,
   decideForKeeper,
+  deliveriesFileIn,
   type EffortLevel,
+  fileHeldSource,
+  fileSettingsSource,
   flushMemoryNow,
   formatReference,
   type GrantRule,
   handoffsFileIn,
+  heldNoticesFileIn,
   honoursFileIn,
   hostWorkshop,
   type InferenceBinding,
   isEffortLevel,
   isPromptEntry,
+  type TurnFacts as JournaledTurnFacts,
   type JournalTap,
+  journalEvents,
+  type KeeperAway,
   type KeeperOutcome,
   type KeeperTap,
   keeperContextOf,
+  keeperNotifications,
   knownCostNanos,
   type LedgerConversationTag,
   latestSessionTotals,
@@ -57,6 +68,7 @@ import {
   type ModelChangeEntry,
   type ModelReference,
   type Mood,
+  mannerOf,
   messageText,
   modelReferenceOf,
   type PermissionLedger,
@@ -75,6 +87,8 @@ import {
   readMeasured,
   recordHunkVerdict,
   recordKeeperVerdict,
+  recordTalkingChoice,
+  recordTurnProgress,
   rememberFrom,
   restorePointOf,
   type SceneShelf,
@@ -87,30 +101,45 @@ import {
   type ShowTarget,
   type ShowThread,
   type StagedItem,
+  sameTalkingChoice,
   scenesFileIn,
   scopeContains,
   sessionPosture,
+  stoppedBeforeItRan,
+  stoppedWhileItRan,
   type Tailnet,
+  type TalkingChoice,
+  type TemperamentSeat,
+  type TemperamentSource,
   type ThreadOutcome,
   type ToolGuard,
   type ToolPosture,
   type ToolScope,
+  type TurnCompletion,
   type TurnEnding,
+  type TurnProgress,
   type TurnSettlement,
+  talkingChoiceOf,
   tapJournal,
   tapKeeperVerdicts,
-  temperamentOf,
+  temperamentFactsOf,
+  temperamentSeatOf,
   type Usage,
   type VerdictMark,
+  visitorDeliveriesFileIn,
   visitorLedgerFileIn,
   type WakeScheduler,
   type WorkspaceSessionRef,
+  waitingThroughTheStop,
+  workAcross,
   worksitesFileIn,
 } from "@keywork/engine";
 import {
   type AskDecider,
+  type AskKeeping,
   AskQueue,
   type ByteRange,
+  type CarriedAnswer,
   ChangesFeed,
   type ChangesSource,
   type ChangesSummary,
@@ -124,6 +153,7 @@ import {
   type FlushReport,
   type ForgetReport,
   issueToken,
+  type KeptAsk,
   type LeafOutcome,
   listen,
   loggedMessages,
@@ -178,10 +208,20 @@ import type { HouseMeshConsole } from "./node/compose.ts";
 import { workspaceStateDir } from "./node/paths.ts";
 import { defaultSessionDir, keyworkHome, workspaceIdentity } from "./paths.ts";
 import { servedCampaigns } from "./serve-campaigns.ts";
+import {
+  answerOriginOf,
+  askKeepingAt,
+  carriedPrompt,
+  carriedVerdict,
+  keptAsksFileIn,
+  unansweredCalls,
+} from "./serve-carried-asks.ts";
 import { cataloguedInventory, catalogueFileOf, openRouterCatalogue } from "./serve-catalogue.ts";
 import { sessionChanges } from "./serve-changes.ts";
+import { followConnections } from "./serve-connections.ts";
 import { requireProjectModel } from "./serve-conversation-model.ts";
 import {
+  homeMannersOver,
   homeScenesOver,
   servedCreatureProjects,
   tellingTheHome,
@@ -195,9 +235,11 @@ import {
   type ServedCreatureSessions,
   type SettledThread,
   servedCreatures,
+  workElsewhereOf,
 } from "./serve-creatures.ts";
 import { followHonours } from "./serve-honours.ts";
 import {
+  askedIn,
   type CreatureSessionFacts,
   choreFactsOver,
   conversationEnder,
@@ -215,11 +257,18 @@ import { servedMemory, stagedInbox } from "./serve-memory.ts";
 import { followModelWaits, localServerOf } from "./serve-model-waits.ts";
 import {
   creatureInitialProvider,
+  creatureModelReach,
+  creatureTalkingChoice,
+  modelCheckedCreatures,
+  modelChoiceCheck,
+  modelsReported,
   refreshableModels,
   selectedCreatureProvider,
   unavailableSelectedProvider,
 } from "./serve-models.ts";
 import { type MeteredTurn, type NodeInventorySeams, servedNode } from "./serve-node.ts";
+import { creatureNames, followNotifications } from "./serve-notifications.ts";
+import { servedPromises, type TurnFacts, workOf } from "./serve-promises.ts";
 import { type NeighbourSession, restorePreviewOf, sessionPathsFromTurn } from "./serve-restore.ts";
 import {
   creatureDirectoryOver,
@@ -236,15 +285,20 @@ import {
   workspaceSettingsFile,
 } from "./serve-show.ts";
 import { loggedCostNanos, SpendLedger } from "./serve-spend.ts";
+import { type CompletedTurn, followDeliveries } from "./serve-storehouse.ts";
 import { type ServedSession, surfacePorts } from "./serve-surfaces.ts";
+import { followCreatureTalking, withTalking } from "./serve-talking.ts";
 import { servedTree } from "./serve-tree.ts";
 import {
+  actingCreatureOf,
   fileExistsIn,
+  homeCreaturesOf,
   projectThreadTag,
   projectThreadType,
   sameHandle,
   type VisitingSeat,
   visitingSeat,
+  workingCreatureOf,
 } from "./serve-visiting.ts";
 import { followWorksites, type WorksiteSessionFacts, worksiteHistory } from "./serve-worksites.ts";
 import { composeServedWorkspace, type ServedWorkspace } from "./serve-workspace.ts";
@@ -273,7 +327,7 @@ import {
   scanSessions,
   summarize,
 } from "./sessions/store.ts";
-import { freezeTurn } from "./sessions/turn-journal.ts";
+import { freezeTurnFacts, turnFactsAt } from "./sessions/turn-journal.ts";
 import { excerpt } from "./text.ts";
 import { keyworkVersion } from "./version.ts";
 import { WorkspaceInUseError, withWorkspaceWriter } from "./workspace-ownership.ts";
@@ -298,6 +352,7 @@ export interface HostOptions {
   currentProvider?: (() => Provider) | undefined;
   refreshInference?: (() => Promise<void>) | undefined;
   permissions: PermissionResolver;
+  keeperRules?: (() => readonly PermissionRule[]) | undefined;
   inference?: SessionInference | undefined;
   inventory?: NodeInventorySeams | undefined;
   presets?: PresetHost | undefined;
@@ -493,7 +548,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     userRoot: options.userRoot ?? homedir(),
   };
   const notice = (text: string) => options.notice?.(`keywork serve: ${text}`);
-  const gate = servedGate(options);
+  const gate = servedGate(options, askKeepingAt(keptAsksFileIn(workspaceStateOf(place))));
   const answers = new ProviderAnswerBook();
   const catalogue = openRouterCatalogue({
     file: catalogueFileOf(place.userRoot),
@@ -518,12 +573,24 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
             answers,
           },
   });
-  if (options.inventory !== undefined) void catalogue.refresh();
+  const keeperSettings = fileSettingsSource(node.state, notice);
+  const notifications = keeperNotifications({
+    settings: keeperSettings,
+    held: fileHeldSource(heldNoticesFileIn(workspaceStateOf(place))),
+  });
+  const away = () => notifications.away();
   const workshops = node.workshops.forWorkspace(options.cwd);
   const registry = creatureRegistryAt(
     place,
     async () => (await sessions.composed()).composition.extensions.bots,
   );
+  const ownTemperaments: TemperamentSource = {
+    read: async (slug) => {
+      const found = await registry.read(slug);
+      return found === undefined ? undefined : temperamentFactsOf(found.file);
+    },
+    takeManner: (slug, temperament) => hosted.takeManner(slug, temperament),
+  };
   let stagedOf: (() => readonly StagedItem[]) | undefined;
   const sessionDir = sessionDirOf(options);
   const ownsSettings = options.settings === undefined;
@@ -534,10 +601,35 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     registry,
     workshops,
     grants: (sessionId) => grantsHeldBy(gate.ledger, sessionId),
+    keeperRules: () => options.keeperRules?.() ?? [],
     wakes: (): WakeScheduler | undefined => routines?.service,
     payload: async (sessionId) => routines?.service.payloadOf(sessionId),
     mail: () => mail,
     staged: () => stagedOf?.() ?? [],
+    notice,
+  });
+  const inherited =
+    options.inference === undefined
+      ? undefined
+      : () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider);
+  const modelCheck =
+    inventory === undefined
+      ? undefined
+      : modelChoiceCheck(() => ({ registrations: inventory.registrations(), ...node.policy }));
+  const promises = servedPromises({
+    workspace: options.cwd,
+    workspaceState: workspaceStateOf(place),
+    log,
+    registry,
+    creatures: { update: (slug, patch) => checkedCreatures.update(slug, patch) },
+    routines: () => routines?.service,
+    workshops,
+    grants: () => node.mesh?.grants,
+    models: node.models,
+    registrations: () => inventory?.registrations() ?? [],
+    headersFor: options.inventory?.headersFor,
+    inherit: () => inherited?.(),
+    check: modelCheck,
     notice,
   });
   const modelOptions = {
@@ -545,38 +637,49 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     inference: options.inference,
     policy: node.policy,
     registrations: inventory?.registrations,
-    inherit:
-      options.inference === undefined
-        ? undefined
-        : () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
+    inherit: inherited,
     projectWork: (store: SessionStore) => projectThreadTag(store.entries()) !== undefined,
+    ask: promises.watchedAsk(node.ask),
+    reach: promises.watchedAsk(node.reach),
   };
   const places = steadPlaces({ registry, ...place, worksites: () => worksites });
   const thisWorkspace = workspaceIdentity(options.cwd, options.workspaceSlug);
+  const carriedAsk = (session: string, callId: string) =>
+    gate.asks
+      .list()
+      .some((ask) => ask.carried === true && ask.sessionId === session && ask.callId === callId);
+  const carriedIn = (session: string) =>
+    gate.asks.list().some((ask) => ask.carried === true && ask.sessionId === session);
   const visitorLedger = creatureLedger({
     file: visitorLedgerFileIn(workspaceStateOf(place)),
     creatures: { subscribe: () => () => undefined },
     exists: async () => true,
     notice,
+    stillWaiting: carriedAsk,
+    stillWorking: carriedIn,
   });
   const visits = visitorThreads(visitorLedger);
   const sessions = new LiveSessions(options, gate, {
     seatFor: async (store) => projectThreadSeat(store) ?? localSeat(store),
     initialProvider: creatureInitialProvider(modelOptions),
+    talkingChoice: creatureTalkingChoice(modelOptions),
+    reach: creatureModelReach(modelOptions),
     providerFor: selectedCreatureProvider(modelOptions),
     settings: shown.settings,
     places,
     scenes: () => scenes,
     temperamentOf: async (creature) => {
       const found = await registry.read(creature);
-      return found === undefined ? undefined : temperamentOf(found.file);
+      return found === undefined ? undefined : mannerOf(found.file);
     },
+    temperaments: (creature) => temperamentSeatOf(ownTemperaments, creature),
     visiting: (creature, store) =>
       visitingSeat(
         {
           userRoot: place.userRoot,
           workspace: thisWorkspace,
           homeScenes: homeScenesOver(place.userRoot),
+          homeManners: homeMannersOver(place.userRoot),
           worksiteOf: (conversation) => worksites.workingIn(conversation),
           stillThere: (what) => scenes.stillThere(what),
         },
@@ -584,17 +687,32 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
         { id: store.header.id, cwd: store.header.cwd },
       ),
     fileExists: fileExistsIn(options.cwd),
-    projectThreadOpened: ({ creature, text }, store) =>
-      visits.opened(creature.slug, store.header.id, store.header.cwd, text),
+    away,
+    projectThreadOpened: ({ creature, text }, store) => {
+      if (names.nameOf(creature.slug) === undefined) names.learn();
+      visits.opened(creature.slug, store.header.id, store.header.cwd, text);
+    },
     meter: (turn) => {
       node.usage.record(turn);
       answers.answered(turn.provider);
+      promises.turnAnswered({ ...turn, work: null });
     },
-    failed: (provider, error) => answers.failed(provider, error),
+    failed: (turn, error) => {
+      answers.failed(turn.provider, error);
+      promises.turnFailed(turn, error);
+    },
+    completed: (turn) => {
+      const delivery = deliveries.completed(turn);
+      if (typeof delivery === "string" && projectThreadTag(turn.store.entries()) !== undefined)
+        visits.delivered(turn);
+      return delivery;
+    },
     settled: (thread) => {
       shown.settings.rested(thread.id);
       worksites.rested(thread.id);
       if (projectThreadTag(thread.store.entries()) !== undefined) visits.settled(thread);
+      const working = actingCreatureOf(thread.store.entries());
+      if (working !== null) hosted.worked(working);
       void finishThreadQuietly(thread);
     },
     keeper: (answered) => recordKeeperVerdict(answered, { nodeState: node.state }),
@@ -628,10 +746,21 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     sessions: creatureSessionsOf(sessions, gate, log),
     workshops,
     nextRun: async (slug) => routines?.nextRun(slug),
-    spentToday: async (slug, date) => node.usage.spentOn(slug, date),
+    workedToday: (slug, date) => node.usage.workedOn(slug, date),
+    elsewhere: async (slug) => workElsewhereOf(await worksites.list(), slug),
     notice,
   });
   const conversationSessions = ledgerConversationSessions(sessions, hosted, log);
+  const storehouse = creatureStorehouse({
+    file: deliveriesFileIn(workspaceStateOf(place)),
+    creatures: hosted,
+    notice,
+  });
+  const visitorStorehouse = creatureStorehouse({
+    file: visitorDeliveriesFileIn(workspaceStateOf(place)),
+    notice,
+  });
+  const deliveries = followDeliveries(log, storehouse, visitorStorehouse);
   const ledger = creatureLedger({
     file: workspaceLedgerFile(place),
     creatures: hosted,
@@ -639,17 +768,27 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     chore: choreFactsOver(() => routines?.service, options.cwd),
     notice,
     conversationEnded: conversationEnder(conversationSessions, notice),
+    stillWaiting: carriedAsk,
+    stillWorking: carriedIn,
   });
+  const visitorAsks: Pick<CreatureLedger, "asked" | "askSettled"> = {
+    asked: (ask) => {
+      const thread = ask.parent ?? ask.session;
+      visits.asking({ ...ask, session: thread, asked: sessions.askedIn(thread) });
+      visitorLedger.asked(ask);
+    },
+    askSettled: (session, callId, answer) => visitorLedger.askSettled(session, callId, answer),
+  };
   const unfollowLedger = [
     followAsks(gate.asks, ledger, (id) => sessions.creatureSessionOf(id)),
     followLedgerEvents(log, ledger, notice),
-    followAsks(gate.asks, visitorLedger, (id) => sessions.visitingSessionOf(id)),
+    followAsks(gate.asks, visitorAsks, (id) => sessions.visitingSessionOf(id)),
     followLedgerEvents(log, visitorLedger, notice),
     ...(options.managedHome === true
       ? []
       : tellingTheHomeOfVisits(
           log,
-          visitorLedger,
+          [visitorLedger, visitorStorehouse],
           (id) => sessions.visitingSessionOf(id) !== undefined,
           tellingTheHome(place.userRoot, thisWorkspace),
         )),
@@ -724,12 +863,18 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
         await creatures.threads.conversationFor(request.creature.slug),
       ),
     projectWorksites: {
-      visited: (project, rows) => worksites.visited(project, rows),
+      visited: (project, rows) => {
+        worksites.visited(project, rows);
+        for (const row of rows) hosted.worked(row.creature);
+      },
       quiet: (project) => worksites.projectQuiet(project),
     },
     projectHonours: { visited: (project, work) => honours.visited(project, work) },
     projectLedger: {
       visited: (project, creature, entries) => ledger.visited(project, creature, entries),
+    },
+    projectDeliveries: {
+      visited: (project, delivered) => storehouse.visited(project, delivered),
     },
   });
   void creatureSlugs()
@@ -748,17 +893,73 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     gate,
     keptConversation(creatures.threads, async (slug) => (await registry.read(slug)) !== undefined),
   );
+  const names = creatureNames(
+    {
+      list: async () => [
+        ...(options.managedHome === true ? [] : await homeCreaturesOf(place.userRoot)),
+        ...(await registry.list()),
+      ],
+    },
+    creatures,
+    notice,
+  );
+  await names.ready;
+  const noticed = followNotifications({
+    notifications,
+    asks: gate.asks,
+    log,
+    creatureOf: (id) => workingSession(id)?.creature ?? null,
+    nameOf: (creature) => names.nameOf(creature),
+    chore: async (creature, routineId) => {
+      const view = await routines?.service.read(creature, routineId);
+      if (view === undefined || typeof view === "string" || view.routine === null) return undefined;
+      return { title: view.routine.title, notify: view.routine.notify, lastRun: view.lastRun };
+    },
+    notice,
+  });
   const routines: ServedRoutines | undefined = options.projectTrusted
     ? await servedRoutines({
         state: node.routines,
         workspace: options.cwd,
-        sessions: routineSessionsOf(sessions, verbs, creatures, gate, ledger),
+        sessions: routineSessionsOf(sessions, verbs, creatures, gate, ledger, log),
         creatures,
         directory: creatureDirectoryOver(registry),
         log,
+        notifications: () => keeperSettings.read(),
       })
     : undefined;
-  if (routines !== undefined) await ledger.choresNeeding(routines.service.needsYou());
+  if (routines !== undefined) {
+    noticed.knownNeeds(routines.service.needsYou());
+    await ledger.choresNeeding(routines.service.needsYou());
+  }
+  const checkedCreatures = modelCheckedCreatures(creatures, modelCheck, () =>
+    modelsReported(node.models, inventory?.registrations() ?? [], options.inventory?.headersFor),
+  );
+  const talking =
+    inventory === undefined
+      ? undefined
+      : followCreatureTalking({
+          log,
+          creatures,
+          registry,
+          conversationOf: (slug) => creatures.threads.conversationOf(slug),
+          storeOf: async (id) => (await sessions.bound(id))?.store,
+          inherit: () => inheritedReferenceOf(options.currentProvider?.() ?? options.provider),
+          environment: () => ({ registrations: inventory.registrations(), ...node.policy }),
+          ask: node.ask,
+          notice,
+        });
+  noticed.followQuestions(promises.book, await promises.start(await creatureSlugs()));
+  void hosted
+    .keepManners()
+    .catch((cause: unknown) => notice(`temperaments were not kept: ${toError(cause).message}`));
+  gate.asks.resumeWith((ask, answer) => {
+    sessions
+      .carryOn(ask, answer)
+      .catch((cause: unknown) =>
+        notice(`the answer to ${ask.callId} did not move its work: ${toError(cause).message}`),
+      );
+  });
   gate.asks.decideWith(
     keeperDecider({
       nodeState: node.state,
@@ -774,6 +975,16 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     composition: () => Promise.resolve(composition),
     session: (id) => sessions.bound(id),
   });
+  const unfollowConnections =
+    options.refreshInference === undefined
+      ? () => undefined
+      : followConnections({
+          dir: keyworkHome(place.userRoot),
+          refresh: options.refreshInference,
+          changed: () =>
+            log.record("", "models.changed", { node: hostname(), reason: "connections" }),
+          notice,
+        });
   const homeWorkspace = {
     ...surfaces.workspace,
     report: async () =>
@@ -792,7 +1003,8 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     ...(options.managedHome && { workspace: homeWorkspace }),
     ...projectPorts,
     memory: servedMemory({ memory: composition.memory, arcs, bots }),
-    creatures,
+    creatures: withTalking(checkedCreatures, talking),
+    promises: promises.port,
     handoffs,
     worksites,
     honours,
@@ -807,7 +1019,7 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
           : creatures.threads.conversationFor(slug),
       temperamentOf: async (slug) => {
         const found = await registry.read(slug);
-        return found === undefined ? undefined : temperamentOf(found.file);
+        return found === undefined ? undefined : mannerOf(found.file);
       },
       asksTheKeeper: keeperAskOver(gate.asks, log),
       inProject: setOutInProject,
@@ -818,6 +1030,12 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       },
     }),
     modelWaits,
+    deliveries: {
+      list: () => storehouse.list(),
+      opened: (id) => storehouse.opened(id),
+      subscribe: (listener) => storehouse.subscribe(listener),
+      visiting: async () => (await visitorStorehouse.list()).deliveries,
+    },
     ledger: {
       ...conversingLedger(ledger, conversationSessions),
       visiting: async (_visitor, creature) =>
@@ -831,8 +1049,10 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       places,
       scenes,
       asksTheKeeper: keeperAskOver(gate.asks, log),
+      away,
     }),
     ...(routines !== undefined && { routines: routines.service }),
+    notifications,
     models: refreshableModels(node.models, options.refreshInference),
     campaigns,
     workshops,
@@ -840,6 +1060,8 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
     show: shown.settings,
     close: async () => {
       unhosted();
+      hosted.close();
+      unfollowConnections();
       handoffs.close();
       unfollowWorksites();
       unfollowHonours();
@@ -848,6 +1070,11 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       honours.close();
       scenes.close();
       modelWaits.close();
+      talking?.close();
+      noticed.close();
+      names.close();
+      promises.close();
+      notifications.close();
       if (ownsSettings) shown.close();
       routines?.stop();
       const closingCampaigns = campaigns.close();
@@ -855,9 +1082,13 @@ export async function servedHost(options: ServedHostOptions): Promise<SessionHos
       await closingCampaigns;
       await routines?.close();
       await node.usage.flush();
+      node.learning.close();
       for (const unfollow of unfollowLedger) unfollow();
       ledger.close();
       visitorLedger.close();
+      deliveries.close();
+      storehouse.close();
+      visitorStorehouse.close();
     },
   };
 }
@@ -867,11 +1098,15 @@ interface ServedGate {
   ledger: PermissionLedger;
 }
 
-function servedGate(options: HostOptions & { log: EventLog }): ServedGate {
+function servedGate(
+  options: HostOptions & { log: EventLog },
+  keeping?: AskKeeping | undefined,
+): ServedGate {
   const ledger = workspacePermissions({ ...options, user: options.permissions });
   const asks = new AskQueue({
     grants: servedGrants(ledger, options.log),
     ...(options.askTimeoutMs !== undefined && { timeoutMs: options.askTimeoutMs }),
+    ...(keeping !== undefined && { keeping }),
   });
   return { asks, ledger };
 }
@@ -1001,6 +1236,8 @@ interface SessionRuntime {
   inference: SessionInference | undefined;
   fallback: Provider;
   initialProvider(): Promise<Provider>;
+  talkingChoice(): Promise<TalkingChoice | undefined>;
+  reach(reference: ModelReference): Promise<void>;
   flushes: SessionFlushes;
   turn: TurnCheckpoint;
   notice(text: string): void;
@@ -1010,30 +1247,38 @@ interface SessionRuntime {
   reseat(): Promise<void>;
   meter(usage: Usage, provider: Provider): void;
   failed(error: Error, provider: Provider): void;
+  completed(turn: TurnWork): string | null | undefined;
   settled(outcome: ThreadOutcome, lastReply: string): void;
   keeper: ((answered: AnsweredAsk) => Promise<KeeperOutcome>) | undefined;
 }
 
+type TurnWork = Omit<CompletedTurn, "id" | "store">;
+
 type CreatureSeams = Pick<
   SessionRuntime,
-  "seat" | "reseat" | "meter" | "failed" | "settled" | "keeper"
+  "seat" | "reseat" | "meter" | "failed" | "completed" | "settled" | "keeper"
 >;
 
 interface SessionSeams {
   seatFor?(store: SessionStore): Promise<CreatureSeat | undefined>;
   initialProvider?(store: SessionStore): Promise<Provider | undefined>;
+  talkingChoice?(store: SessionStore): Promise<TalkingChoice | undefined>;
+  reach?(store: SessionStore, reference: ModelReference): Promise<void>;
   providerFor?(store: SessionStore, binding: InferenceBinding): Provider;
   meter?(turn: MeteredTurn): void;
-  failed?(provider: string, error: Error): void;
+  failed?(turn: TurnFacts, error: Error): void;
+  completed?(turn: CompletedTurn): string | null | undefined;
   settled?(thread: SettledThread): void;
   keeper?(answered: AnsweredAsk): Promise<KeeperOutcome>;
   settings?: ShowSettings | undefined;
   places?: PlaceBook | undefined;
   scenes?(): SceneShelf | undefined;
   temperamentOf?(creature: string): Promise<Mood | undefined>;
+  temperaments?(creature: string): TemperamentSeat;
   visiting?(creature: CreatureHandle, store: SessionStore): VisitingSeat;
   fileExists?(ref: string): Promise<boolean>;
   projectThreadOpened?(request: ProjectWorkRequest, store: SessionStore): void;
+  away?(): KeeperAway | undefined;
 }
 
 function projectThreadSeat(store: SessionStore): CreatureSeat | undefined {
@@ -1055,6 +1300,7 @@ class LiveSessions {
   private readonly changes: ChangesFeed;
   private readonly frozenChanges = new Map<string, ChangesSummary>();
   private readonly confinements = new Map<string, ToolPosture>();
+  private readonly answering = new Map<string, KeptAsk>();
   private readonly unjournalGrants: () => void;
   private workspace: Promise<ServedWorkspace> | undefined;
 
@@ -1147,6 +1393,7 @@ class LiveSessions {
   async openClaimed(tag: CreatureSessionTag): Promise<string> {
     const store = await this.newStore();
     await claimSession(store, tag);
+    await followTalkingChoice(store, await this.seams.talkingChoice?.(store));
     return (await this.adopt(store)).id;
   }
 
@@ -1224,6 +1471,17 @@ class LiveSessions {
     if (grants.length > 0) this.gate.ledger.record(id, "session", acceptedGrantRules(grants));
   }
 
+  async carryOn(ask: KeptAsk, answer: CarriedAnswer): Promise<void> {
+    this.answering.set(ask.callId, ask);
+    const live = await this.open(ask.sessionId).finally(() => this.answering.delete(ask.callId));
+    if (live === undefined) return;
+    try {
+      await live.carryOn(ask, answer);
+    } finally {
+      this.gate.asks.forgetAllowances(ask.sessionId);
+    }
+  }
+
   async open(id: string): Promise<LiveSession | undefined> {
     const live = this.liveOnly(id);
     if (live !== undefined) return live;
@@ -1259,6 +1517,11 @@ class LiveSessions {
     if (tag === undefined) return undefined;
     const { slug, workspace } = tag.creature;
     return { creature: slug, directory: store.header.cwd, parent, visitor: workspace };
+  }
+
+  askedIn(id: string): string {
+    const store = this.runningStoreOf(id);
+    return store === undefined ? "" : askedIn(store);
   }
 
   private runningStoreOf(id: string): SessionStore | undefined {
@@ -1381,7 +1644,7 @@ class LiveSessions {
     const id = store.header.id;
     const shell = options.openShell?.(options.cwd) ?? new ShellSession(options.cwd);
     const turn = new TurnCheckpoint();
-    const guard = checkpointingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
+    const guard = writeNotingGuard(this.gate.asks.guardFor(id), composition.checkpoints, turn);
     const permissions = this.confinedResolver(store, shell);
     const creature = await this.creatureSeams(store);
     const inference = options.inference;
@@ -1405,6 +1668,8 @@ class LiveSessions {
         (await this.seams.initialProvider?.(store)) ??
         options.currentProvider?.() ??
         options.provider,
+      talkingChoice: async () => this.seams.talkingChoice?.(store),
+      reach: async (reference) => this.seams.reach?.(store, reference),
       flushes: agents,
       turn,
       notice: (text) => options.notice?.(`keywork serve: ${text}`),
@@ -1424,6 +1689,8 @@ class LiveSessions {
       botNamed: workspace.botNamed,
       ...creature,
     };
+    const waiting = [...this.gate.asks.list(), ...this.answering.values()];
+    await settleStoppedSession(store, waiting, composition.checkpoints);
     const live = new LiveSession(store, shell, runtime);
     this.live.set(id, live);
     await workspace.attached(store);
@@ -1431,10 +1698,10 @@ class LiveSessions {
   }
 
   private showTargetOf(store: SessionStore): ShowTarget | undefined {
-    const { settings, temperamentOf, places, fileExists } = this.seams;
+    const { settings, temperamentOf, places, fileExists, away } = this.seams;
     if (settings === undefined) return undefined;
     const sessionId = store.header.id;
-    const shared = { sessionId, places, fileExists, settings: () => settings };
+    const shared = { sessionId, places, fileExists, away, settings: () => settings };
     const visiting = projectThreadTag(store.entries())?.creature;
     const seat = visiting === undefined ? undefined : this.seams.visiting?.(visiting, store);
     if (visiting !== undefined && seat !== undefined) {
@@ -1443,6 +1710,7 @@ class LiveSessions {
         creature: visiting.slug,
         scenes: seat.scenes,
         temperament: seat.temperament,
+        temperaments: seat.temperaments,
         get home() {
           return seat.home();
         },
@@ -1455,6 +1723,7 @@ class LiveSessions {
       scenes: this.seams.scenes?.(),
       temperament: async () =>
         creature === null || temperamentOf === undefined ? undefined : temperamentOf(creature),
+      temperaments: creature === null ? undefined : this.seams.temperaments?.(creature),
     };
   }
 
@@ -1471,7 +1740,7 @@ class LiveSessions {
   }
 
   private async creatureSeams(store: SessionStore): Promise<CreatureSeams> {
-    const { seatFor, meter, failed, settled, keeper } = this.seams;
+    const { seatFor, meter, failed, completed, settled, keeper } = this.seams;
     const id = store.header.id;
     let seat = await seatFor?.(store);
     return {
@@ -1484,10 +1753,20 @@ class LiveSessions {
           usage,
           provider: provider.name,
           model: provider.modelId,
-          creature: creatureTagOf(store.entries())?.creature ?? null,
+          creature: workingCreatureOf(store.entries())?.creature ?? null,
           session: id,
         }),
-      failed: (error, provider) => failed?.(provider.name, error),
+      failed: (error, provider) =>
+        failed?.(
+          {
+            provider: provider.name,
+            model: provider.modelId,
+            creature: workingCreatureOf(store.entries())?.creature ?? null,
+            work: workOf(creatureTagOf(store.entries())?.kind),
+          },
+          error,
+        ),
+      completed: (turn) => completed?.({ id, store, ...turn }),
       settled: (outcome, lastReply) => settled?.({ id, store, outcome, lastReply }),
       keeper,
     };
@@ -1604,11 +1883,14 @@ class LiveSession {
   private grantsJournaled: Promise<void> = Promise.resolve();
   private staged: StagedUndo | undefined;
   private turnPrompt: MessageEntry | undefined;
+  private progress: TurnProgress | undefined;
+  private completedFacts: JournaledTurnFacts | undefined;
+  private turnDelivery: { prompt: string; delivery: string | null } | undefined;
   private turnOutcome: ThreadOutcome = "completed";
   private turnFailure: string | undefined;
   private closing = false;
   private readonly spend: SpendLedger;
-  private readonly submissions = new Map<string, PromptSubmission>();
+  private readonly submissions = new Map<PromptOrigin, PromptSubmission>();
   private readonly finishedUsage: Usage[] = [];
   private preparing: Promise<void> | undefined;
 
@@ -1623,6 +1905,7 @@ class LiveSession {
     this.adoptStoredSettings();
     this.persisted = this.agent.history().length;
     this.staged = this.reopenedRestore();
+    runtime.turn.keepFirstChangeWith((tree) => this.keepFirstChange(tree));
   }
 
   private get agent(): Agent {
@@ -1649,6 +1932,34 @@ class LiveSession {
     return outcome;
   }
 
+  async carryOn(ask: KeptAsk, answer: CarriedAnswer): Promise<void> {
+    const verdict = this.recordCarriedVerdict(ask, answer);
+    this.agent.bus.emit("gate.permission", { decision: verdict.decision });
+    const origin = answerOriginOf(ask, answer);
+    const text = carriedPrompt(ask, answer);
+    await this.prepareProvider();
+    await this.report(text, origin, "frame");
+    this.staged = undefined;
+    const turn = this.agent.send(text, { origin }).then(
+      () => undefined,
+      () => undefined,
+    );
+    this.settled = this.settled.then(() => turn);
+    this.announce();
+    await this.settled;
+  }
+
+  private recordCarriedVerdict(ask: KeptAsk, answer: CarriedAnswer): AnsweredAsk {
+    const context = keeperContextOf(
+      workingCreatureOf(this.store.entries()),
+      this.runtime.seat()?.workshop,
+    );
+    const at = new Date().toISOString();
+    const verdict = carriedVerdict(ask, answer, { context, cwd: this.store.header.cwd, at });
+    void this.runtime.keeper?.(verdict);
+    return verdict;
+  }
+
   async submitOnce(text: string, id: string): Promise<void> {
     const prior = this.store
       .entries()
@@ -1659,15 +1970,15 @@ class LiveSession {
         : Promise.reject(new CreatureProjectError("request-conflict"));
     }
     await this.prepareProvider();
-    requireProjectModel(this.agent.provider);
-    const client = `creature-${randomUUID()}`;
+    await requireProjectModel(this.agent.provider);
+    const origin: PromptOrigin = { kind: "keeper" };
     return new Promise((resolve, reject) => {
-      this.submissions.set(client, { id, accept: resolve });
+      this.submissions.set(origin, { id, accept: resolve });
       this.staged = undefined;
       const turn = this.agent
-        .send(text, { origin: { kind: "external", client } })
+        .send(text, { origin })
         .then(() => reject(new CreatureProjectError("unavailable")), reject)
-        .finally(() => this.submissions.delete(client));
+        .finally(() => this.submissions.delete(origin));
       this.settled = this.settled.then(() => turn).then(() => undefined);
       this.announce();
     });
@@ -2078,12 +2389,74 @@ class LiveSession {
 
   private async openTurn(agent: Agent): Promise<string | undefined> {
     const origin = agent.turnOrigin();
-    const submission =
-      origin?.kind === "external" ? this.submissions.get(origin.client) : undefined;
+    const submission = origin === undefined ? undefined : this.submissions.get(origin);
     const written = await this.persistTurn(agent.history(), submission?.id);
     this.turnPrompt = written.findLast(isPromptEntry);
     if (this.turnPrompt?.submissionId === submission?.id) submission?.accept();
+    if (this.turnPrompt !== undefined) await this.openProgress(this.turnPrompt.id, origin);
     return this.turnPrompt?.id;
+  }
+
+  private async openProgress(prompt: string, origin: PromptOrigin | undefined): Promise<void> {
+    const carries =
+      origin?.kind === "answer" ? carriedTurnsOf(this.store.activePath(), origin.callId) : [];
+    this.progress = { prompt, ...(carries.length > 0 && { carries }) };
+    await this.keepProgress();
+  }
+
+  private async keepFirstChange(tree: string | undefined): Promise<void> {
+    if (this.progress === undefined) return;
+    this.progress = {
+      ...this.progress,
+      wrote: true,
+      ...(tree !== undefined && { checkpoint: tree }),
+    };
+    await this.keepProgress();
+  }
+
+  private async keepProgress(): Promise<void> {
+    const progress = this.progress;
+    if (progress === undefined) return;
+    await recordTurnProgress(this.store, progress).catch((cause: unknown) =>
+      this.runtime.notice(
+        `session ${this.id.slice(0, 8)} did not keep where its turn stands · ${toError(cause).message}`,
+      ),
+    );
+  }
+
+  private async keepMessages(history: readonly Message[]): Promise<void> {
+    await this.persistTurn(history).catch((cause: unknown) =>
+      this.runtime.notice(
+        `session ${this.id.slice(0, 8)} did not keep its turn as it went · ${toError(cause).message}`,
+      ),
+    );
+  }
+
+  private async completeTurn(reply: Message): Promise<TurnCompletion> {
+    const prompt = this.turnPrompt;
+    if (prompt === undefined) return {};
+    const { checkpoints, turn } = this.runtime;
+    const facts = await turnFactsAt(this.store, prompt.id, turn.current(), checkpoints).catch(
+      (cause: unknown) => {
+        this.runtime.notice(
+          `session ${this.id.slice(0, 8)} could not read what its turn changed · ${toError(cause).message}`,
+        );
+        return undefined;
+      },
+    );
+    this.completedFacts = facts;
+    const work =
+      facts === undefined
+        ? undefined
+        : await workAcross(this.store.activePath(), checkpoints, facts, turn.wrote());
+    const delivery = this.runtime.completed({
+      lastReply: textOf(reply),
+      files: work?.files ?? [],
+      changesSeen: work?.checkpoint !== undefined && this.runtime.seat()?.worksOnACopy !== true,
+      wrote: work?.wrote ?? turn.wrote(),
+    });
+    this.turnDelivery = delivery === undefined ? undefined : { prompt: prompt.id, delivery };
+    return delivery === undefined ? {} : { delivery };
   }
 
   private async afterTurn(): Promise<void> {
@@ -2143,10 +2516,20 @@ class LiveSession {
 
   private async closeTurn(): Promise<void> {
     const prompt = this.turnPrompt;
+    const completed = this.completedFacts;
+    const delivered = this.turnDelivery;
     this.turnPrompt = undefined;
+    this.progress = undefined;
+    this.completedFacts = undefined;
+    this.turnDelivery = undefined;
     const { checkpoints, turn } = this.runtime;
     if (prompt !== undefined) {
-      await freezeTurn(this.store, prompt.id, turn.current(), checkpoints, this.turnEnding());
+      const facts =
+        completed?.prompt === prompt.id
+          ? completed
+          : await turnFactsAt(this.store, prompt.id, turn.current(), checkpoints);
+      const delivery = delivered?.prompt === prompt.id ? { delivery: delivered.delivery } : {};
+      await freezeTurnFacts(this.store, { ...facts, ...delivery }, this.turnEnding());
     }
     turn.close();
   }
@@ -2247,20 +2630,44 @@ class LiveSession {
   }
 
   private async prepareProvider(): Promise<void> {
-    if (this.agent.busy() || this.store.modelSelection() !== undefined) return;
-    this.preparing ??= this.prepareInitialProvider().finally(() => {
+    if (this.agent.busy()) return;
+    this.preparing ??= this.prepareModel().finally(() => {
       this.preparing = undefined;
     });
     await this.preparing;
   }
 
-  private async prepareInitialProvider(): Promise<void> {
-    const provider = await this.runtime.initialProvider();
-    if (this.agent.busy() || this.store.modelSelection() !== undefined) return;
-    await this.swap(this.runtime.forge(provider, this.agent.history()));
-    if (provider.modelId !== undefined) {
-      await this.store.appendModelChange(provider.name, provider.modelId);
+  private async prepareModel(): Promise<void> {
+    const selection = this.store.modelSelection();
+    const choice = await this.runtime.talkingChoice();
+    if (selection === undefined) return this.takeModel(choice, () => this.unselected());
+    const talking = { provider: selection.provider, model: selection.modelId };
+    const followed = talkingChoiceOf(this.store.entries()) ?? talking;
+    if (choice !== undefined && !sameTalkingChoice(choice, followed)) {
+      return this.takeModel(choice, () => !this.agent.busy());
     }
+    await this.runtime.reach(talking);
+  }
+
+  private unselected(): boolean {
+    return !this.agent.busy() && this.store.modelSelection() === undefined;
+  }
+
+  private async takeModel(
+    choice: TalkingChoice | undefined,
+    stillWanted: () => boolean,
+  ): Promise<void> {
+    const provider = await this.runtime.initialProvider();
+    if (!stillWanted()) return;
+    await this.swap(this.runtime.forge(provider, this.agent.history()));
+    const taken =
+      provider.modelId === undefined
+        ? undefined
+        : { provider: provider.name, model: provider.modelId };
+    if (taken !== undefined && !sameSelection(this.store.modelSelection(), taken)) {
+      await this.store.appendModelChange(taken.provider, taken.model);
+    }
+    await followTalkingChoice(this.store, choice);
   }
 
   private adoptStoredSettings(): void {
@@ -2275,8 +2682,10 @@ class LiveSession {
 
   private bind(agent: Agent): BoundAgent {
     agent.openTurnsWith(() => this.openTurn(agent));
+    agent.completeTurnsWith((reply) => this.completeTurn(reply));
     agent.settleTurnsWith(() => this.afterTurn());
     agent.settleToolBatchesWith((history) => this.settleToolBatch(history));
+    agent.keepMessagesWith((history) => this.keepMessages(history));
     const detach = this.runtime.log.attach(agent.bus, this.id);
     const unfollow = this.runtime.changes.follow(agent.bus, this.id);
     const unmeter = agent.bus.on("turn.delta", ({ delta, replay }) => {
@@ -2309,7 +2718,7 @@ class LiveSession {
     return tapKeeperVerdicts(agent.bus, {
       session: () => this.id,
       context: () =>
-        keeperContextOf(creatureTagOf(this.store.entries()), this.runtime.seat()?.workshop),
+        keeperContextOf(workingCreatureOf(this.store.entries()), this.runtime.seat()?.workshop),
       cwd: this.store.header.cwd,
       record,
     });
@@ -2355,8 +2764,10 @@ class LiveSession {
 
   private async release(bound: BoundAgent): Promise<void> {
     bound.agent.openTurnsWith(undefined);
+    bound.agent.completeTurnsWith(undefined);
     bound.agent.settleTurnsWith(undefined);
     bound.agent.settleToolBatchesWith(undefined);
+    bound.agent.keepMessagesWith(undefined);
     bound.journal.stop();
     bound.keeper?.stop();
     await bound.journal.flush();
@@ -2471,32 +2882,47 @@ function isForgettable(entry: SessionEntry): boolean {
   return entry.message.role === "user" || entry.message.role === "tool";
 }
 
-function checkpointingGuard(
+function writeNotingGuard(
   asks: ToolGuard,
   checkpoints: Checkpoints | undefined,
   turn: TurnCheckpoint,
 ): ToolGuard {
-  if (checkpoints === undefined) return asks;
   return {
     ...asks,
-    beforeMutation: async () => turn.note(await checkpoints.captureTree()),
+    beforeMutation: async () => {
+      await turn.note(await checkpoints?.captureTree());
+    },
     beforeTurn: () => turn.close(),
   };
 }
 
 class TurnCheckpoint {
   private tree: string | undefined;
+  private written = false;
+  private firstChange: ((tree: string | undefined) => Promise<void>) | undefined;
 
-  note(tree: string): void {
+  keepFirstChangeWith(keep: (tree: string | undefined) => Promise<void>): void {
+    this.firstChange = keep;
+  }
+
+  async note(tree: string | undefined): Promise<void> {
+    const first = !this.written;
+    this.written = true;
     this.tree ??= tree;
+    if (first) await this.firstChange?.(this.tree);
   }
 
   current(): string | undefined {
     return this.tree;
   }
 
+  wrote(): boolean {
+    return this.written;
+  }
+
   close(): void {
     this.tree = undefined;
+    this.written = false;
   }
 }
 
@@ -2508,6 +2934,41 @@ function sendOptionsOf(options: {
     ...(options.behavior !== undefined && { behavior: options.behavior }),
     ...(options.origin !== undefined && { origin: options.origin }),
   };
+}
+
+async function settleStoppedSession(
+  store: SessionStore,
+  waiting: readonly PendingAsk[],
+  checkpoints: Checkpoints | undefined,
+): Promise<void> {
+  const started = grantedCalls(store.entries());
+  for (const callId of unansweredCalls(store.messages())) {
+    const carried = waiting.some((ask) => ask.carried === true && ask.callId === callId);
+    const output = stoppedOutput(carried, started.has(callId));
+    await store.append({
+      role: "tool",
+      parts: [{ type: "tool-result", callId, output, isError: true }],
+    });
+  }
+  const cut = cutTurnAlong(store.activePath());
+  if (cut === undefined) return;
+  const facts = await turnFactsAt(store, cut.prompt.id, cut.prompt.checkpoint, checkpoints);
+  await freezeTurnFacts(store, facts, { outcome: "shutdown" });
+}
+
+function stoppedOutput(carried: boolean, started: boolean): string {
+  if (carried) return waitingThroughTheStop;
+  return started ? stoppedWhileItRan : stoppedBeforeItRan;
+}
+
+function grantedCalls(entries: readonly SessionEntry[]): Set<string> {
+  return new Set(
+    journalEvents(entries).flatMap((event) =>
+      event.type === "permission_decision" && event.decision.verdict === "granted"
+        ? [event.decision.callId]
+        : [],
+    ),
+  );
 }
 
 function lastPromptOnPath(store: SessionStore): MessageEntry | undefined {
@@ -2527,6 +2988,17 @@ function sameSelection(
   model: { provider: string; model: string },
 ): boolean {
   return selection?.provider === model.provider && selection.modelId === model.model;
+}
+
+async function followTalkingChoice(
+  store: SessionStore,
+  choice: TalkingChoice | undefined,
+): Promise<void> {
+  if (choice === undefined) return;
+  const followed = talkingChoiceOf(store.entries());
+  if (followed === undefined || !sameTalkingChoice(choice, followed)) {
+    await recordTalkingChoice(store, choice);
+  }
 }
 
 function conversationFactsOf(store: SessionStore): Pick<SessionDetail, "ledgerEntry" | "endedAt"> {
@@ -2638,6 +3110,7 @@ function routineSessionsOf(
   creatures: { openThread(creature: string, kind: "routine"): Promise<string> },
   { asks }: ServedGate,
   ledger: Pick<CreatureLedger, "threadOpened">,
+  log: EventLog,
 ): RoutineSessions {
   return {
     openThread: async (thread) => {
@@ -2662,6 +3135,12 @@ function routineSessionsOf(
     },
     abort: (id) => verbs.abort(id),
     denyAsk: async (callId) => asks.answer(callId, "denied"),
+    discard: async (id) => {
+      const outcome = await trashSession(lifecycleOf(sessions), id);
+      if (outcome !== "missing" && outcome !== "busy") {
+        log.record("", "session.removed", { sessionId: id });
+      }
+    },
     costUsd: async (id) => {
       const nanos = sessions.liveOnly(id)?.costNanos();
       return nanos === undefined ? null : nanos / nanosPerDollar;

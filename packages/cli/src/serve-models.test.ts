@@ -5,6 +5,8 @@ import {
   CapabilityCache,
   type CreatureHost,
   type CreatureLedgerPort,
+  EndpointUnreachableError,
+  type HttpReply,
   InferenceRegistry,
   known,
   ModelInventory,
@@ -13,6 +15,7 @@ import {
   type Provider,
   type ProviderRegistration,
   type ProviderRequest,
+  SilentServerError,
   type TurnDelta,
   toolCallTurn,
   unknownCapability,
@@ -21,7 +24,11 @@ import { EventLog } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ServedHostOptions, servedHost } from "./serve.ts";
-import { configuredLoopbackModels, refreshableModels } from "./serve-models.ts";
+import { configuredModels, refreshableModels } from "./serve-models.ts";
+
+const configuredPort = (...args: Parameters<typeof configuredModels>) =>
+  configuredModels(...args).models;
+
 import { findSession } from "./sessions/store.ts";
 
 const tempDir = scratchDirs("keywork-serve-models-");
@@ -36,7 +43,7 @@ describe("model refresh", () => {
       else await metadata.promise;
       return {};
     });
-    const models = configuredLoopbackModels(
+    const models = configuredPort(
       { list: async () => ({}), probe },
       {
         registrations: () => [
@@ -79,7 +86,7 @@ describe("model refresh", () => {
       ...metadata(),
       tools: known(true, { source: "behaviour-probe", probe: "tools" }),
     });
-    const models = configuredLoopbackModels(
+    const models = configuredPort(
       {
         probe: async () => {
           cache.store(metadata());
@@ -126,7 +133,7 @@ describe("model refresh", () => {
         },
       },
     });
-    const models = configuredLoopbackModels(
+    const models = configuredPort(
       {
         probe: (request) => inventory.probe(request),
         list: async () => ({ context: cache.record(root, "local-model")?.contextAllocated }),
@@ -142,14 +149,14 @@ describe("model refresh", () => {
     expect(cache.record("http://127.0.0.1:11434", "local-model")).toBeUndefined();
   });
 
-  it("probes only exact configured loopback roots before reporting their current capabilities", async () => {
+  it("probes each configured local root once, loopback or tailnet, before reporting its capabilities", async () => {
     const probe = vi.fn(async () => ({}));
     const list = vi.fn(async () => {
-      expect(probe).toHaveBeenCalledTimes(1);
+      expect(probe).toHaveBeenCalledTimes(2);
       return {};
     });
     const local = registration(recordedProvider("local", "model"), "http://localhost:1234/v1");
-    const models = configuredLoopbackModels(
+    const models = configuredPort(
       { list, probe },
       {
         registrations: () => [
@@ -162,12 +169,12 @@ describe("model refresh", () => {
       },
     );
     await models.list({});
-    expect(probe).toHaveBeenCalledExactlyOnceWith({
-      endpoint: "http://localhost:1234",
-      refresh: true,
-    });
+    expect(probe.mock.calls).toEqual([
+      [{ endpoint: "http://localhost:1234", refresh: true }],
+      [{ endpoint: "http://machine.ts.net:1234", refresh: true }],
+    ]);
     await models.list({ node: "another-node" });
-    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("shares concurrent refreshes and lists only after the replacement is ready", async () => {
@@ -215,7 +222,7 @@ describe("model refresh", () => {
 });
 
 describe("the creature's first model", () => {
-  it("binds the explicit choice saved after its conversation was opened", async () => {
+  it("binds the explicit choice saved after its conversation was opened, and moves the conversation when the choice changes after its first turn", async () => {
     const world = await modelWorld();
     try {
       const id = await world.creature("Pip");
@@ -228,6 +235,28 @@ describe("the creature's first model", () => {
         provider: "local",
         modelId: "local-model",
       });
+
+      await world.creatures.update("pip", { models: { strong: cloudChoice } });
+      await world.host.prompt(id, "hello again");
+      await world.settled(id);
+      expect(world.local.calls).toHaveLength(1);
+      expect(world.cloud.calls).toHaveLength(1);
+      expect((await findSession(world.sessionDir, id))?.modelSelection()).toMatchObject({
+        provider: "cloud",
+        modelId: "cloud-model",
+      });
+    } finally {
+      await world.host.close?.();
+    }
+  });
+
+  it("refuses a prompt to a silent local server whose tool support is already known, before any turn", async () => {
+    const world = await modelWorld({ localSilent: true });
+    try {
+      const id = await world.creature("Pip", localChoice);
+      await expect(world.host.prompt(id, "hello")).rejects.toBeInstanceOf(SilentServerError);
+      expect(world.local.calls).toHaveLength(0);
+      expect(world.cloud.calls).toHaveLength(0);
     } finally {
       await world.host.close?.();
     }
@@ -248,8 +277,13 @@ describe("the creature's first model", () => {
   it("keeps the measured capability requirement for creature work threads", async () => {
     const world = await modelWorld({ localContext: 4096 });
     try {
-      await world.creature("Pip", localChoice);
-      await world.creatures.update("pip", { models: { loop: localChoice } });
+      await world.creatures.create({
+        name: "Pip",
+        models: { strong: localChoice, loop: localChoice },
+      });
+      await expect(
+        world.creatures.update("pip", { models: { loop: localChoice } }),
+      ).rejects.toThrow(/context/);
       const id = await world.creatures.openThread("pip", "thread");
       await expect(world.host.prompt(id, "private hello")).rejects.toThrow(/context/);
       expect(world.cloud.calls).toHaveLength(0);
@@ -316,7 +350,7 @@ describe("the creature's first model", () => {
   });
 
   it("keeps the conversation-only boundary through model switching and reopening", async () => {
-    const world = await modelWorld({ localContext: 4096 });
+    const world = await modelWorld({ localTools: false });
     const id = await world.creature("Pip");
     await world.host.setModel(id, "local/local-model");
     await world.host.prompt(id, "hello");
@@ -404,13 +438,17 @@ describe("the creature's first model", () => {
 
 const localChoice: ModelReference = { provider: "local", model: "local-model" };
 
+const cloudChoice: ModelReference = { provider: "cloud", model: "cloud-model" };
+
 async function modelWorld(
   options: {
     localContext?: number;
+    localTools?: boolean;
     cloudWait?: Promise<void>;
     projectTrusted?: boolean;
     permissions?: PermissionResolver;
     localTurns?: TurnDelta[][];
+    localSilent?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -443,7 +481,7 @@ async function modelWorld(
       },
       "2026-11-10T00:00:00Z",
     ),
-    tools: known(true, { source: "behaviour-probe", probe: "fixture" }),
+    tools: known(options.localTools ?? true, { source: "behaviour-probe", probe: "fixture" }),
     contextAllocated: known(options.localContext ?? 131_072, {
       source: "native-route",
       route: "/api/show",
@@ -473,8 +511,8 @@ async function modelWorld(
       },
     },
     modelProbe: {
-      get: async () => ({ status: 404, ok: false, body: {}, text: "" }),
-      post: async () => ({ status: 404, ok: false, body: {}, text: "" }),
+      get: async (url) => notFoundUnlessSilent(url, options.localSilent),
+      post: async (url) => notFoundUnlessSilent(url, options.localSilent),
     },
     permissions: options.permissions ?? (() => "deny"),
     checkpoints: "off",
@@ -508,6 +546,11 @@ async function modelWorld(
         expect((await host.list()).find((session) => session.id === id)?.working).toBe(false),
       ),
   };
+}
+
+async function notFoundUnlessSilent(url: string, silent: boolean | undefined): Promise<HttpReply> {
+  if (silent === true) throw new EndpointUnreachableError(url, "silent in this test");
+  return { status: 404, ok: false, body: {}, text: "" };
 }
 
 function recordedProvider(

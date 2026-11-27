@@ -1,21 +1,27 @@
-import type {
-  ChoreFacts,
-  ConversationEnded,
-  CreatureHost,
-  CreatureLedger,
-  CreatureLedgerEntry,
-  CreatureLedgerPort,
-  CreatureOrigin,
-  LedgerConversationEnding,
-  LedgerConversationTag,
-  QuestionAnswer,
-  RoutineService,
-  ThreadKind,
-  ThreadReport,
+import {
+  type ChoreFacts,
+  type ConversationEnded,
+  type CreatureHost,
+  type CreatureLedger,
+  type CreatureLedgerEntry,
+  type CreatureLedgerPort,
+  type CreatureOrigin,
+  type LedgerConversationEnding,
+  type LedgerConversationTag,
+  messageText,
+  type QuestionAnswer,
+  type RoutineService,
+  type SessionStore,
+  type ThreadKind,
+  type ThreadOutcome,
+  type ThreadReport,
+  turnProgressAlong,
+  turnsAlong,
 } from "@keywork/engine";
 import type { AskQueue, EventLog, WirePayload } from "@keywork/server";
 import { toError } from "@keywork/shared";
 import { firstLineOf, firstSentenceOf, type SettledThread } from "./serve-creatures.ts";
+import { projectThreadTag } from "./serve-visiting.ts";
 import { excerpt } from "./text.ts";
 
 export interface CreatureSessionFacts {
@@ -103,28 +109,61 @@ export function ledgeredCreatures<Host extends Pick<CreatureHost, "openThread" |
 
 export interface VisitorThreads {
   opened(creature: string, session: string, directory: string, asked: string): void;
+  asking(ask: VisitorAsk): void;
+  delivered(turn: Pick<SettledThread, "id" | "store" | "lastReply">): void;
   settled(thread: SettledThread): void;
+}
+
+export interface VisitorAsk {
+  creature: string;
+  session: string;
+  directory: string;
+  asked: string;
 }
 
 export function visitorThreads(
   ledger: Pick<CreatureLedger, "threadOpened" | "threadReported">,
 ): VisitorThreads {
+  const open = (creature: string, session: string, directory: string, asked: string) =>
+    ledger.threadOpened({
+      creature,
+      session,
+      directory,
+      title: openingWordsOf(asked),
+      about: { kind: "thread" },
+    });
+  const report = (
+    { id, store, lastReply }: Omit<SettledThread, "outcome">,
+    outcome: ThreadOutcome,
+  ) =>
+    ledger.threadReported(id, {
+      title: store.name() ?? "",
+      outcome,
+      summary: firstLineOf(lastReply),
+    });
   return {
-    opened: (creature, session, directory, asked) =>
-      ledger.threadOpened({
-        creature,
-        session,
-        directory,
-        title: openingWordsOf(asked),
-        about: { kind: "thread" },
-      }),
-    settled: ({ id, store, outcome, lastReply }) =>
-      ledger.threadReported(id, {
-        title: store.name() ?? "",
-        outcome,
-        summary: firstLineOf(lastReply),
-      }),
+    opened: open,
+    asking: ({ creature, session, directory, asked }) => open(creature, session, directory, asked),
+    delivered: (turn) => {
+      const creature = projectThreadTag(turn.store.entries())?.creature.slug;
+      if (creature !== undefined)
+        open(creature, turn.id, turn.store.header.cwd, askedIn(turn.store));
+      report(turn, "completed");
+    },
+    settled: (thread) => {
+      if (thread.outcome === "failed" || thread.outcome === "blocked") report(thread, "blocked");
+    },
   };
+}
+
+export function askedIn(store: SessionStore): string {
+  const path = store.activePath();
+  const turns = turnsAlong(path);
+  const last = turns.at(-1);
+  if (last === undefined) return "";
+  const [carried] = turnProgressAlong(path).get(last.prompt.id)?.carries ?? [];
+  const asked = turns.find(({ prompt }) => prompt.id === carried)?.prompt ?? last.prompt;
+  return messageText(asked.message);
 }
 
 function openingWordsOf(asked: string): string {
@@ -134,14 +173,18 @@ function openingWordsOf(asked: string): string {
 
 const openingWordsLength = 60;
 
+export interface VisitorRecord {
+  subscribe(listener: () => void): () => void;
+}
+
 export function tellingTheHomeOfVisits(
   log: Pick<EventLog, "subscribe">,
-  ledger: Pick<CreatureLedger, "subscribe">,
+  records: readonly VisitorRecord[],
   visiting: (sessionId: string) => boolean,
   tell: () => void,
 ): (() => void)[] {
   return [
-    ledger.subscribe(() => tell()),
+    ...records.map((record) => record.subscribe(() => tell())),
     log.subscribe(({ sessionId, type, payload }) => {
       if (type === "turn.started" && !replayed(payload) && visiting(sessionId)) tell();
     }),
@@ -159,6 +202,7 @@ export function choreFactsOver(
     return {
       title: view.routine.title,
       posture: view.grants.posture,
+      check: view.grants.check,
       accepted: view.grants.accepted,
       directory: workspace,
     };

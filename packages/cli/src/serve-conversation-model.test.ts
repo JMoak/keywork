@@ -8,8 +8,10 @@ import {
   type ProviderRegistration,
   type ProviderRequest,
   type TurnDelta,
+  toolGuidance,
   unacknowledgedLicense,
   unknownCapability,
+  workingManner,
 } from "@keywork/engine";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -19,8 +21,14 @@ import {
 } from "./serve-conversation-model.ts";
 
 describe("conversation model suitability", () => {
-  it("keeps smaller local models in the conversation-only lane", () => {
-    expect(conversationModel(choice, environment())).toEqual({ ...choice, mode: "chat" });
+  it("keeps a local model that cannot call tools in the conversation-only lane, whatever its context", () => {
+    expect(conversationModel(choice, environment(silent))).toEqual({
+      ...choice,
+      mode: "chat",
+      detail:
+        "local/small answered without calling a tool when it was asked to, so it can talk but cannot use tools.",
+    });
+    expect(conversationModel(choice, environment())).toEqual({ ...choice, mode: "tools" });
     expect(
       conversationModel(choice, environment({ contextAllocated: known(131_072, evidence) })),
     ).toEqual({ ...choice, mode: "tools" });
@@ -46,6 +54,8 @@ describe("conversation model suitability", () => {
     expect(conversationModel(choice, policy)).toEqual({
       ...choice,
       mode: "chat",
+      detail:
+        "local/small could not be asked whether it calls tools, so it can talk but cannot use tools.",
       projectCheck: { endpoint: "http://localhost:1234/v1", model: "small" },
     });
     expect(
@@ -73,7 +83,7 @@ describe("conversation model suitability", () => {
     });
   });
 
-  it("removes tool inputs while preserving all other request controls", async () => {
+  it("removes tool inputs and every paragraph naming a tool, preserving all other request controls", async () => {
     let received: ProviderRequest | undefined;
     const underlying: Provider = {
       name: "local",
@@ -84,9 +94,9 @@ describe("conversation model suitability", () => {
         yield { type: "text", text: "hello" };
       },
     };
-    const provider = conversationProvider(choice, environment(), () => underlying);
+    const provider = conversationProvider(choice, environment(silent), () => underlying);
     const request: ProviderRequest = {
-      systemPrompt: "Be concise",
+      systemPrompt: `You are Pip.\n\n${toolGuidance}\n\n${workingManner}\n\nBe concise`,
       messages: [],
       tools: [tool],
       toolAdditions: [{ before: 0, tools: [tool] }],
@@ -99,15 +109,17 @@ describe("conversation model suitability", () => {
       ...request,
       tools: [],
       toolAdditions: [],
-      systemPrompt: expect.stringMatching(/^Be concise\n\nThis conversation cannot execute tools/),
+      systemPrompt: expect.stringMatching(
+        /^You are Pip\.\n\nBe concise\n\nlocal\/small answered without calling a tool[^\n]*You have no tools in this conversation/,
+      ),
     });
     expect(provider.requestSupport).toEqual(underlying.requestSupport);
-    expect(() => requireProjectModel(provider)).toThrow(/before assigning project work/);
+    await expect(requireProjectModel(provider)).rejects.toThrow(/before assigning project work/);
   });
 
   it("rejects an unsolicited tool call before the agent can receive it", async () => {
     const execute = vi.fn();
-    const provider = conversationProvider(choice, environment(), () => ({
+    const provider = conversationProvider(choice, environment(silent), () => ({
       name: "local",
       modelId: "small",
       async *stream() {
@@ -133,6 +145,7 @@ describe("conversation model suitability", () => {
 
 const choice = { provider: "local", model: "small" };
 const evidence = { source: "native-route", route: "/api/v1/models" } as const;
+const silent = { tools: known(false, { source: "behaviour-probe", probe: "tool_calls" } as const) };
 const tool = { name: "write", description: "write a file", parameters: {} };
 
 function environment(overrides: Partial<CapabilityRecord> = {}): PolicyEnvironment {

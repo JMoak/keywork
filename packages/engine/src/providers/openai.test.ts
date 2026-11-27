@@ -204,7 +204,7 @@ describe("OpenAiCompatibleProvider", () => {
 
     expect(failure).toBeInstanceOf(ProviderHttpError);
     expect((failure as Error).message).toBe(
-      'test request failed (404): {"error":{"message":"This model is unavailable for free.","code":404},"user_id":"[redacted]"}',
+      "test request failed (404): This model is unavailable for free.",
     );
   });
 });

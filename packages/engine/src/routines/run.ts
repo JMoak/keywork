@@ -67,3 +67,9 @@ export function needsKeeper(run: Pick<RunRow, "process" | "delivery">): boolean 
     run.delivery === "failed"
   );
 }
+
+export function tellsNow(run: Pick<RunRow, "trigger" | "process" | "delivery">): boolean {
+  if (!needsKeeper(run)) return false;
+  const failed = run.process === "failed" || run.process === "timed-out";
+  return run.trigger === "manual" || !failed || run.delivery !== "none";
+}

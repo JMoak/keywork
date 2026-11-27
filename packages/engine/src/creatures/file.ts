@@ -9,6 +9,7 @@ import {
   modelPolicySlotSchema,
 } from "../models/policy/types.ts";
 import type { Mood } from "../show/setting.ts";
+import { listed } from "../show/words.ts";
 import { type InboundPolicy, inboundPolicySchema } from "./inbound.ts";
 import { introductionOf } from "./prompt.ts";
 
@@ -34,12 +35,55 @@ export const temperaments = [
 
 export type Temperament = (typeof temperaments)[number];
 
+export const rangeSize = 3;
+
+export interface TakenManner {
+  now: Temperament;
+  since: string;
+}
+
+export type CreatureTemperaments = Pick<CreatureFile, "temperament" | "body" | "range" | "manner">;
+
 export function temperamentOf(file: Pick<CreatureFile, "temperament" | "body">): Temperament {
   return file.temperament ?? temperamentOfSeed(file.body.seed);
 }
 
+export function rangeOf(file: Pick<CreatureFile, "temperament" | "body" | "range">): Temperament[] {
+  const favourite = temperamentOf(file);
+  return inOrder(file.range ?? [favourite, ...othersOfSeed(file.body.seed, favourite)]);
+}
+
+export function mannerOf(file: CreatureTemperaments): Temperament {
+  const taken = file.manner?.now;
+  return taken !== undefined && rangeOf(file).includes(taken) ? taken : temperamentOf(file);
+}
+
 export function isTemperament(value: unknown): value is Temperament {
   return temperaments.some((temperament) => temperament === value);
+}
+
+export class OutsideRangeError extends Error {
+  constructor(
+    readonly asked: string,
+    readonly range: readonly Temperament[],
+  ) {
+    super(`${asked} is not one of its temperaments; it can be ${listed(range, "or")}`);
+    this.name = "OutsideRangeError";
+  }
+}
+
+export function withManner(file: CreatureFile, temperament: Temperament, at: Date): CreatureFile {
+  const range = rangeOf(file);
+  if (!range.includes(temperament)) throw new OutsideRangeError(temperament, range);
+  const settled = settledFile(file);
+  return temperament === settled.temperament
+    ? settled
+    : { ...settled, manner: { now: temperament, since: at.toISOString() } };
+}
+
+export function settledFile(file: CreatureFile): CreatureFile {
+  const { manner: _was, ...settled } = file;
+  return { ...settled, temperament: temperamentOf(file), range: rangeOf(file) };
 }
 
 export interface CreatureBody {
@@ -59,6 +103,8 @@ export interface CreatureFile {
   paused?: CreaturePaused | undefined;
   inbound?: InboundPolicy | undefined;
   temperament?: Temperament | undefined;
+  range?: Temperament[] | undefined;
+  manner?: TakenManner | undefined;
 }
 
 export interface CreaturePaused {
@@ -97,6 +143,17 @@ export class MalformedCreatureError extends Error {
   }
 }
 
+export class UnusableModelError extends Error {
+  constructor(
+    message: string,
+    readonly refused: string,
+    readonly usable: readonly string[],
+  ) {
+    super(message);
+    this.name = "UnusableModelError";
+  }
+}
+
 export function inheritEverywhere(): ModelPolicy {
   return { strong: "inherit", loop: "inherit", decide: "inherit", vision: "inherit" };
 }
@@ -125,8 +182,12 @@ export function patchedCreatureFile(
     file.introduction === introductionOf(file.name, keeper)
       ? introductionOf(name, keeper)
       : file.introduction;
+  const range = rangeOf(file);
+  if (patch.temperament !== undefined && !range.includes(patch.temperament))
+    throw new OutsideRangeError(patch.temperament, range);
+  const kept = patch.temperament === undefined ? file : settledFile(file);
   return {
-    ...file,
+    ...kept,
     name,
     introduction,
     body: { ...file.body, ...definedBody(patch.body) },
@@ -134,6 +195,7 @@ export function patchedCreatureFile(
     ...(patch.cloudFallback !== undefined && { cloudFallback: patch.cloudFallback }),
     ...(patch.inbound !== undefined && { inbound: patch.inbound }),
     temperament: patch.temperament ?? temperamentOf(file),
+    range,
   };
 }
 
@@ -246,13 +308,52 @@ export const creatureFileSchema = z
       .enum(temperaments)
       .optional()
       .describe(
-        "The creature's standing manner, one of the window tools' moods without urgent: how its panes move when it names no mood. Absent in a file made before it existed, when it is read from the seed, so the same creature always has the same one.",
+        "The creature's favourite temperament, one of the window tools' moods without urgent: the manner it hatched with or the keeper chose, and the one it settles back to. Absent in a file made before it existed, when it is read from the seed, so the same creature always has the same one.",
+      ),
+    range: z
+      .array(z.enum(temperaments))
+      .length(rangeSize)
+      .refine((range) => new Set(range).size === range.length, "range repeats a temperament")
+      .optional()
+      .describe(
+        "The three temperaments the creature can be, its favourite among them, so creatures differ in what they can be. Absent until anything about the creature changes, when the two besides the favourite are drawn from the seed, the same every time; written then, so a later change of seed keeps them.",
+      ),
+    manner: z
+      .object({
+        now: z.enum(temperaments).describe("The other temperament of its range it is in now."),
+        since: z.iso.datetime().describe("When it took that manner on."),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Present while the creature has put itself into another temperament of its range; the engine removes it when the creature settles back to its favourite after a quiet half hour, or when the keeper chooses its favourite.",
       ),
   })
-  .strict();
+  .strict()
+  .superRefine((file, context) => {
+    const favourite = file.temperament ?? temperamentOfSeed(file.body.seed);
+    if (file.range !== undefined && !file.range.includes(favourite))
+      context.addIssue({
+        code: "custom",
+        path: ["range"],
+        message: `the range must hold the favourite temperament, ${favourite}`,
+      });
+  });
 
 function temperamentOfSeed(seed: number): Temperament {
   return temperaments[seed % temperaments.length] ?? "brisk";
+}
+
+function othersOfSeed(seed: number, favourite: Temperament): Temperament[] {
+  const rest = temperaments.filter((temperament) => temperament !== favourite);
+  const first = rest[Math.floor(seed / temperaments.length) % rest.length] ?? "brisk";
+  const left = rest.filter((temperament) => temperament !== first);
+  const second = left[Math.floor(seed / (temperaments.length * rest.length)) % left.length];
+  return second === undefined ? [first] : [first, second];
+}
+
+function inOrder(range: readonly Temperament[]): Temperament[] {
+  return temperaments.filter((temperament) => range.includes(temperament));
 }
 
 function definedBody(body: Partial<CreatureBody> | undefined): Partial<CreatureBody> {

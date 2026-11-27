@@ -77,9 +77,11 @@ export {
 } from "./theme.ts";
 export { auditTheme, type ThemeAudit } from "./theme-audit.ts";
 export {
+  declaredWorkspaceBelow,
   openWorkspace,
   resolveAnchor,
   resolveVaultPath,
+  undeclaredVaultPath,
   updateWorkspaceDeclaration,
   type WorkspaceAnchor,
   writeWorkspaceDeclaration,

@@ -70,6 +70,7 @@ import {
   showToolName,
   skillConventionDirs,
   skillLibraryTools,
+  speakingAs,
   type Tool,
   type ToolGuard,
   type ToolScope,
@@ -285,7 +286,9 @@ export interface DelegationHost {
 
 export interface CreatureSeat {
   workshop: string;
-  injection?: (() => string) | undefined;
+  worksOnACopy?: boolean | undefined;
+  identity?: string | undefined;
+  injection?: (() => string | Promise<string>) | undefined;
   workshopTools?: readonly Tool[] | undefined;
   schedule?: ScheduleTarget | undefined;
   message?: MessageTarget | undefined;
@@ -540,7 +543,7 @@ function buildAgent(
     ...(recall === undefined
       ? []
       : memoryRecallTools(recall.store, recall.search, recall.onRecall, tap)),
-    ...(spec.show === undefined ? [] : yardTools(spec.show)),
+    ...(spec.show === undefined ? [] : yardTools(spec.show, (fact) => self?.reportToolFact(fact))),
     ...skillToolsFor(skills, () => self),
     ...(delegation === undefined ? [] : [delegateTool(delegation)]),
   ];
@@ -675,9 +678,14 @@ function claimForParent(
 function withCreatureInjection(hooks: AgentHooks, seat: CreatureSeat | undefined): AgentHooks {
   const injection = seat?.injection;
   if (injection === undefined) return hooks;
+  const identity = seat?.identity;
   return {
     ...hooks,
-    systemPrompt: async (base) => `${(await hooks.systemPrompt?.(base)) ?? base}\n\n${injection()}`,
+    systemPrompt: async (base) => {
+      const prompt = (await hooks.systemPrompt?.(base)) ?? base;
+      const own = identity === undefined ? prompt : speakingAs(identity, prompt);
+      return `${own}\n\n${await injection()}`;
+    },
   };
 }
 

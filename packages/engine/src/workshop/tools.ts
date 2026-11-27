@@ -1,8 +1,15 @@
 import { countOccurrences } from "@keywork/shared";
 import { z } from "zod";
 import { defineTool } from "../tools/define.ts";
+import { previewOf } from "../tools/preview.ts";
 import type { Tool } from "../tools.ts";
-import type { Exit, Workshop, WorkshopSubstrate } from "./substrate.ts";
+import {
+  type Exit,
+  type FileSystemPort,
+  isMissingFile,
+  type Workshop,
+  type WorkshopSubstrate,
+} from "./substrate.ts";
 
 export type WorkshopReadiness = () => Promise<string | undefined>;
 
@@ -37,29 +44,26 @@ export function workshopTools(
           await files.write(path, content);
           return `Wrote ${path}`;
         }),
+      preview: async ({ path, content }) => previewOf(path, await textIfAny(files, path), content),
     }),
     defineTool({
       name: "edit",
       description:
         "Replace exact text in a workshop file. oldText must match once unless replaceAll.",
-      schema: z.object({
-        path: z.string().describe("File path, absolute or relative to the workshop's workdir."),
-        oldText: z.string().min(1).describe("Exact text to replace, including whitespace."),
-        newText: z.string().describe("Replacement text."),
-        replaceAll: z.boolean().optional().describe("Replace every occurrence instead of one."),
-      }),
+      schema: editSchema,
       mutates: true,
-      run: ({ path, oldText, newText, replaceAll = false }) =>
+      run: (request) =>
         whenReady(ready, async () => {
-          const before = await files.read(path);
-          const occurrences = countOccurrences(before, oldText);
-          if (occurrences === 0) throw new Error(`oldText not found in ${path}`);
-          if (occurrences > 1 && !replaceAll) {
-            throw new Error(`oldText matches ${occurrences} places in ${path}; set replaceAll`);
-          }
-          await files.write(path, before.split(oldText).join(newText));
-          return `Replaced ${occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`} in ${path}`;
+          const { content, occurrences } = replacedIn(await files.read(request.path), request);
+          await files.write(request.path, content);
+          return `Replaced ${occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`} in ${request.path}`;
         }),
+      preview: async (request) => {
+        const before = await textIfAny(files, request.path);
+        return before === null
+          ? undefined
+          : previewOf(request.path, before, replacedIn(before, request).content);
+      },
     }),
     defineTool({
       name: "bash",
@@ -80,6 +84,36 @@ export function workshopTools(
         ),
     }),
   ];
+}
+
+const editSchema = z.object({
+  path: z.string().describe("File path, absolute or relative to the workshop's workdir."),
+  oldText: z.string().min(1).describe("Exact text to replace, including whitespace."),
+  newText: z.string().describe("Replacement text."),
+  replaceAll: z.boolean().optional().describe("Replace every occurrence instead of one."),
+});
+
+type EditRequest = z.infer<typeof editSchema>;
+
+function replacedIn(
+  before: string,
+  { path, oldText, newText, replaceAll = false }: EditRequest,
+): { content: string; occurrences: number } {
+  const occurrences = countOccurrences(before, oldText);
+  if (occurrences === 0) throw new Error(`oldText not found in ${path}`);
+  if (occurrences > 1 && !replaceAll) {
+    throw new Error(`oldText matches ${occurrences} places in ${path}; set replaceAll`);
+  }
+  return { content: before.split(oldText).join(newText), occurrences };
+}
+
+async function textIfAny(files: FileSystemPort, path: string): Promise<string | null> {
+  try {
+    return await files.read(path);
+  } catch (cause) {
+    if (isMissingFile(cause)) return null;
+    throw cause;
+  }
 }
 
 async function whenReady(ready: WorkshopReadiness, act: () => Promise<string>): Promise<string> {

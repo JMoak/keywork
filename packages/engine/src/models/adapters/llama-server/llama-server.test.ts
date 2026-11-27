@@ -92,7 +92,7 @@ describe("the llama-server adapter contract, pinned to the fixture's build", () 
       value: true,
       evidence: { source: "behaviour-probe", probe: "tool_calls" },
     });
-    expect(eligibleClasses(probed)).toEqual(["strong", "decide", "vision"]);
+    expect(eligibleClasses(probed)).toEqual(["strong", "loop", "decide", "vision"]);
   });
 
   it("refuses tool classes when calls arrive as content", async () => {

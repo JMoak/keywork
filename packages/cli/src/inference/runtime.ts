@@ -60,6 +60,7 @@ export interface InferenceRuntime {
   provider(binding: InferenceBinding): Provider;
   decider(binding: InferenceBinding): Decider;
   capabilityOf: CapabilityLookup;
+  headersFor(registration: ProviderRegistration): Record<string, string> | undefined;
 }
 
 export function composeInference(inputs: InferenceInputs): InferenceRuntime {
@@ -91,6 +92,12 @@ export function composeInference(inputs: InferenceInputs): InferenceRuntime {
     provider,
     decider: (binding) => deciderFor(binding, adapters),
     capabilityOf: capabilityLookupOver(inputs.localServers),
+    headersFor: (registration) => {
+      const { credential } = registration;
+      if (credential.kind !== "present") return undefined;
+      const material = materials.get(credential.handle.id);
+      return material?.kind === "api-key" ? { authorization: `Bearer ${material.key}` } : undefined;
+    },
     open: (request) => {
       const resolution = registry.resolve(request);
       if (!resolution.ok) throw new ResolutionError(resolution.failure);

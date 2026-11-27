@@ -1,6 +1,6 @@
 import type { PermissionRule } from "@keywork/shared";
 import { describe, expect, it } from "vitest";
-import { capabilityLines, creatureInjection, grantsHeading, noGrantsSentence } from "./prompt.ts";
+import { capabilityLines, creatureStanding, grantsHeading, noGrantsSentence } from "./prompt.ts";
 
 const grants: PermissionRule[] = [
   { action: "read", resource: "**", effect: "allow" },
@@ -21,14 +21,12 @@ describe("the capability list", () => {
   });
 
   it("says plainly when nothing is granted, so the creature cannot claim what it lacks", () => {
-    expect(creatureInjection({ introduction: "You are Pip." }, [])).toBe(
-      `You are Pip.\n\n${noGrantsSentence}`,
-    );
+    expect(creatureStanding([])).toBe(noGrantsSentence);
   });
 
-  it("follows the introduction with the grants that exist and nothing else", () => {
-    const injection = creatureInjection({ introduction: "You are Pip." }, grants);
-    expect(injection.startsWith(`You are Pip.\n\n${grantsHeading}\n`)).toBe(true);
-    expect(injection.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(4);
+  it("lists the grants that exist and nothing else", () => {
+    const standing = creatureStanding(grants);
+    expect(standing.startsWith(`${grantsHeading}\n`)).toBe(true);
+    expect(standing.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(4);
   });
 });

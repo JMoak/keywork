@@ -8,11 +8,18 @@ import {
   type MeshHello,
   probeHello,
 } from "./hello.ts";
-import { meshManifestPath, type NodeManifest, type NodeRole, parseManifest } from "./manifest.ts";
+import {
+  type ManifestKeyProtection,
+  meshManifestPath,
+  type NodeManifest,
+  type NodeRole,
+  parseManifest,
+} from "./manifest.ts";
 import { type DiscoveredPeer, type MeshPeer, selfPeer, tailnetPeers } from "./peers.ts";
 
 export interface CensusManifest {
   roles: NodeRole[];
+  keys?: ManifestKeyProtection;
 }
 
 export interface CensusPeer extends DiscoveredPeer {
@@ -35,7 +42,18 @@ export interface CensusOptions extends HelloProbeOptions {
   port: number;
   pairs(): readonly CensusPair[];
   selfManifest?: (() => Promise<NodeManifest | null>) | undefined;
+  book?: ProbeBook | undefined;
 }
+
+export interface ProbeBook {
+  ask<Answer>(key: string, probe: () => Promise<Answer | null>): Promise<Answer | null>;
+}
+
+export const answeredKeptMs = 60_000;
+
+export const refusedWaitMs = 5 * 60_000;
+
+export const refusedWaitAtMostMs = 60 * 60_000;
 
 export async function takeCensus(options: CensusOptions): Promise<MeshCensus> {
   const status = await options.tailnet.status();
@@ -62,6 +80,42 @@ export async function readPeerManifest(
   }
 }
 
+export function probeBook(now: () => number = () => Date.now()): ProbeBook {
+  const kept = new Map<string, KeptProbe>();
+  return {
+    ask: <Answer>(key: string, probe: () => Promise<Answer | null>) => {
+      const known = kept.get(key);
+      if (known?.asking !== undefined) return known.asking as Promise<Answer | null>;
+      if (known !== undefined && now() < known.askAgainAt) {
+        return Promise.resolve(known.answer as Answer | null);
+      }
+      const asking = probe()
+        .catch(() => null)
+        .then((answer) => {
+          const refusals = answer === null ? (known?.refusals ?? 0) + 1 : 0;
+          kept.set(key, { answer, refusals, askAgainAt: now() + waitAfter(refusals) });
+          return answer;
+        });
+      kept.set(key, { ...(known ?? neverAsked), asking });
+      return asking;
+    },
+  };
+}
+
+interface KeptProbe {
+  answer: unknown;
+  refusals: number;
+  askAgainAt: number;
+  asking?: Promise<unknown>;
+}
+
+const neverAsked: KeptProbe = { answer: null, refusals: 0, askAgainAt: 0 };
+
+function waitAfter(refusals: number): number {
+  if (refusals === 0) return answeredKeptMs;
+  return Math.min(refusedWaitMs * 2 ** (refusals - 1), refusedWaitAtMostMs);
+}
+
 interface AnsweringNode {
   hello: MeshHello;
   endpoint: string;
@@ -78,7 +132,7 @@ async function peerEntry(
   const manifest =
     pair === undefined || answered === undefined || endpoint === undefined
       ? null
-      : await readPeerManifest(endpoint, options);
+      : await asked(options, `manifest ${endpoint}`, () => readPeerManifest(endpoint, options));
   return censusPeer(peer, answered, manifest, endpoint);
 }
 
@@ -100,10 +154,20 @@ async function answeringNode(
   options: CensusOptions,
 ): Promise<AnsweringNode | undefined> {
   for (const address of addresses) {
-    const hello = await probeHello(address, options.port, options);
+    const hello = await asked(options, `hello ${address}`, () =>
+      probeHello(address, options.port, options),
+    );
     if (hello !== null) return { hello, endpoint: `http://${urlHost(address)}:${options.port}` };
   }
   return undefined;
+}
+
+function asked<Answer>(
+  options: CensusOptions,
+  key: string,
+  probe: () => Promise<Answer | null>,
+): Promise<Answer | null> {
+  return options.book === undefined ? probe() : options.book.ask(key, probe);
 }
 
 function censusPeer(
@@ -115,7 +179,11 @@ function censusPeer(
   return {
     ...peer,
     node: answered?.hello ?? null,
-    manifest: manifest === null ? null : { roles: manifest.roles },
+    manifest: manifest === null ? null : censusManifestOf(manifest),
     ...(endpoint !== undefined && { endpoint }),
   };
+}
+
+function censusManifestOf({ roles, keys }: NodeManifest): CensusManifest {
+  return { roles, ...(keys !== undefined && { keys }) };
 }

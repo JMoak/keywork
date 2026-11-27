@@ -10,6 +10,7 @@ import type {
   ContextEditEntry,
   ContextEditMark,
   CostRollup,
+  CreatureDeliveriesPort,
   CreatureHandoffsPort,
   CreatureHonoursPort,
   CreatureLedgerPort,
@@ -22,6 +23,7 @@ import type {
   EffortLevel,
   FlushMark,
   InferenceBinding,
+  KeeperNotifications,
   LearningLevel,
   LedgerEntry,
   McpServerStatus,
@@ -67,6 +69,7 @@ import type { ByteRange, FileSlice, TreeListing } from "./files.ts";
 import type { MeshConsole } from "./routes/mesh.ts";
 import type { ModelWaitsPort } from "./routes/model-waits.ts";
 import type { ModelsPort } from "./routes/models.ts";
+import type { PromisesPort } from "./routes/promises.ts";
 import type { CreatureScenesPort } from "./routes/scenes.ts";
 import type { ShowPort } from "./routes/show.ts";
 import type { WorkPort } from "./routes/work.ts";
@@ -404,7 +407,10 @@ export interface SessionHost {
   honours?: CreatureHonoursPort;
   scenes?: CreatureScenesPort;
   modelWaits?: ModelWaitsPort;
+  notifications?: KeeperNotifications;
+  promises?: PromisesPort;
   ledger?: CreatureLedgerPort;
+  deliveries?: CreatureDeliveriesPort;
   routines?: RoutineService;
   campaigns?: CampaignService;
   models?: ModelsPort;

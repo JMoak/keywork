@@ -11,12 +11,14 @@ import {
   type PromptOrigin,
   type QueuedPrompt,
   type SendBehavior,
+  type TurnCompletion,
 } from "./bus.ts";
 import {
   type ImagePart,
   type Message,
   promptMessage,
   type ToolCallPart,
+  type ToolFact,
   toolCalls,
   type Usage,
 } from "./messages.ts";
@@ -53,11 +55,13 @@ export type Confirmation =
       reason?: PermissionDecision["reason"];
       note?: string | undefined;
       timedOut?: true;
+      carried?: true;
     };
 
 export interface ToolGuard {
   confirm?(call: ToolCallPart, ask?: PermissionAsk): Promise<Confirmation>;
   grantsQuietly?(call: ToolCallPart, rule: AskRule): boolean;
+  answeredBefore?(call: ToolCallPart): boolean;
   gate?: ConfirmingGate;
   declineEndsRun?: boolean;
   beforeMutation?(): Promise<void>;
@@ -134,11 +138,15 @@ export interface SendOptions {
 
 export type TurnOpener = (prompt: Message) => Promise<string | undefined>;
 
+export type TurnCompleter = (reply: Message) => Promise<TurnCompletion>;
+
 export type TurnSettler = () => Promise<void>;
 
 export type ToolBatchSettler = (
   history: readonly Message[],
 ) => Promise<readonly Message[] | undefined>;
+
+export type MessageKeeper = (history: readonly Message[]) => Promise<void>;
 
 export class QueuedPromptCancelledError extends Error {
   constructor(id: string) {
@@ -187,6 +195,7 @@ export class Agent {
   private readonly pending: PendingPrompt[] = [];
   private running: ToolCallPart | undefined;
   private runningExitCode: number | undefined;
+  private runningFact: ToolFact | undefined;
   private origin: PromptOrigin | undefined;
   private unannouncedInjections: readonly ContextInjection[];
   private totals: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -194,8 +203,10 @@ export class Agent {
   private active: AbortController | undefined;
   private holding = false;
   private opener: TurnOpener | undefined;
+  private completer: TurnCompleter | undefined;
   private settler: TurnSettler | undefined;
   private toolBatchSettler: ToolBatchSettler | undefined;
+  private keeper: MessageKeeper | undefined;
   private checkpointed = false;
   private declineEndedRun = false;
   private thinkingRequested: boolean;
@@ -305,6 +316,10 @@ export class Agent {
     if (this.running !== undefined) this.runningExitCode = exitCode;
   }
 
+  reportToolFact(fact: ToolFact): void {
+    if (this.running !== undefined) this.runningFact = fact;
+  }
+
   reportToolOutput(chunk: string): void {
     const callId = this.running?.callId;
     this.bus.emit("tool.output", { chunk, ...(callId !== undefined && { callId }) });
@@ -323,12 +338,20 @@ export class Agent {
     this.opener = opener;
   }
 
+  completeTurnsWith(completer: TurnCompleter | undefined): void {
+    this.completer = completer;
+  }
+
   settleTurnsWith(settler: TurnSettler | undefined): void {
     this.settler = settler;
   }
 
   settleToolBatchesWith(settler: ToolBatchSettler | undefined): void {
     this.toolBatchSettler = settler;
+  }
+
+  keepMessagesWith(keeper: MessageKeeper | undefined): void {
+    this.keeper = keeper;
   }
 
   hold(work: () => Promise<void>): Promise<void> {
@@ -506,6 +529,7 @@ export class Agent {
       }
       this.remember(turn.message);
       this.reported = reportedContextOf(turn.usage, this.messages.length) ?? this.reported;
+      await this.keepMessages();
 
       const calls = toolCalls(turn.message);
       if (calls.length === 0) return this.finishCompleted(turn);
@@ -514,6 +538,10 @@ export class Agent {
       if (ending === "declined") return this.finishDeclined(turn);
       await this.settleToolBatch();
     }
+  }
+
+  private async keepMessages(): Promise<void> {
+    await this.keeper?.(this.history());
   }
 
   private async settleToolBatch(): Promise<void> {
@@ -544,8 +572,9 @@ export class Agent {
     return this.finishCompleted({ ...outcome, interrupted: false });
   }
 
-  private finishCompleted(turn: AssistantTurn): Message {
-    this.bus.emit("turn.completed", { message: turn.message, usage: turn.usage });
+  private async finishCompleted(turn: AssistantTurn): Promise<Message> {
+    const completion = (await this.completer?.(turn.message)) ?? {};
+    this.bus.emit("turn.completed", { message: turn.message, usage: turn.usage, ...completion });
     return turn.message;
   }
 
@@ -555,7 +584,7 @@ export class Agent {
     return message;
   }
 
-  private finishDeclined(turn: AssistantTurn): Message {
+  private finishDeclined(turn: AssistantTurn): Promise<Message> {
     this.settleOrphanedToolCalls(turn.message, "skipped: the run ended at a refused call");
     return this.finishCompleted(turn);
   }
@@ -663,10 +692,14 @@ export class Agent {
       this.bus.emit("tool.started", { call });
       this.running = call;
       this.runningExitCode = undefined;
+      this.runningFact = undefined;
       const result = await this.bounded(
         ruling.kind === "refuse"
           ? refusedByExtension(call, ruling.reason)
-          : withExitCode(await this.executeToolCall(call, signal), this.runningExitCode),
+          : withReported(await this.executeToolCall(call, signal), {
+              exitCode: this.runningExitCode,
+              fact: this.runningFact,
+            }),
       );
       this.running = undefined;
       this.bus.emit("tool.finished", result);
@@ -674,6 +707,7 @@ export class Agent {
         role: "tool",
         parts: [{ type: "tool-result", ...result }],
       });
+      await this.keepMessages();
       if (this.declineEndedRun) return "declined";
     }
     return "continue";
@@ -728,6 +762,10 @@ export class Agent {
     rule: AskRule,
   ): Promise<ToolOutcome | undefined> {
     const always = rule === "always";
+    if (this.guard?.answeredBefore?.(call) === true) {
+      this.emitPermissionDecision(call, answeredBeforeTheStop);
+      return undefined;
+    }
     if (!always && this.guard?.grantsQuietly?.(call, rule) === true) {
       this.emitPermissionDecision(call, quietlyGranted);
       return undefined;
@@ -789,8 +827,15 @@ export class Agent {
   }
 }
 
-function withExitCode(outcome: ToolOutcome, exitCode: number | undefined): ToolOutcome {
-  return exitCode === undefined ? outcome : { ...outcome, exitCode };
+function withReported(
+  outcome: ToolOutcome,
+  { exitCode, fact }: { exitCode: number | undefined; fact: ToolFact | undefined },
+): ToolOutcome {
+  return {
+    ...outcome,
+    ...(exitCode !== undefined && { exitCode }),
+    ...(fact !== undefined && { fact }),
+  };
 }
 
 function errorOf(cause: unknown): Error {
@@ -858,7 +903,15 @@ interface AnsweredConfirmation {
   reason?: PermissionDecision["reason"];
   note?: string | undefined;
   timedOut?: true;
+  carried?: true;
 }
+
+const answeredBeforeTheStop: RuledCall = {
+  verdict: "granted",
+  gate: "user",
+  asked: true,
+  scope: "once",
+};
 
 const quietlyGranted: RuledCall = {
   verdict: "granted",
@@ -901,8 +954,12 @@ function denialOf({ reason, note }: AnsweredConfirmation): Pick<RuledCall, "reas
 }
 
 function declinedOutput(answer: AnsweredConfirmation, gate: ConfirmingGate): string {
+  if (answer.carried === true) return waitingThroughTheStop;
   const said = answer.note === undefined ? [] : [`The user said: "${answer.note}"`];
-  return [refusalOf(answer, gate), ...said, declineIsFinal].join("\n");
+  const answered = answer.timedOut !== true && gate !== "headless";
+  return [refusalOf(answer, gate), ...said, answered ? declinedThisTurn : declineIsFinal].join(
+    "\n",
+  );
 }
 
 function refusalOf(answer: AnsweredConfirmation, gate: ConfirmingGate): string {
@@ -916,14 +973,26 @@ function declinedBecause(reason: DenyReason | undefined): string {
 
 const unattendedRefusal = "not approved: this run has no one to ask, so the call was refused";
 
+export const waitingThroughTheStop =
+  "not run yet: the engine stopped while this call waited for the keeper's answer, so it changed nothing. The question still waits for them, and you will be told when they answer. Until then, do not make this call or a variant of it.";
+
+export const stoppedBeforeItRan =
+  "not run: the engine stopped before this call ran, so it changed nothing.";
+
+export const stoppedWhileItRan =
+  "stopped: the engine stopped while this call was running, so it may have done some or all of its work. Look at what it changed before you make it again.";
+
 const unansweredRefusal =
   "not approved: nobody answered the ask in time, so the person probably stepped away and the call was refused";
 
 const declineReasons: Readonly<Record<DenyReason, string>> = {
   unsafe: "declined by user · they judged this call unsafe",
-  "not-now": "declined by user · not now, though the call itself may be fine later",
+  "not-now": "declined by user · not now",
   other: "declined by user",
 };
+
+const declinedThisTurn =
+  "The user declined this call, so it did not run and changed nothing; do not ask for it again in this turn, in this form or another, unless they ask you to, and never report it as done.";
 
 const declineIsFinal =
   "The call did not run, so nothing it would have changed was changed. Do not retry it or a variant of it unless the user asks you to, and never report it as done.";

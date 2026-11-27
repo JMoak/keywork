@@ -1,6 +1,7 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type CreatureDelivery,
   type CreatureHandle,
   type CreatureLedgerEntry,
   CreatureProjectContext,
@@ -9,7 +10,10 @@ import {
   type CreatureProjectWorkPort,
   CreatureRegistry,
   type CreatureScene,
+  type CreatureTemperamentFacts,
   type CreatureWorksite,
+  deliveriesOf,
+  isTemperament,
   ledgerEntriesOf,
   type ProjectWorkRequest,
   type SceneKeeping,
@@ -25,7 +29,7 @@ import {
 } from "@keywork/server";
 import { canonicalPath, resolveAnchor, TrustStore } from "@keywork/shared";
 import { existingManagedHome, keyworkHome, managedHomeFolder, workspaceIdentity } from "./paths.ts";
-import type { HomeScenes } from "./serve-visiting.ts";
+import type { HomeManners, HomeScenes } from "./serve-visiting.ts";
 import { keyworkVersion } from "./version.ts";
 
 export interface ServedCreatureProjectsOptions {
@@ -40,6 +44,11 @@ export interface ServedCreatureProjectsOptions {
   projectWorksites?: ProjectWorksites | undefined;
   projectHonours?: ProjectHonours | undefined;
   projectLedger?: ProjectLedger | undefined;
+  projectDeliveries?: ProjectDeliveries | undefined;
+}
+
+export interface ProjectDeliveries {
+  visited(project: string, deliveries: readonly CreatureDelivery[]): void;
 }
 
 export interface ProjectLedger {
@@ -96,6 +105,7 @@ export function servedCreatureProjects(
       worksites: options.projectWorksites,
       honours: options.projectHonours,
       ledger: options.projectLedger,
+      deliveries: options.projectDeliveries,
       creatures,
       creaturesIn: (project, slugs) => creaturesWorkingIn(creatureProjects, project, slugs),
     });
@@ -204,6 +214,27 @@ export function homeScenesOver(userRoot: string): HomeScenes {
   };
 }
 
+export function homeMannersOver(userRoot: string): HomeManners {
+  return {
+    take: async (creature, temperament) => {
+      const path = `/creatures/${encodeURIComponent(creature.slug)}/manner`;
+      const answer = await toTheHome(userRoot, creature, "PUT", path, { manner: temperament });
+      if (answer.status === 404) return undefined;
+      return temperamentFactsIn(answer) ?? homeRefused(answer);
+    },
+  };
+}
+
+function temperamentFactsIn(answer: Answered): CreatureTemperamentFacts | undefined {
+  if (answer.status !== 200) return undefined;
+  const temperament = field(answer.body, "temperament");
+  const range = field(answer.body, "range");
+  const manner = field(answer.body, "manner");
+  if (!isTemperament(temperament) || !isTemperament(manner)) return undefined;
+  if (!Array.isArray(range) || !range.every(isTemperament)) return undefined;
+  return { temperament, range, manner };
+}
+
 function followingProjectThreads(
   context: CreatureProjectContext,
   watches: ProjectWatches,
@@ -227,6 +258,7 @@ interface ProjectWatchOptions {
   worksites: ProjectWorksites | undefined;
   honours?: ProjectHonours | undefined;
   ledger?: ProjectLedger | undefined;
+  deliveries?: ProjectDeliveries | undefined;
   creatures(): Promise<readonly string[]>;
   creaturesIn(project: string, slugs: readonly string[]): Promise<ReadonlySet<string>>;
 }
@@ -257,7 +289,21 @@ function projectWatches(options: ProjectWatchOptions): ProjectWatches {
     );
     await visitHonours(ticket, project);
     await visitLedgers(ticket, project);
+    await visitDeliveries(ticket, project);
     return answer.working;
+  };
+  const visitDeliveries = async (ticket: ServerTicket, project: string): Promise<void> => {
+    if (options.deliveries === undefined) return;
+    const delivered = deliveriesOf(
+      field(await readProjectJson(ticket, `/creature-deliveries${visitor}`), "deliveries"),
+    );
+    const own = await options.creaturesIn(project, [
+      ...new Set(delivered.map((delivery) => delivery.creature)),
+    ]);
+    options.deliveries.visited(
+      project,
+      delivered.filter((delivery) => own.has(delivery.creature)),
+    );
   };
   const visitLedgers = async (ticket: ServerTicket, project: string): Promise<void> => {
     if (options.ledger === undefined) return;

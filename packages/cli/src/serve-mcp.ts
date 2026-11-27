@@ -8,6 +8,7 @@ import {
   defaultMessageLimits,
   type FetchLike,
   type KeeperAsker,
+  type KeeperAway,
   type McpArrival,
   messageGuard,
   type PlaceBook,
@@ -16,6 +17,7 @@ import {
   type SelfIdentity,
   type SessionStore,
   type ShowSettings,
+  temperamentSeatOf,
 } from "@keywork/engine";
 import { type AskQueue, type EventLog, readServerTicket, type ServerTicket } from "@keywork/server";
 import { keyworkVersion } from "./version.ts";
@@ -32,13 +34,14 @@ export interface CreatureMcpMesh {
 }
 
 export interface ServedCreatureMcpOptions {
-  creatures: Pick<CreatureHost, "inbound" | "deliver" | "read">;
+  creatures: Pick<CreatureHost, "inbound" | "deliver" | "read" | "takeManner">;
   sessions: CreatureConversations;
   mesh: CreatureMcpMesh | undefined;
   settings?: ShowSettings | undefined;
   places?: PlaceBook | undefined;
   scenes?: SceneShelf | undefined;
   asksTheKeeper?: KeeperAsker | undefined;
+  away?: (() => KeeperAway | undefined) | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -49,12 +52,21 @@ export function servedCreatureMcp(options: ServedCreatureMcpOptions): {
   if (mesh === undefined) return {};
   const now = options.now ?? Date.now;
   const own = { guard: messageGuard(defaultMessageLimits, now), limits: defaultMessageLimits };
-  const { places, asksTheKeeper, scenes } = options;
-  const temperamentOf = async (slug: string) => (await options.creatures.read(slug))?.temperament;
+  const { places, asksTheKeeper, scenes, away } = options;
+  const temperamentOf = async (slug: string) => (await options.creatures.read(slug))?.manner;
+  const temperamentsOf = (slug: string) => temperamentSeatOf(options.creatures, slug);
   const yard =
     options.settings === undefined
       ? undefined
-      : creatureYard(options.settings, { now, places, asksTheKeeper, scenes, temperamentOf });
+      : creatureYard(options.settings, {
+          now,
+          places,
+          asksTheKeeper,
+          scenes,
+          temperamentOf,
+          temperamentsOf,
+          away,
+        });
   return {
     creatureMcp: {
       answer: (slug, message, caller, mail = own) =>

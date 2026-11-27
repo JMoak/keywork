@@ -2,17 +2,25 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mostSpecificMatch, type PromptsConfig } from "@keywork/shared";
 
-const corePrompt = `You are keywork, a coding agent working in the user's repository.
+export const keyworkIdentity = "You are keywork, a coding agent working in the user's repository.";
 
-Work by reading files, editing them, and running commands with your tools:
+export const toolGuidance = `Work by reading files, editing them, and running commands with your tools:
 - read: inspect files before changing them
 - write: create or fully replace a file
 - edit: replace exact unique text in a file
-- bash: run shell commands (build, test, search, git)
+- bash: run shell commands (build, test, search, git)`;
 
-Keep going until the task is done or you are truly blocked. Prefer small verified
+export const workingManner = `Keep going until the task is done or you are truly blocked. Prefer small verified
 steps: after changing code, run the relevant check. Report what you did plainly;
 if something failed, show the failure instead of guessing.`;
+
+const corePrompt = [keyworkIdentity, toolGuidance, workingManner].join("\n\n");
+
+export function speakingAs(identity: string, systemPrompt: string): string {
+  return systemPrompt.startsWith(keyworkIdentity)
+    ? `${identity}${systemPrompt.slice(keyworkIdentity.length)}`
+    : `${identity}\n\n${systemPrompt}`;
+}
 
 export interface SystemPromptOptions {
   projectInstructions?: string;

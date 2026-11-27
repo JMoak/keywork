@@ -24,6 +24,7 @@ import {
   deferredSnapshots,
   type FileSystemPort,
   type MeasuredResources,
+  missingFile,
   notRunning,
   type Workshop,
   type WorkshopHealth,
@@ -365,8 +366,9 @@ function sandboxFiles(sbx: SbxCli, workshop: Workshop, staging: string): FileSys
       const outcome = await sbx.run({
         args: ["exec", workshop.handle, "--", "cat", "--", inside(path)],
       });
-      if (outcome.code !== 0) throw new Error(`cannot read ${path} in workshop ${workshop.id}`);
-      return outcome.stdout;
+      if (outcome.code === 0) return outcome.stdout;
+      if (outcome.stderr.includes("No such file or directory")) throw missingFile(path, workshop);
+      throw new Error(`cannot read ${path} in workshop ${workshop.id}`);
     },
     write: async (path, content) => {
       const target = inside(path);

@@ -53,9 +53,9 @@ describe("ProviderHttpError meanings", () => {
 });
 
 describe("account ids in surfaced provider text", () => {
-  it("redacts id fields whatever their spelling", () => {
+  it("redacts id fields whatever their spelling, in a reply with no message to surface", () => {
     const body = JSON.stringify({
-      error: { message: "Provider returned error", code: 429 },
+      detail: "Provider returned error",
       user_id: fakeUserId,
       orgId: "org-1234",
       account_id: 98765,

@@ -3,6 +3,7 @@ import { EndpointUnreachableError, type ProbeHttp } from "../adapters/http.ts";
 import type { ServerAdapter, ServerInventory, ServerProbe } from "../adapters/types.ts";
 import type { CapabilityCache } from "./cache.ts";
 import { identifyServer, listedOnly } from "./fingerprint.ts";
+import { blankRecord } from "./record.ts";
 import type { CapabilityRecord, ServerFingerprint, ServerKind } from "./types.ts";
 
 export interface CapabilityProbeOptions {
@@ -18,7 +19,12 @@ export interface CapabilityProbeOptions {
 
 export type ServerProbeResult =
   | { status: "unreachable"; root: string; detail: string }
-  | { status: "unrecognized"; root: string; listedOnly: readonly string[] }
+  | {
+      status: "unrecognized";
+      root: string;
+      listedOnly: readonly string[];
+      records: readonly CapabilityRecord[];
+    }
   | {
       status: "recognized";
       root: string;
@@ -38,7 +44,13 @@ export async function probeServer(
       ...(options.preferred !== undefined && { preferred: options.preferred }),
     });
     if (identified === undefined) {
-      return { status: "unrecognized", root, listedOnly: await listedOnly(probe) };
+      const listed = await listedOnly(probe);
+      return {
+        status: "unrecognized",
+        root,
+        listedOnly: listed,
+        records: await listedRecords(probe, listed, options),
+      };
     }
     options.cache.remember(root, identified.fingerprint);
     if (identified.adapter === undefined) {
@@ -74,21 +86,47 @@ async function describeServer(
   ];
   const records: CapabilityRecord[] = [];
   for (const model of models) {
-    records.push(await recordFor(probe, adapter, fingerprint, model, options));
+    const describe = () => adapter.describe(probe, model, fingerprint);
+    records.push(await recordFor(probe, model, describe, options));
   }
   return { status: "recognized", root: probe.root, fingerprint, inventory, records };
 }
 
+async function listedRecords(
+  probe: ServerProbe,
+  listed: readonly string[],
+  options: CapabilityProbeOptions,
+): Promise<CapabilityRecord[]> {
+  const models = options.models ?? listed;
+  if (models.length === 0) return [];
+  const fingerprint = listedFingerprint;
+  options.cache.remember(probe.root, fingerprint);
+  const records: CapabilityRecord[] = [];
+  for (const model of models) {
+    const describe = async () =>
+      blankRecord(probe.root, model, fingerprint, probe.now().toISOString());
+    records.push(await recordFor(probe, model, describe, options));
+  }
+  return records;
+}
+
+const listedFingerprint: ServerFingerprint = {
+  id: "openai-compatible@unknown",
+  kind: "openai-compatible",
+  version: null,
+  build: null,
+  routes: ["/v1/models"],
+};
+
 async function recordFor(
   probe: ServerProbe,
-  adapter: ServerAdapter,
-  fingerprint: ServerFingerprint,
   model: string,
+  describe: () => Promise<CapabilityRecord>,
   options: CapabilityProbeOptions,
 ): Promise<CapabilityRecord> {
   const cached = options.refresh === true ? undefined : options.cache.record(probe.root, model);
   if (cached !== undefined && !wantsToolCallProbe(cached, options)) return cached;
-  const described = cached ?? (await adapter.describe(probe, model, fingerprint));
+  const described = cached ?? (await describe());
   const record = wantsToolCallProbe(described, options)
     ? withToolCallProbe(described, await probeToolCalls(probe, model))
     : described;

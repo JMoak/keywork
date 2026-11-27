@@ -14,7 +14,8 @@ Usage:
   keywork connect [target|url]                              add or verify an inference provider
                   [--group local|flagship|openrouter]
                   [--first-model]                          guided connection and model selection
-                                                            (setup is an alias)
+                  [--console]                              run inside a console: model selection,
+                                                            no terminal follow-up (setup is an alias)
   keywork init                                              set up the workspace at its anchor
   keywork workspace [list|new|use|rm] [slug]                named workspaces over this root
   keywork bot [list|new|rm] [slug] [purpose] [--global]     personas with their own memory

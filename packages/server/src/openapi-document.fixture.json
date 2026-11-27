@@ -3,7 +3,7 @@
   "info": {
     "title": "keywork",
     "version": "0.0.0-fixture",
-    "x-keywork-contract": "1.40",
+    "x-keywork-contract": "1.41",
     "description": "The keywork workspace server: the in-process event bus over HTTP and SSE. Bound to 127.0.0.1 with a per-launch bearer token.",
     "workspace": {
       "anchor": "C:/work/anchor",
@@ -454,7 +454,7 @@
     "/sessions/{id}": {
       "get": {
         "operationId": "readSession",
-        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). `outcomes` says how each turn ended, each `{ index, entryId, outcome, error? }` with `messages[index]` the turn's prompt: `completed`, `interrupted` (stopped by an abort or a steer), `failed` (with `error`, the message the turn failed on), or `shutdown` (the engine stopped while the turn ran: a server that shut down mid-turn records it, and a turn the engine died in, its prompt with no reply and no `turn_facts`, reads as one when the session is next read). Whatever text the turn had produced stays in `messages` after its prompt. A turn still running, a turn whose prompt was compacted away, and a turn settled before outcomes were kept carry no mark (since contract 1.32). `live` is true when the session is open in this server process, or is a child its parent's `delegate` call is running.",
+        "summary": "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). A frame whose `origin` is `{ kind: \"answer\", callId, tool, verdict, reason?, note? }` is the keeper's answer to a question carried through a stop, in any session, drawn from those fields (`you allowed it once`) and never as the words it carries (since contract 1.41). `outcomes` says how each turn ended, each `{ index, entryId, outcome, error?, delivery? }` with `messages[index]` the turn's prompt: `completed`, `interrupted` (stopped by an abort or a steer), `failed` (with `error`, the message the turn failed on), or `shutdown` (the engine stopped while the turn ran: a server that shut down mid-turn records it, and a turn the engine died in reads as one, its prompt with no reply and no `turn_facts`, or, since contract 1.41, a turn with a `turn_progress` entry and no `turn_facts`). Whatever the turn had said and done stays in `messages` after its prompt: since contract 1.41 each message, tool call and tool result is written as it happens, so a turn the engine died in keeps everything up to the moment it stopped. A turn still running, a turn whose prompt was compacted away, and a turn settled before outcomes were kept carry no mark (since contract 1.32). A completed turn carries `delivery` exactly when its live `turn.completed` did, with the same value: the id of the delivery it made, or `null` when it made none, so a transcript read again marks which turns delivered. The turn's own record keeps it, so a delivery that has since folded out of `GET /creature-deliveries` still counts; a turn completed before contract 1.41 carries none. `live` is true when the session is open in this server process, or is a child its parent's `delegate` call is running.",
         "parameters": [
           {
             "name": "id",
@@ -557,7 +557,7 @@
             "description": "No session has that id."
           },
           "409": {
-            "description": "The session is a ledger conversation that has ended, so it takes no prompt."
+            "description": "The session is a ledger conversation that has ended, so it takes no prompt; or no model can answer it yet: `{ error, refused }`, `error` a plain sentence naming what is missing (no model connected, several and none chosen, a model with no credential, a local model server that does not answer) and `refused` its IR-18 code, or `unreachable` for a server that does not answer (since contract 1.41). A creature's session asks its local model server whether it answers before every prompt it accepts, whether or not the model's tool support is already known, so a silent server is refused here rather than failing the turn after it was accepted."
           },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
@@ -661,7 +661,7 @@
     "/asks": {
       "get": {
         "operationId": "listAsks",
-        "summary": "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it.",
+        "summary": "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it. Since contract 1.41 a question outlives the engine stopping: one asked before this server started carries `carried: true` (its turn ended when the engine stopped; nothing of it ran). Answering it once moves the work on: the session's stream gets the `gate.permission` that settles the call, as a live answer would, and a turn that tells the creature the answer, with `origin: { kind: \"answer\", callId, tool, verdict, reason?, note? }`; when granted, that same call with the same arguments runs once without asking; anything else asks as always.",
         "responses": {
           "200": {
             "description": "The pending asks."
@@ -675,7 +675,7 @@
     "/asks/{callId}": {
       "post": {
         "operationId": "answerAsk",
-        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`, and in the person's own words with `note` (at most 1000 characters, the free text an `other` answer asks for). Both reach the model in the refused call's result, with a line telling it not to retry the call and not to report it as done, and ride on the `gate.permission` decision and in the journal. A grant ignores `reason` and `note`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
+        "summary": "Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: \"user\"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask's `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`, and in the person's own words with `note` (at most 1000 characters, the free text an `other` answer asks for). Both reach the model in the refused call's result, with a line telling it not to retry the call and not to report it as done, and ride on the `gate.permission` decision and in the journal. A grant ignores `reason` and `note`. Only `bash` and MCP calls can be granted beyond `once`, and a carried question (`carried: true`) only `once`. A grant beyond `once` fires `surface.changed` with `kind: \"permissions\"`.",
         "parameters": [
           {
             "name": "callId",
@@ -723,7 +723,7 @@
             "description": "The ask was settled."
           },
           "400": {
-            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\", reason?: \"unsafe\" | \"not-now\" | \"other\", note?: string }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember)."
+            "description": "The body is not `{ verdict: \"granted\" | \"denied\", scope?: \"once\" | \"session\" | \"workspace\", reason?: \"unsafe\" | \"not-now\" | \"other\", note?: string }`, or the call cannot be granted beyond `once` (`write` and `edit` never can, nor a command with no part to remember, nor a question carried through a stop)."
           },
           "404": {
             "description": "No ask with that callId is pending."
@@ -2577,7 +2577,7 @@
     "/sessions/{id}/entries": {
       "get": {
         "operationId": "readSessionEntries",
-        "summary": "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. A memory flush is a `custom_message` with `customType: \"memory_flush\"` whose `content` is the prompt keywork sent, followed by the reply as an `assistant` message entry; it is not a prompt and starts no turn. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. `journal` lists the ids of the entries kept only as evidence, which never reach the model and are not part of the conversation: the `custom` entries recording permission asks and decisions, context injections, memory decisions, shell resets, session grants and each settled turn's facts (`turn_facts`). A tree, a transcript or an export leaves them out, or folds them into the row they explain. Folding the flat log into a tree is the client's job (parent links suffice).",
+        "summary": "The session's whole entry log as the engine stores it, for a client that draws the conversation tree itself. `entries` is every entry in file order, each with its `id` and `parentId`; `message` entries carry their message whole, and the rest (`compaction`, `branch_summary`, `label`, `session_info`, `model_change`, `thinking_level_change`, `effort_change`, `context_edit`, `binding`, `custom`, `custom_message`) carry their own fields. A memory flush is a `custom_message` with `customType: \"memory_flush\"` whose `content` is the prompt keywork sent, followed by the reply as an `assistant` message entry; it is not a prompt and starts no turn. `labels` maps entry ids to the label in force, `leafId` is the entry the next message will follow, and `activePath` lists the ids from the root to that leaf. `journal` lists the ids of the entries kept only as evidence, which never reach the model and are not part of the conversation: the `custom` entries recording permission asks and decisions, context injections, memory decisions, shell resets, session grants, each settled turn's facts (`turn_facts`) and where a turn stands while it runs (`turn_progress`, since contract 1.41). A tree, a transcript or an export leaves them out, or folds them into the row they explain. Folding the flat log into a tree is the client's job (parent links suffice).",
         "parameters": [
           {
             "name": "id",
@@ -3620,7 +3620,7 @@
     "/creatures": {
       "get": {
         "operationId": "listCreatures",
-        "summary": "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, and its `temperament`, its standing manner: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent`, which its panes move with when it names no mood (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
+        "summary": "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, its `temperament`, its favourite: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent` (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes), its `range`, the three temperaments it can be, the favourite among them, in that order (two drawn from its seed besides the favourite, kept the same way), and its `manner`, the one it is in now, which its panes move with when it names no mood and which the stead walks it in: the favourite, or another of its range it took on with `arrange`'s `temperament` and keeps until it has been without a turn for half an hour, when it settles back (since contract 1.41; `creature.changed` with `change: \"updated\"` fires when it takes one on and when it settles). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
         "responses": {
           "200": {
             "description": "The creatures."
@@ -3792,7 +3792,7 @@
     "/creatures/{slug}": {
       "get": {
         "operationId": "readCreature",
-        "summary": "One creature with what a console opened mid-day needs before the first event: the summary row, its `introduction`, the `conversation` id (opened now, bound to the bot and tagged `kind: conversation`, when the creature had none; it is never trashed while the creature exists), its live `threads` newest first, each `{ id, kind: thread | routine, title, state, children, lastActivityAt }` with `state` one of `working`, `waiting` (an ask is pending), `back`, `blocked` or `paused` and `children` the sub-agents rolled up into it, the `nextRun` of its routines (`{ routineId, at }` or `null`), today's `usage` (`{ date, sessions, costNanos }`, `costNanos` `null` when no ledger has priced it, never 0) and the `routines` directory under the creature. Live state afterward rides the session events on /events; thread summaries reach the conversation as prompts whose `origin` is `{ kind: \"creature\", creature, thread }`.",
+        "summary": "One creature with what a console opened mid-day needs before the first event: the summary row, its `introduction`, the `conversation` id (opened now, bound to the bot and tagged `kind: conversation`, when the creature had none; it is never trashed while the creature exists), its live `threads` newest first, each `{ id, kind: thread | routine, title, state, children, lastActivityAt }` with `state` one of `working`, `waiting` (an ask is pending), `back`, `blocked` or `paused` and `children` the sub-agents rolled up into it, the `nextRun` of its routines (`{ routineId, at }` or `null`), today's `usage` (`{ date, sessions, costNanos }`, `costNanos` `null` when no ledger has priced it, never 0), the `routines` directory under the creature, and `talking`, the model its conversation talks on from its next turn, in the shape `GET /models` gives `conversation` for the starting model: `{ provider, model, mode, detail?, projectCheck? }`, `mode` `tools` or `chat`, and for `chat` the same plain `detail` sentence (`mill/puppet answered without calling a tool when it was asked to, so it can talk but cannot use tools.`), or `{ refused, detail }` when no model can answer it. It follows the creature's own choice for talking (`models.strong`, `inherit` being the starting model), a model set on the conversation, and what the model's server answered when asked whether it calls tools (a local server not asked yet is asked first); `creature.talking` carries it when it changes (since contract 1.41; absent from a host that keeps no model inventory). Live state afterward rides the session events on /events; thread summaries reach the conversation as prompts whose `origin` is `{ kind: \"creature\", creature, thread }`.",
         "parameters": [
           {
             "name": "slug",
@@ -3820,7 +3820,7 @@
       },
       "patch": {
         "operationId": "updateCreature",
-        "summary": "Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback`, its `temperament` (since contract 1.40) and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows.",
+        "summary": "Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy; a changed `strong` moves the conversation of the creature onto it at its next turn, since contract 1.41), `cloudFallback`, its `temperament`, its favourite, which must be one of its `range` and brings it back from any other manner at once (since contract 1.40; the range since 1.41), and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows.",
         "parameters": [
           {
             "name": "slug",
@@ -4003,6 +4003,9 @@
           "404": {
             "description": "No creature has that slug."
           },
+          "409": {
+            "description": "`{ error, refused, usable }`: a model named for a class cannot answer for it (an unknown provider or model, a provider with no credential, or a model that cannot do what the class needs). `error` says why in words and names the models that would; `refused` is the reason's code; `usable` lists those models as `provider/model`, from the models listed and those each connected model server reports when asked. Or `{ error, refused: \"outside-range\", range }`: the `temperament` named is not one of its `range`. Nothing was written. Since contract 1.41."
+          },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
           },
@@ -4036,6 +4039,59 @@
           },
           "409": {
             "description": "Not confirmed: `removal` lists what `goes` and what `stays` when it is."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host serves no creatures."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/manner": {
+      "put": {
+        "operationId": "takeCreatureManner",
+        "summary": "The creature takes on another temperament of its `range` as its `manner`, as `arrange`'s `temperament` does in its own conversation: a bound project's runtime calls it for a creature working there, so it is one creature everywhere. The body is `{ manner }`; its favourite brings it back to the favourite. It holds until the creature has been without a turn for half an hour, anywhere. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows. The app does not call it: the keeper chooses the favourite with `PATCH`. Since contract 1.41.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["manner"],
+                "properties": {
+                  "manner": {
+                    "enum": ["calm", "brisk", "eager", "playful", "decisive", "tentative"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The creature's summary, in its new manner."
+          },
+          "400": {
+            "description": "the body must be { manner: \"calm\" | \"brisk\" | \"eager\" | \"playful\" | \"decisive\" | \"tentative\" }"
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "409": {
+            "description": "`{ error, refused: \"outside-range\", range }`: not one of its temperaments."
           },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
@@ -4925,7 +4981,7 @@
     "/creatures/{slug}/ledger": {
       "get": {
         "operationId": "readCreatureLedger",
-        "summary": "The creature's ledger for the keeper's console, its questions for the keeper first and then its tasks: `{ creature, entries, folded }`. Not the keeper ledger behind `GET /creatures/{slug}/report`, nor the memory ledger. Each entry is `{ id, kind, state, title, directory, session, openedAt, closedAt, answer, about, conversation }`: `id` is stable, `title` is plain words, `directory` is the working directory of the session the work lives in (the workspace for a chore held on grants), `session` is that session while it is in the session directory and `null` once it is trashed (it comes back with `POST /trash/{id}/restore`) or when the entry never had one, `closedAt` is `null` while the entry is open, `answer` is `null` except on an answered question, and `conversation` is `null` until a short conversation about the entry is opened (`POST /creatures/{slug}/ledger/{id}/conversation`, since contract 1.38). A question (`kind: \"question\"`) is `waiting`, then `answered`, with `answer` `granted`, `denied` or `lapsed` (nobody answered: the ask timed out or its session or the server closed first, or the chore stopped needing the acceptance some other way). `about: { kind: \"ask\", callId, tool }` is a permission ask on one of the creature's sessions (its conversation, a chore run, a thread, or a sub-agent of one), waiting from when `GET /asks` lists it until it leaves, whether the keeper answered it with `POST /asks/{callId}`, a promoted rule class decided it, or it lapsed; `about: { kind: \"grants\", routineId }` is a chore held on a write or act grant set the keeper has not accepted, waiting while `GET /routines/needs-you` lists its `grants` item and `granted` once the keeper accepts it. A task (`kind: \"task\"`) is `running`, then `finished` (it ended and the keeper has not looked at it yet), then `done` once `POST /creatures/{slug}/ledger/{id}/seen` says the keeper looked; or it is `blocked` instead of `finished` when it failed, timed out, ran over budget or could not deliver. `about: { kind: \"chore\", routineId, runId }` is a chore run, running from its thread's opening to its `routine.finished`; `about: { kind: \"thread\" }` is a thread of kind `thread`, running until its first report reaches the conversation. The conversation's own turns are not tasks, and a sub-agent's work belongs to the session that delegated it. Entries come waiting questions first, then running tasks, then closed entries, each group newest first. The server writes each change as it happens and keeps the ledger for the workspace under the node's state, so it outlives a restart and the sessions it names; it is never rebuilt from history and began empty with contract 1.37, except that the grant sets chores are held on are read from the chore journal at every start. No ask or turn outlives the server, so an ask a stopped server left waiting is `answered` as `lapsed` and a task it left running is `blocked` when the next one starts. Each creature keeps its 50 most recent closed entries; older ones leave the list and `folded` counts them. Open entries are always kept. Removing a creature (`DELETE /creatures/{slug}?confirmed=true`) drops its ledger, so a creature made again under the same slug starts from none. A console follows `creature.ledger` on the event stream after a cold start. The ledger is a record for display: it grants, widens and implies nothing about what any creature may do, and a question is answered only where it was asked, never here. `project` is null for work on this server; work in a bound project runs in that project's own runtime, which keeps its questions and tasks for the creature by the same rules, and this server reads them from it as it reads that project's worksites (at start, as soon as that runtime says something changed there with `POST /creature-projects/{project}/changed`, however the turn began, and once a second while a thread there works) and carries them with `project` set to the project's id (as in `GET /creatures/{slug}/projects`, since contract 1.40): such a question is answered on that project's server, with `POST /asks/{callId}` there, and its entry follows within about a second; an entry of a project is not settled when this server restarts, since its work did not stop with it. With `?visitor=<workspace>` the answer is instead the entries this server keeps of the project threads it ran for that workspace's creature, for that creature's own server and not for display. Since contract 1.37.",
+        "summary": "The creature's ledger for the keeper's console, its questions for the keeper first and then its tasks: `{ creature, entries, folded }`. Not the keeper ledger behind `GET /creatures/{slug}/report`, nor the memory ledger. Each entry is `{ id, kind, state, title, directory, session, openedAt, closedAt, answer, about, conversation }`: `id` is stable, `title` is plain words, `directory` is the working directory of the session the work lives in (the workspace for a chore held on grants), `session` is that session while it is in the session directory and `null` once it is trashed (it comes back with `POST /trash/{id}/restore`) or when the entry never had one, `closedAt` is `null` while the entry is open, `answer` is `null` except on an answered question, and `conversation` is `null` until a short conversation about the entry is opened (`POST /creatures/{slug}/ledger/{id}/conversation`, since contract 1.38). A question (`kind: \"question\"`) is `waiting`, then `answered`, with `answer` `granted`, `denied` or `lapsed` (nobody answered: the ask timed out or its session or the server closed first, or the chore stopped needing the acceptance some other way). `about: { kind: \"ask\", callId, tool }` is a permission ask on one of the creature's sessions (its conversation, a chore run, a thread, or a sub-agent of one), waiting from when `GET /asks` lists it until it leaves, whether the keeper answered it with `POST /asks/{callId}`, a promoted rule class decided it, or it lapsed; `about: { kind: \"grants\", routineId }` is a chore held on a write or act grant set the keeper has not accepted, waiting while `GET /routines/needs-you` lists its `grants` item and `granted` once the keeper accepts it. A task (`kind: \"task\"`) is `running`, then `finished` (it ended and the keeper has not looked at it yet), then `done` once `POST /creatures/{slug}/ledger/{id}/seen` says the keeper looked; or it is `blocked` instead of `finished` when it failed, timed out, ran over budget or could not deliver. `about: { kind: \"chore\", routineId, runId }` is a chore run, running from its thread's opening to its `routine.finished`; `about: { kind: \"thread\" }` is a thread of kind `thread`, running until its first report reaches the conversation; in a bound project it is what the keeper asked for there, running across the thread's turns until a turn delivers work (`finished`) or fails (`blocked`), so a reply that only asks leaves it running, and a later question in the thread while none runs opens one titled with the words that turn was asked (since contract 1.41). The conversation's own turns are not tasks, and a sub-agent's work belongs to the session that delegated it. Entries come waiting questions first, then running tasks, then closed entries, each group newest first. The server writes each change as it happens and keeps the ledger for the workspace under the node's state, so it outlives a restart and the sessions it names; it is never rebuilt from history and began empty with contract 1.37, except that the grant sets chores are held on are read from the chore journal at every start. A task a stopped server left running is `blocked` when the next one starts, unless a question of its thread still waits through the stop (`carried`, since contract 1.41), when it stays `running` and the answer carries its work on. Each creature keeps its 50 most recent closed entries; older ones leave the list and `folded` counts them. Open entries are always kept. Removing a creature (`DELETE /creatures/{slug}?confirmed=true`) drops its ledger, so a creature made again under the same slug starts from none. A console follows `creature.ledger` on the event stream after a cold start. The ledger is a record for display: it grants, widens and implies nothing about what any creature may do, and a question is answered only where it was asked, never here. `project` is null for work on this server; work in a bound project runs in that project's own runtime, which keeps its questions and tasks for the creature by the same rules, and this server reads them from it as it reads that project's worksites (at start, as soon as that runtime says something changed there with `POST /creature-projects/{project}/changed`, however the turn began, and once a second while a thread there works) and carries them with `project` set to the project's id (as in `GET /creatures/{slug}/projects`, since contract 1.40): such a question is answered on that project's server, with `POST /asks/{callId}` there, and its entry follows within about a second; an entry of a project is not settled when this server restarts, since its work did not stop with it. With `?visitor=<workspace>` the answer is instead the entries this server keeps of the project threads it ran for that workspace's creature, for that creature's own server and not for display. Since contract 1.37.",
         "parameters": [
           {
             "name": "slug",
@@ -5072,6 +5128,158 @@
         }
       }
     },
+    "/creature-deliveries": {
+      "get": {
+        "operationId": "listCreatureDeliveries",
+        "summary": "The storehouse: what the creatures of this workspace delivered, newest first, `{ deliveries, folded }`. A delivery is `{ id, creature, line, title, files, at, directory, session, project, about, openedAt }`: `line` is the one report line of the work (the creature's first sentence, or the files it changed when it said nothing), `title` is the thread's or chore's title and null for the creature's own conversation, `files` is `{ path, added, deleted }` for each file the delivering turn changed, relative to `directory`, `at` is when it was delivered, `session` is the conversation it came from (null once that conversation is trashed; it comes back with `POST /trash/{id}/restore`), `project` is the bound project's id when the work ran in that project's runtime and null here, `about` is `{ kind: conversation }` (a finished turn of the creature's own conversation), `{ kind: thread }` (the finish of a thread it sent away to do work, or a later turn of a thread that changed files, here or in a bound project) or `{ kind: chore, routineId, runId }` (a chore run that delivered), and `openedAt` is null until the keeper opens it (`POST /creature-deliveries/{id}/opened`). The storehouse holds work, and a plain reply stays in the conversation, at home or in a project: a finished turn delivers when it changed files (where the server keeps no checkpoints, or the creature's workshop works on a copy of the workspace, when it ran a tool that writes), in the creature's own conversation and in every thread, here or in a bound project; a thread of its own it sent away to do work also delivers when it first finishes; a chore run delivers only when its run row says `delivered`; and a turn that failed or was interrupted delivers nothing. A turn that carries on a turn the engine stopped in (its question answered after the stop) lists every file both changed (since contract 1.41). Each such turn's `turn.completed` carries `delivery`, the id of the delivery it made or null, and comes after the delivery's `creature.deliveries`. Each creature keeps its 50 latest deliveries; older ones leave the list and `folded[slug]` counts them, a count that only grows while the creature stands (a creature with none folded is absent from `folded`). The server writes each delivery as it happens and keeps them for the workspace under the node's state, so they and whether each was opened outlive a restart; it began empty with contract 1.41 and is never rebuilt from history. Work in a bound project counts exactly as work here: that project's runtime keeps its deliveries for the creature, and this server reads them as it reads that project's ledger and carries them with `project` set. Removing a creature drops its deliveries. A console follows `creature.deliveries` on the event stream after a cold start. With `?visitor=<workspace>` the answer is instead `{ deliveries }`, what this server kept of the project threads it ran for that workspace's creatures, for that creature's own server and not for display. Deliveries are a record for display: they grant, widen and imply nothing. Since contract 1.41.",
+        "responses": {
+          "200": {
+            "description": "`{ deliveries, folded }`; `{ deliveries }` with `?visitor`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no storehouse."
+          }
+        }
+      }
+    },
+    "/creature-deliveries/{id}/opened": {
+      "post": {
+        "operationId": "openCreatureDelivery",
+        "summary": "The keeper has opened a delivery: `openedAt` is set, the answer is `{ delivery }` and `creature.deliveries` fires with `change: \"opened\"`. A delivery already opened answers as it is and fires nothing. It grants nothing. Since contract 1.41.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ delivery }`, now opened."
+          },
+          "404": {
+            "description": "The storehouse holds no delivery with that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no storehouse."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/promises": {
+      "get": {
+        "operationId": "readCreaturePromises",
+        "summary": "What the creature keeps, with the evidence: `{ creature, promises, questions }`. `promises` is always four, in this order, each `{ kind, state, checks, evidence, repairs }`: `chores-ran`, `models-reachable`, `workshop-healthy` and `gates-valid`. `state` is `kept`, `repairing`, `broken` or `unknown` (nothing to judge yet). `checks` says in one plain paragraph exactly what the engine checks for that promise today. `evidence` is one row per thing checked, `{ subject, checkedAt, found, ok }` (`ok` null when there is nothing to judge). `repairs` is each repair episode still worth knowing, `{ subject, startedAt, tries, bound, nextAt, endedAt, outcome }` with `outcome` `repairing`, `repaired` or `failed`: a chore that fails is run again on its own with backoff, at most five times in a row; a model server that stops answering while the creature talks with you is asked again three times over about three and a half minutes. A repair that works is recorded here and tells nobody. One that fails ends in a question in `questions`, `{ id, creature, promise, sentence, address, lastFailure, since, choices, about }`: one per cause, so a chore stopped because its model server is silent shares the question about that model. `sentence` asks it in a keeper's words and names the creature, with no model, address or engine word; the detail is in fields of its own: the silent model in `about.model`, `address` the address its server was asked at (null when the cause is not a silent model), and `lastFailure` what failed the last time in the engine's words (null for a silent model). `choices` lists what would fix it, each `{ id, label }`: `retry`, `model` (with `models`, the `{ provider, model }` references that would answer for the work waiting: for each model server connected on the stead, the models it reports when asked now, whether or not its connection lists any, and none from a server that does not answer; for a market provider, the models it lists) and `off` (when only chores wait). `about` says what waits: `{ chores, conversation, model }`. Reading this asks each local model server the creature uses whether it answers, at most once every 20 s; it spends no tokens. `creature.promises` carries the same body whenever it changes. Since contract 1.41.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ creature, promises, questions }`."
+          },
+          "404": {
+            "description": "No creature has that slug."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no promises."
+          }
+        }
+      }
+    },
+    "/creatures/{slug}/questions/{id}": {
+      "post": {
+        "operationId": "answerCreatureQuestion",
+        "summary": "The keeper answers a question a failed repair asked. The body is `{ choice }`, one of the question's `choices`, and for `model` also `model: { provider, model }`, one of the models it offers. `retry` asks a silent model server again first (and answers 409 with the error `Still no answer.` when it still does not answer, leaving the question), then runs each chore it waits for once at once: a chore that fails that one try stops again and asks again, never a silent loop. `model` sets the creature's model for the work waiting (talking with you, its chores, or both), exactly as `PATCH /creatures/{slug}` would, then runs the chores once. `off` turns the chores off in their files; they run again only when the keeper turns them on. Answers `{ question, done, promises }`: `done` says in plain words what was done. `creature.promises` follows. Since contract 1.41.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["choice"],
+                "properties": {
+                  "choice": {
+                    "type": "string",
+                    "enum": ["retry", "model", "off"]
+                  },
+                  "model": {
+                    "type": "object",
+                    "required": ["provider", "model"],
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ question, done, promises }`."
+          },
+          "400": {
+            "description": "The body is not an answer, or names a choice or a model the question does not offer."
+          },
+          "404": {
+            "description": "No creature has that slug, or it has no open question with that id."
+          },
+          "409": {
+            "description": "`{ error }`: the choice could not be carried out, in words (a model server still silent, a model that would not answer, a chore that could not be run)."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no promises."
+          }
+        }
+      }
+    },
     "/creatures/{slug}/mcp": {
       "post": {
         "operationId": "serveCreatureMcp",
@@ -5200,7 +5408,7 @@
     "/creatures/{slug}/routines": {
       "get": {
         "operationId": "listRoutines",
-        "summary": "The creature's chores, read again from its `routines/<id>.json` files (the files are the source; the node's SQLite journal is the index). Each row is `{ creature, id, file, routine, problem, grants: { posture, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun }`: `routine` is null and `problem` says why when a file does not parse; `schedule.nextRunAt` is the next planned start including the routine's deterministic stagger; `schedule.disabled` carries the reason when repeated failures turned the chore off.",
+        "summary": "The creature's chores, read again from its `routines/<id>.json` files (the files are the source; the node's SQLite journal is the index). Each row is `{ creature, id, file, routine, problem, grants: { posture, check, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun, lastCheck }` (`grants.check` the exact check command the digest covers, or null; `lastCheck` the check's latest result `{ at, command, verdict, exitCode, ms, found, output }` with `verdict` `quiet`, `woke` or `failed`, or null; both since contract 1.41): `routine` is null and `problem` says why when a file does not parse; `schedule.nextRunAt` is the next planned start including the routine's deterministic stagger; `schedule.disabled` carries the reason when repeated failures turned the chore off.",
         "parameters": [
           {
             "name": "slug",
@@ -5227,7 +5435,7 @@
     "/creatures/{slug}/routines/{id}": {
       "get": {
         "operationId": "readRoutine",
-        "summary": "One chore as `{ creature, id, file, routine, problem, grants: { posture, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun }`.",
+        "summary": "One chore as `{ creature, id, file, routine, problem, grants: { posture, check, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun, lastCheck }` (`grants.check` the exact check command the digest covers, or null; `lastCheck` the check's latest result `{ at, command, verdict, exitCode, ms, found, output }` with `verdict` `quiet`, `woke` or `failed`, or null; both since contract 1.41).",
         "parameters": [
           {
             "name": "slug",
@@ -5260,7 +5468,7 @@
       },
       "put": {
         "operationId": "putRoutine",
-        "summary": "Write the chore's file and index it. The body is the routine file (`id` may be left out; the path names it). Triggers are `cron` (with an IANA `tz` and an optional `until`), `interval` (with an optional `until` instant), `at` (one instant), `file-watch` (paths or globs under the workspace, debounced), `webhook` (fired through `POST /hooks/{slug}/{id}` with the chore's token) and `event` (a bus event by name, with a `where` filter), and `manual`; since contract 1.17 for the last four beside the first two. A fired trigger is a stored assignment, never consent: every trigger parks the same way on an unaccepted grant set. A chore with `wake` is one the creature asked for itself with the schedule tool; the keeper removes it like any other. `tools` is `read-only` unless the chore declares `write` or `act` with a `grants` set, and the keeper must accept that set once (`POST .../accept`) before such a chore runs; nothing in this body can accept it. Putting a chore that repeated failures disabled back with `enabled: true` reinstates it.",
+        "summary": "Write the chore's file and index it. The body is the routine file (`id` may be left out; the path names it). Triggers are `cron` (with an IANA `tz` and an optional `until`), `interval` (with an optional `until` instant), `at` (one instant), `file-watch` (paths or globs under the workspace, debounced), `webhook` (fired through `POST /hooks/{slug}/{id}` with the chore's token) and `event` (a bus event by name, with a `where` filter), and `manual`; since contract 1.17 for the last four beside the first two. A fired trigger is a stored assignment, never consent: every trigger parks the same way on an unaccepted grant set. A chore with `wake` is one the creature asked for itself with the schedule tool; the keeper removes it like any other. `tools` is `read-only` unless the chore declares `write` or `act` with a `grants` set, and the keeper must accept that set once (`POST .../accept`) before such a chore runs; nothing in this body can accept it. A `check` (`{ command, timeoutSeconds }`, since contract 1.41) is a script-gated check that spends no tokens: before each run a trigger fires, the engine runs the command in the workspace's shell with no model; exit 0 means nothing to do, so there is no run, no thread and no notice; any other exit wakes the model, whose prompt names a file holding what the check printed. A check that does not finish in time or cannot start fails the run like any failure. The exact command is part of the digest the keeper accepts, so a read-only chore with a check waits for acceptance too, a changed command voids it, and until it is accepted a trigger runs nothing. A run by hand skips the check. Putting a chore that repeated failures disabled back with `enabled: true` reinstates it.",
         "parameters": [
           {
             "name": "slug",
@@ -5571,6 +5779,27 @@
                     "required": ["usd", "minutes"],
                     "additionalProperties": false
                   },
+                  "check": {
+                    "description": "A script-gated check that spends no tokens (RUN-041). The keeper approves the exact command (POST .../accept with the digest); a changed command needs approval again, and a fired trigger never approves one.",
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "description": "The command run in the workspace's shell before each run, with no model: exit 0 means nothing to do, so no run and no notice; any other exit wakes the model."
+                      },
+                      "timeoutSeconds": {
+                        "default": 60,
+                        "description": "How long the check may take; one that runs longer is stopped and counts as failed.",
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 600
+                      }
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false
+                  },
                   "enabled": {
                     "default": true,
                     "description": "Whether the schedule fires at all.",
@@ -5732,7 +5961,7 @@
     "/creatures/{slug}/routines/{id}/accept": {
       "post": {
         "operationId": "acceptRoutineGrants",
-        "summary": "The keeper accepts a write or act chore's declared grant set, named by the `digest` its row shows, so the keeper accepts exactly what they read. A changed file changes the digest and voids the acceptance; a fired trigger, a run by hand or a routine body never accepts.",
+        "summary": "The keeper accepts a write or act chore's declared grant set and its check command, named by the `digest` its row shows, so the keeper accepts exactly what they read. A changed file changes the digest and voids the acceptance; a fired trigger, a run by hand or a routine body never accepts.",
         "parameters": [
           {
             "name": "slug",
@@ -5772,7 +6001,7 @@
             "description": "`{ routine }` with `grants.accepted: true`."
           },
           "400": {
-            "description": "The body is not `{ digest }`, the digest is stale, or the chore is read-only."
+            "description": "The body is not `{ digest }`, the digest is stale, or the chore is read-only with no check."
           },
           "404": {
             "description": "No creature has that slug, or it has no chore with that id."
@@ -5824,7 +6053,7 @@
     "/routines/needs-you": {
       "get": {
         "operationId": "listNeedsYou",
-        "summary": "Every chore that needs the keeper, across creatures, from one source: `{ items }`, each `{ creature, routineId, kind, reason, runId, since, action }`. `kind` is `grants` (a write or act chore held on an unaccepted grant set; `action` is `{ verb: accept, digest }` and `runId` names the run that was refused, when one was), `run` (the last run ended and needs you: failed, timed out, over budget or blocked), `disabled` (repeated failures turned the chore off) or `invalid` (its file does not parse). `since` is when that began, when known. A held run has no session, so the item carries the chore, never a thread. `routine.needs` on the event stream carries the same items per chore whenever they change, empty once the chore no longer needs you. Since contract 1.10.",
+        "summary": "Every chore that needs the keeper, across creatures, from one source: `{ items }`, each `{ creature, routineId, kind, tier, reason, runId, since, action }`. `tier` is the engine's own decision, the same as the notice for the item on `notifications.notice` (since contract 1.41): `interrupt` wants a keystroke now, `digest` can wait and arrives at once without a bell, and only an `interrupt` brings the creature to the porch. `kind` is `grants` (a write or act chore, or a chore with a check, waiting on an unaccepted grant set; `action` is `{ verb: accept, digest }` and `runId` names the run that was refused, when one was; `tier` is `digest` until a run waits on the acceptance, then `interrupt`; `reason` says in plain words what the chore asks to do, such as `asks to write files`, and never carries the digest), `run` (the last run ended and needs you: a run by hand that failed or timed out, any run over budget or blocked, or one whose delivery failed or is unknown; a scheduled run that failed is tried again on its own and is not an item while it is), `disabled` (it kept failing, so it stopped; `action` is `{ verb: answer }` since contract 1.41: the creature's question about it in `GET /creatures/{slug}/promises` carries the choices) or `invalid` (its file does not parse); every kind but a `grants` item with no run waiting is `interrupt`. `since` is when that began, when known. A held run has no session, so the item carries the chore, never a thread. `routine.needs` on the event stream carries the same items per chore whenever they change, empty once the chore no longer needs you. Since contract 1.10.",
         "responses": {
           "200": {
             "description": "`{ items }`."
@@ -5897,7 +6126,7 @@
         ],
         "responses": {
           "200": {
-            "description": "`{ runId, status }`: the run did not start: parked on its grant set, or failed at once."
+            "description": "`{ runId, status }`: the run did not start: parked on its grant set, or failed at once; or `{ runId: null, status: \"checked\" }` when the chore's check found nothing to do."
           },
           "202": {
             "description": "`{ runId, status }`: the run started."
@@ -5921,10 +6150,10 @@
     "/models": {
       "get": {
         "operationId": "listModels",
-        "summary": "Every model server this node knows, per node: servers the node manifests advertise and, for nodes without one, servers found by probing the known ports (11434 Ollama, 9931 llama-server, 8080, 1234, 8000, 30000) and fingerprinted by a native route, never by `/v1/models` alone. Each server carries its kind, fingerprint, source (`advertised` or `probed`) and health (`up | loading | saturated | down`); each model carries `installed`, `loaded`, allocated context, the classes it is eligible for (`strong | loop | decide | vision`) with what the others miss, its license and whether that license needs the keeper's acknowledgement, and its cost basis (`local_estimate` for local servers). A host that keeps license acknowledgements also gives each model `released` (the slate's release date, from which a model younger than 30 days reads as preview) and `acknowledgedAt` (when the keeper acknowledged its license, else null), fills a license the server does not report from the slate, and adds `market`: the cloud providers of the inference registry in the same columns (`kind` is the provider's name, `source: registry`, nothing installed or loaded, cost from the price table or null). A market row's health is `down` when the provider is disabled, has no credential, or refused its credential (401 or 403) on its latest turn, `up` once a turn it served answered, and `unverified` until then: listing a provider is not reaching it. A host with a default model also adds `inherits`: per class (`strong`, `loop`, `decide`, `vision`), what a creature or session whose policy says `inherit` gets, as `{ provider, model }` when the host's default model can serve the class, else `{ refused, detail }` with the IR-18 failure code (`missing-capability` for a default the class cannot use, `unconfigured` when the host has none). The class requirements of a local model are measurements of its mill; a cloud model is judged by what keywork.json or its provider's catalogue declares (context length, input modalities, tool calls), anything undeclared is unknown and never a shortfall, and decode speed is never asked of it, so a configured cloud default resolves unless a declared fact falls short; `detail` then names the model and the measurement. `decide` on a model with no decision endpoint or logprobs answers `{ provider, model, decider: builtin, detail }`: the built-in decider asks that model each question, and `detail` says so (since contract 1.20). `?node=` narrows to one node and leaves the market and the inherits out.",
+        "summary": "Every model server this node knows, per node: servers the node manifests advertise, servers found by probing the known ports (11434 Ollama, 9931 llama-server, 8080, 1234 LM Studio, 8000 vLLM, 30000; the connect prompt's presets are the same four servers on the same ports) and fingerprinted by a native route, never by `/v1/models` alone, and, since contract 1.41, every local connection the keeper made (loopback, the tailnet or the LAN): `source: connection` with `connection` its name, the provider of `<connection>/<model>`, listed under the machine it runs on (this machine for loopback, the tailnet peer's host name for a tailnet address or MagicDNS name, else the host), merged into the probed row when both name one server. Each server carries its kind, fingerprint, source (`advertised`, `probed` or `connection`), `connection` (null for a server nobody connected) and health (`up | loading | saturated | down`); a server known only by `/v1/models` is kind `openai-compatible`, lists the models it names, and is asked once with one small tool-call request whether it calls tools. Each model carries `installed`, `loaded`, allocated context, `decodeTokensPerSecond` (measured from the latest turn it served on this node, or null; never a requirement), the classes it is eligible for (`strong | loop | decide | vision`) with what the others miss, its license and whether that license needs the keeper's acknowledgement, and its cost basis (`local_estimate` for local servers). A host that keeps license acknowledgements also gives each model `released` (the slate's release date, from which a model younger than 30 days reads as preview) and `acknowledgedAt` (when the keeper acknowledged its license, else null), fills a license the server does not report from the slate, and adds `market`: the cloud providers of the inference registry in the same columns (`kind` is the provider's name, `source: registry`, nothing installed or loaded, cost from the price table or null). A market row's health is `down` when the provider is disabled, has no credential, or refused its credential (401 or 403) on its latest turn, `up` once a turn it served answered, and `unverified` until then: listing a provider is not reaching it. A host with a default model also adds `inherits`: per class (`strong`, `loop`, `decide`, `vision`), what a creature or session whose policy says `inherit` gets, as `{ provider, model }` when the host's default model can serve the class, else `{ refused, detail }` with the IR-18 failure code (`missing-capability` for a default the class cannot use, `unconfigured` when the host has none). The class requirements of a local model are measurements of its mill, and since contract 1.41 only its tool calls must be known before a class admits it: an allocated context or decode speed nobody measured yet is learned in use and never refuses it, and a local model's tool calls not declared in keywork.json are asked of the server, never assumed; a cloud model is judged by what keywork.json or its provider's catalogue declares (context length, input modalities, tool calls), anything undeclared is unknown and never a shortfall, and decode speed is never asked of it, so a configured cloud default resolves unless a declared fact falls short; `detail` then names the model and the measurement. `decide` on a model with no decision endpoint or logprobs answers `{ provider, model, decider: builtin, detail }`: the built-in decider asks that model each question, and `detail` says so (since contract 1.20). `?node=` narrows to one node and leaves the market and the inherits out.",
         "responses": {
           "200": {
-            "description": "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision }, conversation? }`. Since 1.31, a host-wide report may include `conversation`: `{ provider, model, mode: chat | tools }` or `{ refused, detail }`. Chat mode supports basic creature conversation without tool execution; strong/loop requirements for project work are unchanged. A node-filtered report omits conversation. Neither selection mode proves a successful model response."
+            "description": "`{ generatedAt, nodes: [{ node, servers: [{ kind, root, port, source, connection, auth, fingerprint, version, health, models }] }], market?, inherits?: { strong, loop, decide, vision }, conversation? }`. Since 1.31, a host-wide report may include `conversation`: `{ provider, model, mode: chat | tools, detail? }` or `{ refused, detail }`. Since 1.41 the mode is `chat` only when the model cannot call tools (its server answered the probe without calling the tool, refused a request offering tools, or is declared without them), never for its context, and `detail` then says why in one sentence; a chat-mode conversation is given no tools and a prompt that names none. A node-filtered report omits conversation. Neither selection mode proves a successful model response."
           },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
@@ -5938,7 +6167,7 @@
     "/models/probe": {
       "post": {
         "operationId": "probeModels",
-        "summary": "Probe one endpoint now: fingerprint it by native route, read its inventory, and return the capability record of each model (or of `model` alone), cached with the server fingerprint so a version change re-probes. `refresh` ignores the cache; `behaviour` also sends one small tool-call request to verify calls arrive in `tool_calls` before the model is admitted to tool classes. A server that answers only `/v1/models` comes back `unrecognized` with its listed ids and no capability marked.",
+        "summary": "Probe one endpoint now: fingerprint it by native route, read its inventory, and return the capability record of each model (or of `model` alone), cached with the server fingerprint so a version change re-probes. `refresh` ignores the cache; `behaviour` also sends one small tool-call request to verify calls arrive in `tool_calls` before the model is admitted to tool classes. A server that answers only `/v1/models` comes back `unrecognized` with its listed ids and, since contract 1.41, a record per listed model with no capability marked from the listing (`behaviour` then marks its tool calls).",
         "requestBody": {
           "required": true,
           "content": {
@@ -5987,10 +6216,10 @@
     "/models/refresh": {
       "post": {
         "operationId": "refreshModels",
-        "summary": "Reload saved model connections and configuration, then return the current model inventory in the GET /models shape. Existing turns keep their bound provider. This accepts no credentials or configuration, grants no workspace trust, and does not test a model response. Available since contract 1.31.",
+        "summary": "Reload saved model connections and configuration, then return the current model inventory in the GET /models shape. Since contract 1.41 every server also reloads them by itself within about a second of the keeper's keywork.json, auth.json or connections.json changing (a connection saved by `keywork connect` while it runs), and fires `models.changed` with `reason: connections`. Existing turns keep their bound provider. This accepts no credentials or configuration, grants no workspace trust, and does not test a model response. Available since contract 1.31.",
         "responses": {
           "200": {
-            "description": "The refreshed GET /models inventory, including current inherited and conversation models. A chat-mode conversation may offer `projectCheck: { endpoint, model }` for an explicit short tool-call probe of that selected loopback model; metadata refresh itself never performs this probe."
+            "description": "The refreshed GET /models inventory, including current inherited and conversation models. A chat-mode conversation may offer `projectCheck: { endpoint, model }` for an explicit short tool-call probe of that selected loopback model. Since contract 1.41 the refresh itself asks each connected local model whose tool calls are neither declared nor known yet, once per server fingerprint."
           },
           "400": {
             "description": "This operation accepts no request body."
@@ -6137,6 +6366,107 @@
           },
           "503": {
             "description": "This host reports no waits on a model."
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "operationId": "readNotifications",
+        "summary": "The keeper's notifications on this machine: `{ settings, quiet, held, digest }`. `settings` is `{ quietHours: { on, start, end }, doNotDisturb, tz }`: quiet hours a daily span of `HH:MM` times in `tz` (an IANA zone, or null for this machine's own) that may cross midnight, off by default with the span 22:00 to 07:00 ready; `doNotDisturb` a switch that holds until it is switched off. One set per machine, kept across restarts and shared by every workspace it serves. `quiet` is null, or `{ reason, since, until }` while nothing may interrupt: `reason` is `do-not-disturb` (it wins while both hold) or `quiet-hours`, `until` the end of quiet hours or null for do not disturb. While quiet holds creatures keep working, a question still waits in `GET /asks` and rings no bell, and a creature's panes do not rise (`show` sets them beside the conversation as cards). The engine decides the tier of everything that would notify, as a notice `{ id, tier, held, creature, session, title, at, about }`: `interrupt` for a question (`about.kind: \"ask\"`), a chore that needs the keeper (`chore`, with its `need`) and the memory inbox rising to three items (`inbox`); `digest` for a chore whose grant set waits with no run held on it, and for a finished run of a chore that notifies `always`; `log` for a finished run that needs nobody otherwise (`run`). A client rings for `tier: \"interrupt\"` with `held: false` and for nothing else. Outside quiet a `digest` notice arrives at once and rings nothing: it joins the unseen digest, which is made for it when none stands. `held` lists what quiet holds now, oldest first, of every tier but `log`; a notice that stops waiting (a question answered or lapsed, a chore need cleared) leaves it. When quiet ends everything held arrives as one digest. `digest` is the one unseen digest `{ id, at, reason, notices, folded, seenAt }` (`reason` `quiet-ended`, or `arrived` when a thing that can wait joined it outside quiet; interrupts first, then the rest, each oldest first, at most 50 listed and `folded` counting the rest), or null; a new digest carries the notices of an unseen one before it and replaces it, so at most one stands unseen. A console follows `notifications.notice`, `notifications.quiet`, `notifications.digest` and `notifications.settings` after a cold start. Since contract 1.41.",
+        "responses": {
+          "200": {
+            "description": "`{ settings, quiet, held, digest }`."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no notifications."
+          }
+        }
+      },
+      "patch": {
+        "operationId": "changeNotifications",
+        "summary": "Change the keeper's notification settings, any of `{ quietHours: { on?, start?, end? }, doNotDisturb, tz }`; what is left out stays. Answers the whole state as `GET /notifications` does. Fires `notifications.settings`, and `notifications.quiet` when the change began or ended quiet, with `notifications.digest` when ending it released what was held. Every workspace server of this machine follows the change within about a second. Since contract 1.41.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "quietHours": {
+                    "type": "object",
+                    "properties": {
+                      "on": {
+                        "type": "boolean"
+                      },
+                      "start": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "end": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "doNotDisturb": {
+                    "type": "boolean"
+                  },
+                  "tz": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "`{ settings, quiet, held, digest }` after the change."
+          },
+          "400": {
+            "description": "A time that is not `HH:MM`, quiet hours that start and end at the same time, a zone that is not an IANA zone, or an unknown field; `error` says which."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no notifications."
+          }
+        }
+      }
+    },
+    "/notifications/digests/{id}/seen": {
+      "post": {
+        "operationId": "putDigestAway",
+        "summary": "The keeper has read the unseen digest: answers `{ digest }` with `seenAt` set and fires `notifications.digest` with `change: \"seen\"`; `GET /notifications` then has `digest: null`. Since contract 1.41.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`{ digest }`, put away."
+          },
+          "404": {
+            "description": "No unseen digest has that id."
+          },
+          "500": {
+            "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
+          },
+          "503": {
+            "description": "This host keeps no notifications."
           }
         }
       }
@@ -6577,10 +6907,10 @@
     "/mesh/pairs": {
       "get": {
         "operationId": "listMeshPairs",
-        "summary": "This node's pairing state: `{ claim, owner, pairs, pending }`. `claim` is `unclaimed` until the first console pairs; `owner` is the `(tailnetId, userId)` of the human who claimed it; `pairs` are the peers this node trusts, each `{ id, peerStableId, peerUserId, peerTags, role, caps, endpoint, createdAt, confirmedBy }` where `role` is `console` (may issue grants here), `node` (may call with grants) or `target` (this node is its console); `pending` lists inbound attempts with the six-digit `sas` to compare.",
+        "summary": "This node's pairing state: `{ claim, owner, pairs, pending, keys }`. `claim` is `unclaimed` until the first console pairs; `owner` is the `(tailnetId, userId)` of the human who claimed it; `pairs` are the peers this node trusts, each `{ id, peerStableId, peerUserId, peerTags, role, caps, endpoint, createdAt, confirmedBy }` where `role` is `console` (may issue grants here), `node` (may call with grants) or `target` (this node is its console); `pending` lists inbound attempts with the six-digit `sas` to compare. `keys` says where this machine's mesh keys (its device key, which is its identity, and each pair's secret) are kept: `{ protection, store, reason }`, `protection` `os` with `store` naming the operating system's key store (`windows dpapi`, `macos keychain` or `secret service`), or `file` when no OS key store holds them, with `reason` one plain sentence saying why; a file key is protected only by file permissions. The node moves keys from a file into the OS key store when it starts and one answers; once moved, a start where that store does not answer keeps the mesh off rather than make a new identity. `keys` since contract 1.41.",
         "responses": {
           "200": {
-            "description": "`{ claim, owner, pairs, pending }`."
+            "description": "`{ claim, owner, pairs, pending, keys }`."
           },
           "500": {
             "description": "An internal fault: the handler failed in a way this server does not answer as a refusal. The body is `{ error }`, `internal fault: ` followed by the error's message, and the server writes the route and the error to its own log. Every route can answer it. Since contract 1.39; an older server ended the connection instead."
@@ -7325,7 +7655,7 @@
     "/mesh/peers": {
       "get": {
         "operationId": "listMeshPeers",
-        "summary": "The tailnet as this console sees it: `{ self, peers }`, each a machine `{ stableId, machine, dnsName, os, addresses, tags, user, online, active, candidate, path, node, manifest, endpoint? }`. Identity comes from `tailscale status` (`user` is null for a tagged machine); `path` is the lane (`direct`, `peer-relay`, `derp`, `offline`, `unknown`); `node` is the machine's unauthenticated `GET /mesh/hello` (`{ product, version, pairing }`), null when no keywork node answers or the peer is offline, shared in or expired; `endpoint` is the node's mesh base URL, the pair's when paired, else the address that answered. `manifest` is `{ roles }` from the node's manifest, which a node serves only to the consoles it is paired with, so it is null for every unpaired peer. `self` is this machine, with the manifest this node publishes.",
+        "summary": "The tailnet as this console sees it: `{ self, peers }`, each a machine `{ stableId, machine, dnsName, os, addresses, tags, user, online, active, candidate, path, node, manifest, endpoint? }`. Identity comes from `tailscale status` (`user` is null for a tagged machine); `path` is the lane (`direct`, `peer-relay`, `derp`, `offline`, `unknown`); `node` is the machine's unauthenticated `GET /mesh/hello` (`{ product, version, pairing }`), null when no keywork node answers or the peer is offline, shared in or expired; `endpoint` is the node's mesh base URL, the pair's when paired, else the address that answered. `manifest` is `{ roles, keys }` from the node's manifest, which a node serves only to the consoles it is paired with, so it is null for every unpaired peer; `keys` (since contract 1.41, absent from older nodes) is `os` when that machine keeps its mesh keys in its operating system's key store and `file` when they are protected only by file permissions. `self` is this machine, with the manifest this node publishes. Nothing is asked of any machine until a console reads this; a read asks a machine again only once its last answer is old enough: a node that answered after a minute, a machine that refused (no node, or no answer) after five minutes, then ten, twenty, forty and at most an hour while it keeps refusing, and every other read answers what was last found (since contract 1.41; before, every read asked every machine).",
         "responses": {
           "200": {
             "description": "`{ self, peers }`."
@@ -7770,13 +8100,17 @@
               "creature.changed",
               "creature.handoff",
               "creature.ledger",
+              "creature.deliveries",
               "creature.worksites",
               "creature.honours",
               "creature.scenes",
+              "creature.promises",
+              "creature.talking",
               "model.wait",
               "routine.fired",
               "routine.finished",
               "routine.needs",
+              "routine.checked",
               "workshop.changed",
               "models.changed",
               "mesh.listener",
@@ -7790,7 +8124,11 @@
               "show.changed",
               "show.settled",
               "show.arranged",
-              "workspace.changed"
+              "workspace.changed",
+              "notifications.notice",
+              "notifications.quiet",
+              "notifications.digest",
+              "notifications.settings"
             ]
           },
           "payload": {}

@@ -1,5 +1,5 @@
 export function toolActivityOf(tool: string, args: unknown): string {
-  const subject = subjectOf(args);
+  const subject = toolSubjectOf(args);
   return subject === "" ? tool : `${tool} ${subject}`;
 }
 
@@ -7,7 +7,7 @@ const favoredSubjects = ["path", "command", "query", "pattern", "url", "name"];
 
 const longestSubject = 60;
 
-function subjectOf(args: unknown): string {
+export function toolSubjectOf(args: unknown): string {
   if (typeof args !== "object" || args === null) return "";
   const record = args as Record<string, unknown>;
   const shown = shownRefOf(record.what);

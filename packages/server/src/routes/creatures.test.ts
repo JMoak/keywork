@@ -60,6 +60,8 @@ const pip: CreatureSummary = {
   paused: null,
   inbound: "paired",
   temperament: "playful",
+  range: ["brisk", "playful", "decisive"],
+  manner: "playful",
 };
 
 const pipReport: CreatureReport = {
@@ -143,6 +145,7 @@ function fakePort(
       port.choices.push({ verb: "remove", slug, choice });
       return slug === "pip" ? pipRemoval : undefined;
     },
+    takeManner: async (slug) => (slug === "pip" ? pip : undefined),
     subscribe: () => () => undefined,
   };
   return port;

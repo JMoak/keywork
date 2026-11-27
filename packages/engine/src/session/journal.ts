@@ -1,11 +1,12 @@
 import type { AskScope, PermissionRule } from "@keywork/shared";
 import type { EngineEvents, EventBus } from "../bus.ts";
+import { talkingChoiceType } from "../creatures/sessions.ts";
 import type { MemoryDecision } from "../memory/decider.ts";
 import type { ToolPreview } from "../tools.ts";
 import type { CustomEntry, SessionEntry } from "./entries.ts";
 import { reviewVerdictType } from "./review.ts";
 import type { SessionStore } from "./store.ts";
-import { turnFactsType } from "./turn-facts.ts";
+import { turnFactsType, turnProgressType } from "./turn-facts.ts";
 
 export type PermissionVerdict = "granted" | "denied";
 export type PermissionGate = "policy" | "default" | "trusted" | "user" | "headless" | "quiet";
@@ -225,7 +226,9 @@ const journalOnlyTypes: ReadonlySet<string> = new Set([
   "shell_reset",
   "session_grants",
   turnFactsType,
+  turnProgressType,
   reviewVerdictType,
+  talkingChoiceType,
 ]);
 
 function changeOf(preview: ToolPreview): AskedChange {

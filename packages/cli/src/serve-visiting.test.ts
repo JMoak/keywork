@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type CreatureDeliveries,
   type CreatureLedgerEntry,
   type CreatureScene,
+  type CreatureSummary,
   createTailnet,
   MockProvider,
   type PermissionResolver,
@@ -27,7 +29,7 @@ const token = "visiting-token";
 const waitLimitMs = 10_000;
 
 describe("a home creature working in a bound project", () => {
-  it("sets things out as itself: its slug, its building for the folder it works in, and its temperament", async () => {
+  it("sets things out as itself: its slug, its building for the project it works in, and its temperament", async () => {
     const { project, home } = await steadAndProject({ folders: ["alpha"] });
     const runtime = await listeningRuntime(
       project,
@@ -47,10 +49,43 @@ describe("a home creature working in a bound project", () => {
         expect.objectContaining({
           creature: "lark",
           what: { kind: "file", ref: "alpha/plan.md" },
-          place: { kind: "project", creature: "lark", directory: join(project.cwd, "alpha") },
+          place: { kind: "project", creature: "lark", directory: project.cwd },
           mood: "playful",
         }),
       ]);
+    } finally {
+      await stead.close();
+      await runtime.close();
+    }
+  });
+
+  it("takes on another manner of its range there, and its next pane that names no mood carries it", async () => {
+    const { project, home } = await steadAndProject({ folders: ["alpha"] });
+    const stead = await listeningStead(home);
+    const lark = await stead.call<CreatureSummary>("POST", "/creatures", {
+      name: "Lark",
+      temperament: "playful",
+    });
+    const other = lark.range.find((temperament) => temperament !== "playful");
+    const runtime = await listeningRuntime(
+      project,
+      new MockProvider([
+        call("t1", "arrange", { temperament: other }),
+        call("s1", "show", { what: { kind: "note", ref: "The plan." } }),
+        textTurn("Set out the plan."),
+      ]),
+    );
+    try {
+      await stead.workIn(project, "lark", "Set out the plan, and be quicker about it.");
+      await until(async () => runtime.proposed().length > 0);
+
+      expect(runtime.proposed()).toEqual([
+        expect.objectContaining({ creature: "lark", mood: other }),
+      ]);
+      expect(await stead.call<CreatureSummary>("GET", "/creatures/lark")).toMatchObject({
+        temperament: "playful",
+        manner: other,
+      });
     } finally {
       await stead.close();
       await runtime.close();
@@ -179,6 +214,52 @@ describe("a home creature working in a bound project", () => {
       });
       await runtime.call("POST", "/asks/w2", { verdict: "granted", scope: "once" });
       await until(async () => (await again())?.state === "answered");
+    } finally {
+      await stead.close();
+      await runtime.close();
+    }
+  });
+
+  it("shelves no plain reply of a thread there, and keeps the task running until its work is delivered", async () => {
+    const { project, home } = await steadAndProject({ repository: true });
+    const runtime = await listeningRuntime(
+      project,
+      new MockProvider([
+        textTurn("May I write the plan?"),
+        call("w1", "write", { path: "plan.md", content: "the plan\n" }),
+        textTurn("Wrote the plan."),
+      ]),
+    );
+    const stead = await listeningStead(home);
+    try {
+      await stead.call("POST", "/creatures", { name: "Lark" });
+      const thread = await stead.workIn(project, "lark", "Write the plan.");
+      const tasks = async () =>
+        (
+          await stead.call<{ entries: CreatureLedgerEntry[] }>("GET", "/creatures/lark/ledger")
+        ).entries.filter(({ kind }) => kind === "task");
+      const completed = () =>
+        runtime.payloadsOf("turn.completed") as { delivery?: string | null }[];
+      await until(async () => completed().length === 1 && (await tasks()).length === 1);
+
+      expect(completed()).toEqual([expect.objectContaining({ delivery: null })]);
+      expect(await tasks()).toEqual([
+        expect.objectContaining({ state: "running", title: "Write the plan." }),
+      ]);
+
+      await runtime.call("POST", `/sessions/${thread}/prompt`, { text: "Yes, go ahead." });
+      const shelved = async () =>
+        (await stead.call<CreatureDeliveries>("GET", "/creature-deliveries")).deliveries;
+      await until(
+        async () => (await shelved()).length > 0 && (await tasks())[0]?.closedAt !== null,
+      );
+
+      expect(await shelved()).toEqual([
+        expect.objectContaining({ id: completed()[1]?.delivery, session: thread }),
+      ]);
+      expect(await tasks()).toEqual([
+        expect.objectContaining({ state: "finished", title: "Write the plan." }),
+      ]);
     } finally {
       await stead.close();
       await runtime.close();

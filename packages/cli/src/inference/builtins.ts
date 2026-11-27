@@ -1,5 +1,6 @@
 import {
   jevModel,
+  localServerPresets,
   type Protocol,
   type RequestDecorations,
   typesafeEndpoint,
@@ -142,9 +143,6 @@ export interface LocalTemplate {
   endpoint: string;
 }
 
-export const localTemplates: readonly LocalTemplate[] = [
-  { name: "ollama", label: "Ollama", endpoint: "http://localhost:11434/v1" },
-  { name: "lmstudio", label: "LM Studio", endpoint: "http://localhost:1234/v1" },
-  { name: "llamacpp", label: "llama.cpp server", endpoint: "http://localhost:8080/v1" },
-  { name: "vllm", label: "vLLM", endpoint: "http://localhost:8000/v1" },
-];
+export const localTemplates: readonly LocalTemplate[] = localServerPresets.map(
+  ({ name, label, port }) => ({ name, label, endpoint: `http://localhost:${port}/v1` }),
+);

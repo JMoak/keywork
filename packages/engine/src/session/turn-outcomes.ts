@@ -1,9 +1,17 @@
 import { contextEntriesFor, contextMessages, isPromptEntry, type SessionEntry } from "./entries.ts";
-import { type PathTurn, type TurnEnding, type TurnOutcome, turnsAlong } from "./turn-facts.ts";
+import {
+  type PathTurn,
+  type TurnEnding,
+  type TurnFacts,
+  type TurnOutcome,
+  turnProgressAlong,
+  turnsAlong,
+} from "./turn-facts.ts";
 
 export interface OutcomeMark extends TurnEnding {
   readonly index: number;
   readonly entryId: string;
+  readonly delivery?: string | null;
 }
 
 export function outcomeMarksOf(
@@ -21,30 +29,46 @@ export function outcomeMarksOf(
   return marks;
 }
 
+export function deliveryFieldOf(facts: TurnFacts | undefined): { delivery?: string | null } {
+  const delivery = facts?.delivery;
+  return typeof delivery === "string" || delivery === null ? { delivery } : {};
+}
+
+type MarkedEnding = Omit<OutcomeMark, "index" | "entryId">;
+
 function turnEndingsAlong(
   path: readonly SessionEntry[],
   lastTurnRunning: boolean,
-): Map<string, TurnEnding> {
+): Map<string, MarkedEnding> {
   const turns = turnsAlong(path);
   const ended = lastTurnRunning ? turns.slice(0, -1) : turns;
-  const answered = answeredPrompts(path);
-  const endings = new Map<string, TurnEnding>();
+  const unkept = settledBeforeOutcomes(path);
+  const endings = new Map<string, MarkedEnding>();
   for (const turn of ended) {
-    const ending = endingOf(turn, answered.has(turn.prompt.id));
+    const ending = endingOf(turn, unkept.has(turn.prompt.id));
     if (ending !== undefined) endings.set(turn.prompt.id, ending);
   }
   return endings;
 }
 
-function endingOf({ facts }: PathTurn, answered: boolean): TurnEnding | undefined {
-  if (facts === undefined) return answered ? undefined : { outcome: "shutdown" };
+function endingOf({ facts }: PathTurn, unkept: boolean): MarkedEnding | undefined {
+  if (facts === undefined) return unkept ? undefined : { outcome: "shutdown" };
   const { outcome, error } = facts;
   if (!isTurnOutcome(outcome)) return undefined;
-  return typeof error === "string" ? { outcome, error } : { outcome };
+  return {
+    outcome,
+    ...(typeof error === "string" && { error }),
+    ...(outcome === "completed" && deliveryFieldOf(facts)),
+  };
 }
 
 function isTurnOutcome(value: unknown): value is TurnOutcome {
   return turnOutcomes.some((known) => known === value);
+}
+
+function settledBeforeOutcomes(path: readonly SessionEntry[]): Set<string> {
+  const kept = turnProgressAlong(path);
+  return new Set([...answeredPrompts(path)].filter((prompt) => !kept.has(prompt)));
 }
 
 function answeredPrompts(path: readonly SessionEntry[]): Set<string> {

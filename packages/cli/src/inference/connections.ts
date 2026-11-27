@@ -109,7 +109,7 @@ const customTarget: ConnectionTarget = {
   name: "",
   endpoint: "",
   protocol: "chat-completions",
-  credential: "api-key",
+  credential: "none",
   endpointEditable: true,
   nameEditable: true,
 };

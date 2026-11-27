@@ -9,14 +9,19 @@ import {
   verify,
 } from "node:crypto";
 import { join } from "node:path";
-import { type Disk, type JsonFileStore, jsonFileStore } from "@keywork/shared";
+import { type Disk, type JsonFileStore, jsonFileStore, type SecretVault } from "@keywork/shared";
 import { base64urlPattern } from "./canonical.ts";
 
-export type KeyProtection = "os" | "unprotected-file" | "memory";
+export type KeyProtection = "os" | "file" | "memory";
+
+export interface KeyPlacement {
+  protection: KeyProtection;
+  store: string | null;
+  reason: string | null;
+}
 
 export interface KeyStore {
-  readonly protection: KeyProtection;
-  readonly warning: string | null;
+  placement(): KeyPlacement;
   read(name: string): Promise<string | undefined>;
   write(name: string, value: string): Promise<void>;
   remove(name: string): Promise<void>;
@@ -34,8 +39,12 @@ export interface ExchangeKey {
 
 export const deviceKeyName = "mesh.device-key";
 
-export const unprotectedKeyWarning =
-  "Mesh keys are kept in a plain file readable by anything running as this user (mode 0600 where the OS honours it; Windows ignores it). Move them into the OS credential store before trusting this node with other machines.";
+export const pairSecretPrefix = "mesh.pair.";
+
+export function keysWarning({ protection, reason }: KeyPlacement): string | null {
+  if (protection !== "file") return null;
+  return `This machine's mesh keys are protected only by file permissions: they are in a file only this user can read, because ${reason ?? "no OS key store holds them"}. Anything running as this user can read that file.`;
+}
 
 export async function loadDeviceKey(store: KeyStore): Promise<DeviceKey> {
   const saved = await store.read(deviceKeyName);
@@ -78,8 +87,7 @@ export function newExchangeKey(): ExchangeKey {
 export function memoryKeyStore(): KeyStore {
   const held = new Map<string, string>();
   return {
-    protection: "memory",
-    warning: null,
+    placement: () => ({ protection: "memory", store: null, reason: null }),
     read: async (name) => held.get(name),
     write: async (name, value) => {
       held.set(name, value);
@@ -94,12 +102,14 @@ export function meshKeysFile(stateDir: string): string {
   return join(stateDir, "mesh", "keys.json");
 }
 
-export class UnprotectedFileKeyStore implements KeyStore {
-  readonly protection = "unprotected-file";
-  readonly warning = unprotectedKeyWarning;
+export class FileKeyStore implements KeyStore {
   private readonly file: JsonFileStore<Record<string, string>>;
 
-  constructor(path: string, disk?: Disk) {
+  constructor(
+    readonly path: string,
+    private readonly reason: () => string,
+    disk?: Disk,
+  ) {
     this.file = jsonFileStore<Record<string, string>>({
       file: path,
       mode: "strict",
@@ -108,6 +118,14 @@ export class UnprotectedFileKeyStore implements KeyStore {
       error: (file, detail) => new Error(`mesh key file ${file} is ${detail}`),
       disk,
     });
+  }
+
+  placement(): KeyPlacement {
+    return { protection: "file", store: null, reason: this.reason() };
+  }
+
+  entries(): Record<string, string> {
+    return this.file.read() ?? {};
   }
 
   async read(name: string): Promise<string | undefined> {
@@ -122,6 +140,31 @@ export class UnprotectedFileKeyStore implements KeyStore {
     const held = Object.entries(this.file.read() ?? {});
     this.file.write(Object.fromEntries(held.filter(([key]) => key !== name)));
   }
+}
+
+export function vaultKeyStore(vault: SecretVault): KeyStore {
+  const lasting = new Map<string, string>();
+  const kept = (name: string, value: string): void => {
+    if (name === deviceKeyName || name.startsWith(pairSecretPrefix)) lasting.set(name, value);
+  };
+  return {
+    placement: () => ({ protection: "os", store: vault.backend, reason: null }),
+    read: async (name) => {
+      const known = lasting.get(name);
+      if (known !== undefined) return known;
+      const held = await vault.lookup(name);
+      if (held !== undefined) kept(name, held);
+      return held;
+    },
+    write: async (name, value) => {
+      await vault.store(name, value);
+      kept(name, value);
+    },
+    remove: async (name) => {
+      lasting.delete(name);
+      await vault.forget(name);
+    },
+  };
 }
 
 function deviceKeyOf(privateKey: KeyObject): DeviceKey {

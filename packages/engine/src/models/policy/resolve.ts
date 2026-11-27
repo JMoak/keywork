@@ -4,7 +4,7 @@ import {
   type ModelCapabilityDeclaration,
   undeclaredCapabilities,
 } from "../../capabilities.ts";
-import { endpointScheme, formatReference, isLoopbackEndpoint } from "../../inference/references.ts";
+import { endpointScheme, formatReference, isPrivateEndpoint } from "../../inference/references.ts";
 import { bindModel } from "../../inference/resolution.ts";
 import type {
   InferenceBinding,
@@ -169,13 +169,7 @@ function planCandidate(
   const bound = bindForClass(candidate, modelClass, environment.registrations);
   if (!bound.ok) return { level, candidate, reason: "unresolved", failure: bound.failure };
   const { binding } = bound;
-  const capabilities =
-    environment.capabilityOf?.(binding) ??
-    declaredRecord(
-      binding.registration,
-      binding.reference.model,
-      (environment.now ?? (() => new Date()))().toISOString(),
-    );
+  const capabilities = bindingCapabilities(binding, environment);
   const missing = missingFor(capabilities, modelClass);
   if (missing.length > 0) {
     const failure = missingCapability(binding, modelClass, missing, capabilities);
@@ -245,7 +239,7 @@ function registrationRefusal(
       reference,
       provider,
       endpoint: registration.endpoint,
-      message: `${provider} points at ${registration.endpoint}, which is not HTTPS and not loopback`,
+      message: `${provider} points at ${registration.endpoint}, which is not HTTPS, loopback or the tailnet`,
     };
   }
   return undefined;
@@ -254,8 +248,23 @@ function registrationRefusal(
 function transportIsPrivate({ endpoint, insecureTransport }: ProviderRegistration): boolean {
   const scheme = endpointScheme(endpoint);
   if (scheme === "https") return true;
-  return scheme === "http" && (isLoopbackEndpoint(endpoint) || insecureTransport === true);
+  return scheme === "http" && (isPrivateEndpoint(endpoint) || insecureTransport === true);
 }
+
+export function bindingCapabilities(
+  binding: InferenceBinding,
+  environment: Pick<PolicyEnvironment, "capabilityOf" | "now">,
+): CapabilityRecord {
+  const probed = environment.capabilityOf?.(binding);
+  const { registration, reference } = binding;
+  if (probed === undefined) {
+    const now = (environment.now ?? (() => new Date()))().toISOString();
+    return declaredRecord(registration, reference.model, now);
+  }
+  return withDeclarations(probed, declarationOf(registration, reference.model));
+}
+
+export const toolsNotAskedYet = "the server was not asked yet whether it calls tools";
 
 export function declaredRecord(
   registration: ProviderRegistration,
@@ -270,9 +279,13 @@ export function declaredRecord(
     registration,
     protocol: listed?.protocol ?? registration.protocol,
   });
+  const local = localityOf(registration.endpoint) === "local";
   const record: CapabilityRecord = {
     ...blankRecord(registration.endpoint, model, fingerprint, probedAt),
-    tools: known(declaration?.toolCalls ?? undeclaredCapabilities.toolCalls, declared),
+    tools:
+      declaration?.toolCalls === undefined && local
+        ? unknownCapability(toolsNotAskedYet)
+        : known(declaration?.toolCalls ?? undeclaredCapabilities.toolCalls, declared),
     imageInput:
       declaration?.input === undefined
         ? unknownCapability("neither keywork.json nor the provider's catalogue names its input")
@@ -288,6 +301,24 @@ export function declaredRecord(
     tools: known(false, decisionModel),
     imageInput: known("none", decisionModel),
     decisionEndpoint: known("/v1/systemone", decisionModel),
+  };
+}
+
+function withDeclarations(
+  record: CapabilityRecord,
+  declaration: ModelCapabilityDeclaration | undefined,
+): CapabilityRecord {
+  if (declaration === undefined) return record;
+  const declared = { source: "declared" } as const;
+  return {
+    ...record,
+    ...(declaration.toolCalls !== undefined && { tools: known(declaration.toolCalls, declared) }),
+    ...(declaration.contextWindow !== undefined && {
+      contextAllocated: known(declaration.contextWindow, declared),
+    }),
+    ...(declaration.input !== undefined && {
+      imageInput: known(declaration.input.includes("image") ? "base64" : "none", declared),
+    }),
   };
 }
 

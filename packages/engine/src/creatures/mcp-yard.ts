@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { neutralizeRecalled } from "../memory/neutralize.ts";
 import type { ToolCallPart } from "../messages.ts";
+import type { KeeperAway } from "../notices/quiet.ts";
 import { minuteMs } from "../routines/clock.ts";
 import { quotedNameOf } from "../show/naming.ts";
 import type { PlaceBook } from "../show/places.ts";
@@ -14,6 +15,7 @@ import {
   type SteadPlace,
 } from "../show/setting.ts";
 import { machinePaneAsked, type ShowSettings, type ShowTarget } from "../tools/show.ts";
+import type { TemperamentSeat } from "../tools/temperament.ts";
 import { yardRefused, yardToolNames, yardTools } from "../tools/yard.ts";
 import { findTool, type Tool } from "../tools.ts";
 
@@ -31,6 +33,8 @@ export interface CreatureYard {
   asksTheKeeper?: KeeperAsker | undefined;
   scenes?: SceneShelf | undefined;
   temperamentOf?: ((slug: string) => Promise<Mood | undefined>) | undefined;
+  temperamentsOf?: ((slug: string) => TemperamentSeat) | undefined;
+  away?: (() => KeeperAway | undefined) | undefined;
 }
 
 export type KeeperAsker = (conversation: string, call: ToolCallPart) => Promise<boolean>;
@@ -41,6 +45,8 @@ export interface CreatureYardSeams {
   asksTheKeeper?: KeeperAsker | undefined;
   scenes?: SceneShelf | undefined;
   temperamentOf?: ((slug: string) => Promise<Mood | undefined>) | undefined;
+  temperamentsOf?: ((slug: string) => TemperamentSeat) | undefined;
+  away?: (() => KeeperAway | undefined) | undefined;
 }
 
 export interface YardListing {
@@ -56,8 +62,26 @@ export type YardAnswer =
   | { invalid: z.ZodError };
 
 export function creatureYard(settings: ShowSettings, seams: CreatureYardSeams = {}): CreatureYard {
-  const { now = Date.now, places, asksTheKeeper, scenes, temperamentOf } = seams;
-  return { settings, now, toldAt: new Map(), places, asksTheKeeper, scenes, temperamentOf };
+  const {
+    now = Date.now,
+    places,
+    asksTheKeeper,
+    scenes,
+    temperamentOf,
+    temperamentsOf,
+    away,
+  } = seams;
+  return {
+    settings,
+    now,
+    toldAt: new Map(),
+    places,
+    asksTheKeeper,
+    scenes,
+    temperamentOf,
+    temperamentsOf,
+    away,
+  };
 }
 
 export function yardListingsFor(slug: string): YardListing[] {
@@ -207,6 +231,8 @@ function seatOf(
     places: yard.places,
     scenes: yard.scenes,
     temperament: async () => yard.temperamentOf?.(slug),
+    temperaments: yard.temperamentsOf?.(slug),
+    away: yard.away,
     settings: () => settings,
   };
 }

@@ -119,6 +119,19 @@ const usage = {
 const samples: Samples = {
   "turn.started": [
     { userText: "hi", entryId: "e1", origin: { kind: "external", client: "keywork-app" } },
+    { userText: "Fix the failing test.", entryId: "e2", origin: { kind: "keeper" } },
+    {
+      userText: "The keeper answered the question that waited while the engine was stopped: …",
+      entryId: "e3",
+      origin: {
+        kind: "answer",
+        callId: "c1",
+        tool: "bash",
+        verdict: "denied",
+        reason: "other",
+        note: "not on this branch",
+      },
+    },
   ],
   "turn.delta": [
     { delta: { type: "text", text: "hi" } },
@@ -144,7 +157,7 @@ const samples: Samples = {
       },
     },
   ],
-  "turn.completed": [{ message, usage }],
+  "turn.completed": [{ message, usage, delivery: "3f9c0a1b2c3d4e5f" }],
   "turn.interrupted": [{ message }],
   "turn.waiting": [{ reason: "rate-limited", until: "2026-11-06T10:00:02.000Z", attempt: 2 }],
   "turn.resumed": [{ attempt: 2 }],
@@ -164,6 +177,13 @@ const samples: Samples = {
       isError: false,
       spill: { id: "s1", bytes: 4096, elidedFrom: 10, elidedTo: 20 },
       exitCode: 0,
+    },
+    {
+      callId: "c2",
+      output:
+        "You are brisk now, and settle back to eager by yourself once you have rested a while.",
+      isError: false,
+      fact: { kind: "temperament", manner: "brisk", favourite: "eager" },
     },
   ],
   "gate.ask": [
@@ -458,6 +478,59 @@ const samples: Samples = {
       folded: 1,
     },
   ],
+  "creature.deliveries": [
+    {
+      change: "delivered",
+      delivery: {
+        id: "9c1e4a7b2d3f5a60",
+        creature: "osk",
+        line: "The garden notes are written.",
+        title: null,
+        files: [{ path: "notes/garden.md", added: 3, deleted: 0 }],
+        at: "2026-11-05T09:06:00.000Z",
+        directory: "C:/Users/keeper/.keywork/home",
+        session: "f2c1a7d0-1111-4c3b-9d4e-5a6b7c8d9e0f",
+        project: null,
+        about: { kind: "conversation" },
+        openedAt: null,
+      },
+      folded: 0,
+    },
+    {
+      change: "opened",
+      delivery: {
+        id: "2b7d9e1f4a6c8053",
+        creature: "wren",
+        line: "Three issues are new since yesterday.",
+        title: "Morning triage",
+        files: [],
+        at: "2026-11-05T08:01:12.000Z",
+        directory: "C:/Users/keeper/.keywork/home",
+        session: "s3",
+        project: null,
+        about: { kind: "chore", routineId: "triage", runId: "wren:triage:1762329600000:1" },
+        openedAt: "2026-11-05T09:30:00.000Z",
+      },
+      folded: 4,
+    },
+    {
+      change: "folded",
+      delivery: {
+        id: "4e6a8c0b2d1f3e57",
+        creature: "osk",
+        line: "a.txt holds its own name.",
+        title: "Write a.txt with its own name in it.",
+        files: [{ path: "a.txt", added: 1, deleted: 0 }],
+        at: "2026-11-01T10:05:00.000Z",
+        directory: "C:/work/tally",
+        session: null,
+        project: "4e1c0d9a7b23",
+        about: { kind: "thread" },
+        openedAt: "2026-11-01T11:00:00.000Z",
+      },
+      folded: 51,
+    },
+  ],
   "creature.worksites": [
     {
       change: "changed",
@@ -537,6 +610,117 @@ const samples: Samples = {
       },
     },
   ],
+  "creature.promises": [
+    {
+      creature: "wren",
+      promises: [
+        {
+          kind: "chores-ran",
+          state: "broken",
+          checks:
+            "Each chore that is on ran when it was due and finished, or its check found nothing to do.",
+          evidence: [
+            {
+              subject: "Morning look",
+              checkedAt: "2026-11-05T09:13:00.000Z",
+              found:
+                "stopped after it kept failing: the run could not start: mill does not answer at http://127.0.0.1:11434; is its model server running?",
+              ok: false,
+            },
+          ],
+          repairs: [
+            {
+              subject: "Morning look",
+              startedAt: "2026-11-05T09:00:01.000Z",
+              tries: 5,
+              bound: 5,
+              nextAt: null,
+              endedAt: "2026-11-05T09:13:00.000Z",
+              outcome: "failed",
+            },
+          ],
+        },
+        {
+          kind: "models-reachable",
+          state: "broken",
+          checks: "Each model this creature talks and works on can answer.",
+          evidence: [
+            {
+              subject: "mill/puppet:7b, for talking with you and for its chores",
+              checkedAt: "2026-11-05T09:13:00.000Z",
+              found: "does not answer at http://127.0.0.1:11434",
+              ok: false,
+            },
+          ],
+          repairs: [],
+        },
+        {
+          kind: "workshop-healthy",
+          state: "kept",
+          checks: "The creature's workshop answers.",
+          evidence: [
+            {
+              subject: "this host",
+              checkedAt: "2026-11-05T09:14:00.000Z",
+              found: "its workspace folder is there and writable",
+              ok: true,
+            },
+          ],
+          repairs: [],
+        },
+        {
+          kind: "gates-valid",
+          state: "unknown",
+          checks: "Every gate the creature holds is still the one you opened.",
+          evidence: [],
+          repairs: [],
+        },
+      ],
+      questions: [
+        {
+          id: "model-3c1f0a9b2d7e",
+          creature: "wren",
+          promise: "models-reachable",
+          sentence: '"Morning look" did not run: Wren\'s model is not answering.',
+          address: "http://127.0.0.1:11434",
+          lastFailure: null,
+          since: "2026-11-05T09:13:00.000Z",
+          choices: [
+            { id: "retry", label: "Try again" },
+            {
+              id: "model",
+              label: "Choose another model",
+              models: [{ provider: "spark", model: "qwen3:32b" }],
+            },
+            { id: "off", label: "Turn the chore off" },
+          ],
+          about: {
+            chores: ["look"],
+            conversation: false,
+            model: { provider: "mill", model: "puppet:7b" },
+          },
+        },
+      ],
+    },
+  ],
+  "creature.talking": [
+    {
+      slug: "osk",
+      talking: {
+        provider: "mill",
+        model: "puppet:7b",
+        mode: "chat",
+        detail:
+          "mill/puppet:7b answered without calling a tool when it was asked to, so it can talk but cannot use tools.",
+        projectCheck: { endpoint: "http://127.0.0.1:11434/v1", model: "puppet:7b" },
+      },
+    },
+    { slug: "wren", talking: { provider: "spark", model: "qwen3:32b", mode: "tools" } },
+    {
+      slug: "pip",
+      talking: { refused: "unconfigured", detail: "Choose a starting model for conversation." },
+    },
+  ],
   "model.wait": [
     {
       change: "waiting",
@@ -556,6 +740,134 @@ const samples: Samples = {
         server: null,
         reason: "limited",
         since: "2026-11-05T09:03:00.000Z",
+      },
+    },
+  ],
+  "notifications.notice": [
+    {
+      notice: {
+        id: "ask:c7",
+        tier: "interrupt",
+        held: true,
+        creature: "pip",
+        session: "f2c1a7d0-1111-4c3b-9d4e-5a6b7c8d9e0f",
+        title: "Pip asks to run bun test",
+        at: "2026-11-05T23:10:00.000Z",
+        about: { kind: "ask", callId: "c7", tool: "bash" },
+      },
+    },
+    {
+      notice: {
+        id: "chore:wren/triage/grants",
+        tier: "digest",
+        held: false,
+        creature: "wren",
+        session: null,
+        title: 'Wren\'s chore "Morning triage" asks to write files',
+        at: "2026-11-05T09:00:00.000Z",
+        about: { kind: "chore", routineId: "triage", need: "grants", runId: null },
+      },
+    },
+    {
+      notice: {
+        id: "run:wren:triage:1762329600000:1",
+        tier: "log",
+        held: false,
+        creature: "wren",
+        session: "a1b2c3d4-2222-4c3b-9d4e-5a6b7c8d9e0f",
+        title: 'Wren finished the chore "Morning triage"',
+        at: "2026-11-05T09:04:00.000Z",
+        about: { kind: "run", routineId: "triage", runId: "wren:triage:1762329600000:1" },
+      },
+    },
+    {
+      notice: {
+        id: "inbox",
+        tier: "interrupt",
+        held: false,
+        creature: null,
+        session: null,
+        title: "3 things in memory wait for your review",
+        at: "2026-11-05T10:00:00.000Z",
+        about: { kind: "inbox", pending: 3 },
+      },
+    },
+    {
+      notice: {
+        id: "question:wren/model-3c1f0a9b2d7e",
+        tier: "interrupt",
+        held: false,
+        creature: "wren",
+        session: null,
+        title: '"Morning look" did not run: Wren\'s model is not answering.',
+        at: "2026-11-05T09:13:00.000Z",
+        about: { kind: "question", questionId: "model-3c1f0a9b2d7e", promise: "models-reachable" },
+      },
+    },
+  ],
+  "notifications.quiet": [
+    {
+      change: "began",
+      quiet: {
+        reason: "quiet-hours",
+        since: "2026-11-05T22:00:00.000Z",
+        until: "2026-11-06T07:00:00.000Z",
+      },
+    },
+    {
+      change: "changed",
+      quiet: { reason: "do-not-disturb", since: "2026-11-05T23:00:00.000Z", until: null },
+    },
+    { change: "ended", quiet: null },
+  ],
+  "notifications.digest": [
+    {
+      change: "ready",
+      digest: {
+        id: "5e2a9c1b7d3f4a60",
+        at: "2026-11-06T07:00:00.000Z",
+        reason: "quiet-ended",
+        notices: [
+          {
+            id: "ask:c7",
+            tier: "interrupt",
+            held: false,
+            creature: "pip",
+            session: "f2c1a7d0-1111-4c3b-9d4e-5a6b7c8d9e0f",
+            title: "Pip asks to run bun test",
+            at: "2026-11-05T23:10:00.000Z",
+            about: { kind: "ask", callId: "c7", tool: "bash" },
+          },
+        ],
+        folded: 0,
+        seenAt: null,
+      },
+    },
+    {
+      change: "seen",
+      digest: {
+        id: "7c41d0e9a2b85f13",
+        at: "2026-11-06T09:00:00.000Z",
+        reason: "arrived",
+        notices: [],
+        folded: 0,
+        seenAt: "2026-11-06T09:12:00.000Z",
+      },
+    },
+  ],
+  "notifications.settings": [
+    {
+      settings: {
+        quietHours: { on: true, start: "22:00", end: "07:00" },
+        doNotDisturb: false,
+        tz: null,
+      },
+    },
+    {
+      settings: {
+        quietHours: { on: false, start: "23:00", end: "06:30" },
+        doNotDisturb: true,
+        tz: "America/Chicago",
       },
     },
   ],
@@ -595,7 +907,7 @@ const samples: Samples = {
         usage: { inputTokens: 1200, outputTokens: 300 },
         cost: { usd: 0.004 },
         output: "routines/outputs/wren/triage/2026-11-05T08-00-00.000Z.md",
-        notify: { tier: "digest", at: "2026-11-05T18:00:00.000Z" },
+        notify: { tier: "digest", at: "2026-11-05T08:01:12.000Z" },
       },
       disabled: null,
     },
@@ -609,12 +921,58 @@ const samples: Samples = {
           creature: "wren",
           routineId: "triage",
           kind: "grants",
-          reason: "accept the write grant set 3f9c1a2b",
+          tier: "interrupt",
+          reason: "asks to write files",
           runId: "wren:triage:1762333320000:1",
           since: "2026-11-05T09:02:00.000Z",
           action: { verb: "accept", digest: "3f9c1a2b" },
         },
       ],
+    },
+    {
+      creature: "wren",
+      routineId: "look",
+      items: [
+        {
+          creature: "wren",
+          routineId: "look",
+          kind: "disabled",
+          tier: "interrupt",
+          reason:
+            "disabled after 5 failed runs in a row; the last: the run could not start: mill does not answer at http://127.0.0.1:11434; is its model server running?",
+          runId: null,
+          since: "2026-11-05T09:13:00.000Z",
+          action: { verb: "answer" },
+        },
+      ],
+    },
+  ],
+  "routine.checked": [
+    {
+      creature: "wren",
+      routineId: "look",
+      check: {
+        at: "2026-11-05T09:00:01.200Z",
+        command: "test -f build/failed",
+        verdict: "quiet",
+        exitCode: 0,
+        ms: 1180,
+        found: "exited 0: nothing to do, so nothing ran",
+        output: "",
+      },
+    },
+    {
+      creature: "wren",
+      routineId: "look",
+      check: {
+        at: "2026-11-05T09:15:00.900Z",
+        command: "test -f build/failed",
+        verdict: "woke",
+        exitCode: 1,
+        ms: 880,
+        found: "exited 1: something to do, so the chore ran",
+        output: "(exit code 1)",
+      },
     },
   ],
   "workshop.changed": [

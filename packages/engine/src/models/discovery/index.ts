@@ -28,13 +28,18 @@ export {
 } from "./inventory.ts";
 export {
   advertiseLocalServers,
+  type ConnectedServer,
   type DiscoveredServer,
   type DiscoverySource,
   type KnownPort,
   knownServerPorts,
+  type LocalServerPreset,
+  localServerPresets,
   mergeDiscovered,
   rootOf,
   type ScanOptions,
+  sameServer,
   scanHost,
   serversFromManifest,
+  withConnections,
 } from "./servers.ts";

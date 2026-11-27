@@ -33,6 +33,22 @@ export {
 } from "../mcp/tickets.ts";
 export * from "./decisions/index.ts";
 export {
+  type CreatureDeliveries,
+  type CreatureDeliveriesPort,
+  type CreatureDelivery,
+  type CreatureDeliveryChange,
+  creatureStorehouse,
+  type DeliveryAbout,
+  type DeliveryChangeKind,
+  type DeliveryInput,
+  deliveriesFileIn,
+  deliveriesKept,
+  deliveriesOf,
+  type Storehouse,
+  type StorehouseOptions,
+  visitorDeliveriesFileIn,
+} from "./deliveries.ts";
+export {
   type CreatureBody,
   type CreatureFile,
   type CreatureFileDraft,
@@ -49,13 +65,19 @@ export {
   isTemperament,
   MalformedCreatureError,
   type ModelChoice,
+  mannerOf,
+  OutsideRangeError,
   parseCreatureFile,
   patchedCreatureFile,
+  rangeOf,
+  rangeSize,
   seedLimit,
   serializeCreatureFile,
+  type TakenManner,
   type Temperament,
   temperamentOf,
   temperaments,
+  UnusableModelError,
   validCreatureFile,
 } from "./file.ts";
 export {
@@ -101,11 +123,15 @@ export {
   type CreatureReport,
   type CreatureSummary,
   type CreaturesPort,
+  type CreatureTalking,
   creatureHost,
   type DayUsage,
   type RemovalChoice,
   type RoutineRunAhead,
   ShadowReportUnserved,
+  type TalkingModel,
+  type ToolCheck,
+  type WorkedDay,
 } from "./host.ts";
 export {
   admitsSender,
@@ -149,6 +175,17 @@ export {
   type QuestionAnswer,
   visitorLedgerFileIn,
 } from "./ledger.ts";
+export {
+  type CreatureTemperamentFacts,
+  type MannerKeeper,
+  type MannerKeeperSeams,
+  mannerKeeper,
+  settlesAfterMs,
+  type TemperamentSource,
+  temperamentFactsOf,
+  temperamentSeatOf,
+  type WorkElsewhere,
+} from "./manner.ts";
 export {
   askLine,
   askOrigin,
@@ -206,11 +243,13 @@ export {
 } from "./project-context.ts";
 export {
   capabilityLines,
-  creatureInjection,
+  creatureStanding,
   grantsHeading,
   introductionOf,
+  namesItsTools,
   noGrantsSentence,
   temperamentSentence,
+  withoutPanes,
 } from "./prompt.ts";
 export { type CreatureWorkshops, raiseCreature } from "./raise.ts";
 export {
@@ -240,7 +279,12 @@ export {
   type LedgerConversationTag,
   ledgerConversationOf,
   ledgerConversationType,
+  recordTalkingChoice,
   SessionClaimedError,
+  sameTalkingChoice,
+  type TalkingChoice,
+  talkingChoiceOf,
+  talkingChoiceType,
 } from "./sessions.ts";
 export {
   type CreatureOrigin,

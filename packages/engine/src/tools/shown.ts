@@ -4,6 +4,7 @@ import { seatAsWritten } from "../show/seat.ts";
 import type { Setting } from "../show/setting.ts";
 import { overlapWords, type StandingPicture, type Stood, stageWords } from "../show/standing.ts";
 import type { Tool } from "../tools.ts";
+import { awayShownWords } from "./away.ts";
 import { defineTool } from "./define.ts";
 import { scenesListedWords } from "./scenes.ts";
 import type { ShowTarget } from "./show.ts";
@@ -19,9 +20,11 @@ export function shownTool(target: ShowTarget): Tool {
     run: async () => {
       const settings = target.settings();
       if (settings === undefined) return nothingListedHere;
+      const away = target.away?.();
       return [
         listed(settings.standingFor(target), target.creature),
         ...scenesListedWords(target),
+        ...(away === undefined ? [] : [awayShownWords(away)]),
       ].join("\n");
     },
   });

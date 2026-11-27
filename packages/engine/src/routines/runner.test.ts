@@ -19,6 +19,9 @@ function fakeHost(promptOutcome: "started" | "missing" = "started") {
       calls.push(`prompt ${sessionId}`);
       return promptOutcome;
     },
+    discard: async (sessionId) => {
+      calls.push(`discard ${sessionId}`);
+    },
     abort: async (sessionId) => {
       calls.push(`abort ${sessionId}`);
       listeners.get(sessionId)?.({ kind: "turn-interrupted", text: "half done" });

@@ -7,14 +7,35 @@
     "type": "string"
   },
   "events": {
-    "turn.started": {
-      "entryId": "string",
-      "origin": {
-        "client": "string",
-        "kind": "string"
+    "turn.started": [
+      {
+        "entryId": "string",
+        "origin": {
+          "client": "string",
+          "kind": "string"
+        },
+        "userText": "string"
       },
-      "userText": "string"
-    },
+      {
+        "entryId": "string",
+        "origin": {
+          "kind": "string"
+        },
+        "userText": "string"
+      },
+      {
+        "entryId": "string",
+        "origin": {
+          "callId": "string",
+          "kind": "string",
+          "note": "string",
+          "reason": "string",
+          "tool": "string",
+          "verdict": "string"
+        },
+        "userText": "string"
+      }
+    ],
     "turn.delta": [
       {
         "delta": {
@@ -79,6 +100,7 @@
       }
     ],
     "turn.completed": {
+      "delivery": "string",
       "message": {
         "parts": [
           {
@@ -158,18 +180,30 @@
       "callId": "string",
       "chunk": "string"
     },
-    "tool.finished": {
-      "callId": "string",
-      "exitCode": "number",
-      "isError": "boolean",
-      "output": "string",
-      "spill": {
-        "bytes": "number",
-        "elidedFrom": "number",
-        "elidedTo": "number",
-        "id": "string"
+    "tool.finished": [
+      {
+        "callId": "string",
+        "exitCode": "number",
+        "isError": "boolean",
+        "output": "string",
+        "spill": {
+          "bytes": "number",
+          "elidedFrom": "number",
+          "elidedTo": "number",
+          "id": "string"
+        }
+      },
+      {
+        "callId": "string",
+        "fact": {
+          "favourite": "string",
+          "kind": "string",
+          "manner": "string"
+        },
+        "isError": "boolean",
+        "output": "string"
       }
-    },
+    ],
     "gate.ask": [
       {
         "ask": {
@@ -574,6 +608,79 @@
         "folded": "number"
       }
     ],
+    "creature.deliveries": [
+      {
+        "change": "string",
+        "delivery": {
+          "about": {
+            "kind": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "directory": "string",
+          "files": [
+            {
+              "added": "number",
+              "deleted": "number",
+              "path": "string"
+            }
+          ],
+          "id": "string",
+          "line": "string",
+          "openedAt": "null",
+          "project": "null",
+          "session": "string",
+          "title": "null"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "delivery": {
+          "about": {
+            "kind": "string",
+            "routineId": "string",
+            "runId": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "directory": "string",
+          "files": [],
+          "id": "string",
+          "line": "string",
+          "openedAt": "string",
+          "project": "null",
+          "session": "string",
+          "title": "string"
+        },
+        "folded": "number"
+      },
+      {
+        "change": "string",
+        "delivery": {
+          "about": {
+            "kind": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "directory": "string",
+          "files": [
+            {
+              "added": "number",
+              "deleted": "number",
+              "path": "string"
+            }
+          ],
+          "id": "string",
+          "line": "string",
+          "openedAt": "string",
+          "project": "string",
+          "session": "null",
+          "title": "string"
+        },
+        "folded": "number"
+      }
+    ],
     "creature.worksites": [
       {
         "change": "string",
@@ -664,6 +771,121 @@
         }
       }
     ],
+    "creature.promises": {
+      "creature": "string",
+      "promises": [
+        {
+          "checks": "string",
+          "evidence": [
+            {
+              "checkedAt": "string",
+              "found": "string",
+              "ok": "boolean",
+              "subject": "string"
+            }
+          ],
+          "kind": "string",
+          "repairs": [
+            {
+              "bound": "number",
+              "endedAt": "string",
+              "nextAt": "null",
+              "outcome": "string",
+              "startedAt": "string",
+              "subject": "string",
+              "tries": "number"
+            }
+          ],
+          "state": "string"
+        },
+        {
+          "checks": "string",
+          "evidence": [
+            {
+              "checkedAt": "string",
+              "found": "string",
+              "ok": "boolean",
+              "subject": "string"
+            }
+          ],
+          "kind": "string",
+          "repairs": [],
+          "state": "string"
+        },
+        {
+          "checks": "string",
+          "evidence": [],
+          "kind": "string",
+          "repairs": [],
+          "state": "string"
+        }
+      ],
+      "questions": [
+        {
+          "about": {
+            "chores": ["string"],
+            "conversation": "boolean",
+            "model": {
+              "model": "string",
+              "provider": "string"
+            }
+          },
+          "address": "string",
+          "choices": [
+            {
+              "id": "string",
+              "label": "string"
+            },
+            {
+              "id": "string",
+              "label": "string",
+              "models": [
+                {
+                  "model": "string",
+                  "provider": "string"
+                }
+              ]
+            }
+          ],
+          "creature": "string",
+          "id": "string",
+          "lastFailure": "null",
+          "promise": "string",
+          "sentence": "string",
+          "since": "string"
+        }
+      ]
+    },
+    "creature.talking": [
+      {
+        "slug": "string",
+        "talking": {
+          "detail": "string",
+          "mode": "string",
+          "model": "string",
+          "projectCheck": {
+            "endpoint": "string",
+            "model": "string"
+          },
+          "provider": "string"
+        }
+      },
+      {
+        "slug": "string",
+        "talking": {
+          "mode": "string",
+          "model": "string",
+          "provider": "string"
+        }
+      },
+      {
+        "slug": "string",
+        "talking": {
+          "detail": "string",
+          "refused": "string"
+        }
+      }
+    ],
     "model.wait": [
       {
         "change": "string",
@@ -731,22 +953,56 @@
         "verified": "null"
       }
     },
-    "routine.needs": {
+    "routine.needs": [
+      {
+        "creature": "string",
+        "items": [
+          {
+            "action": {
+              "digest": "string",
+              "verb": "string"
+            },
+            "creature": "string",
+            "kind": "string",
+            "reason": "string",
+            "routineId": "string",
+            "runId": "string",
+            "since": "string",
+            "tier": "string"
+          }
+        ],
+        "routineId": "string"
+      },
+      {
+        "creature": "string",
+        "items": [
+          {
+            "action": {
+              "verb": "string"
+            },
+            "creature": "string",
+            "kind": "string",
+            "reason": "string",
+            "routineId": "string",
+            "runId": "null",
+            "since": "string",
+            "tier": "string"
+          }
+        ],
+        "routineId": "string"
+      }
+    ],
+    "routine.checked": {
+      "check": {
+        "at": "string",
+        "command": "string",
+        "exitCode": "number",
+        "found": "string",
+        "ms": "number",
+        "output": "string",
+        "verdict": "string"
+      },
       "creature": "string",
-      "items": [
-        {
-          "action": {
-            "digest": "string",
-            "verb": "string"
-          },
-          "creature": "string",
-          "kind": "string",
-          "reason": "string",
-          "routineId": "string",
-          "runId": "string",
-          "since": "string"
-        }
-      ],
       "routineId": "string"
     },
     "workshop.changed": {
@@ -1136,6 +1392,173 @@
     "workspace.changed": {
       "paths": ["string"],
       "truncated": "boolean"
-    }
+    },
+    "notifications.notice": [
+      {
+        "notice": {
+          "about": {
+            "callId": "string",
+            "kind": "string",
+            "tool": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "held": "boolean",
+          "id": "string",
+          "session": "string",
+          "tier": "string",
+          "title": "string"
+        }
+      },
+      {
+        "notice": {
+          "about": {
+            "kind": "string",
+            "need": "string",
+            "routineId": "string",
+            "runId": "null"
+          },
+          "at": "string",
+          "creature": "string",
+          "held": "boolean",
+          "id": "string",
+          "session": "null",
+          "tier": "string",
+          "title": "string"
+        }
+      },
+      {
+        "notice": {
+          "about": {
+            "kind": "string",
+            "routineId": "string",
+            "runId": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "held": "boolean",
+          "id": "string",
+          "session": "string",
+          "tier": "string",
+          "title": "string"
+        }
+      },
+      {
+        "notice": {
+          "about": {
+            "kind": "string",
+            "pending": "number"
+          },
+          "at": "string",
+          "creature": "null",
+          "held": "boolean",
+          "id": "string",
+          "session": "null",
+          "tier": "string",
+          "title": "string"
+        }
+      },
+      {
+        "notice": {
+          "about": {
+            "kind": "string",
+            "promise": "string",
+            "questionId": "string"
+          },
+          "at": "string",
+          "creature": "string",
+          "held": "boolean",
+          "id": "string",
+          "session": "null",
+          "tier": "string",
+          "title": "string"
+        }
+      }
+    ],
+    "notifications.quiet": [
+      {
+        "change": "string",
+        "quiet": {
+          "reason": "string",
+          "since": "string",
+          "until": "string"
+        }
+      },
+      {
+        "change": "string",
+        "quiet": {
+          "reason": "string",
+          "since": "string",
+          "until": "null"
+        }
+      },
+      {
+        "change": "string",
+        "quiet": "null"
+      }
+    ],
+    "notifications.digest": [
+      {
+        "change": "string",
+        "digest": {
+          "at": "string",
+          "folded": "number",
+          "id": "string",
+          "notices": [
+            {
+              "about": {
+                "callId": "string",
+                "kind": "string",
+                "tool": "string"
+              },
+              "at": "string",
+              "creature": "string",
+              "held": "boolean",
+              "id": "string",
+              "session": "string",
+              "tier": "string",
+              "title": "string"
+            }
+          ],
+          "reason": "string",
+          "seenAt": "null"
+        }
+      },
+      {
+        "change": "string",
+        "digest": {
+          "at": "string",
+          "folded": "number",
+          "id": "string",
+          "notices": [],
+          "reason": "string",
+          "seenAt": "string"
+        }
+      }
+    ],
+    "notifications.settings": [
+      {
+        "settings": {
+          "doNotDisturb": "boolean",
+          "quietHours": {
+            "end": "string",
+            "on": "boolean",
+            "start": "string"
+          },
+          "tz": "null"
+        }
+      },
+      {
+        "settings": {
+          "doNotDisturb": "boolean",
+          "quietHours": {
+            "end": "string",
+            "on": "boolean",
+            "start": "string"
+          },
+          "tz": "string"
+        }
+      }
+    ]
   }
 }

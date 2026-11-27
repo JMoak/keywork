@@ -1,4 +1,9 @@
-export { CapabilityCache, type CapabilityCacheSnapshot } from "./cache.ts";
+export {
+  CapabilityCache,
+  type CapabilityCacheSnapshot,
+  type CapabilityLearning,
+  type LearnedFacts,
+} from "./cache.ts";
 export {
   agentContextFloor,
   decidesThroughBuiltin,
@@ -11,6 +16,7 @@ export {
   strongContextFloor,
 } from "./eligibility.ts";
 export { type IdentifiedServer, identifyServer, listedOnly } from "./fingerprint.ts";
+export { capabilityLearningFileIn, type KeptCapabilities, keepCapabilities } from "./kept.ts";
 export { type CapabilityProbeOptions, probeServer, type ServerProbeResult } from "./probe.ts";
 export {
   blankRecord,

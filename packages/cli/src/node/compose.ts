@@ -23,6 +23,7 @@ import {
   issueClaimCode,
   type KeyStore,
   keepAwake,
+  keysWarning,
   ledgerGate,
   liveClaimCode,
   loadDeviceKey,
@@ -32,13 +33,16 @@ import {
   meshAuditFile,
   meshClient,
   meshGrantsFile,
-  meshKeysFile,
+  meshKeyStore,
   meshPairingFile,
+  meshVaultFor,
   messageRefusalStatus,
+  moveMeshKeysIn,
   type PairingEvent,
   type PairStore,
   pairingService,
   pairSecretOf,
+  probeBook,
   probeHttp,
   randomToken,
   readTool,
@@ -52,7 +56,6 @@ import {
   tailnetPeers,
   takeCensus,
   toolScope,
-  UnprotectedFileKeyStore,
   type WorkshopChange,
   Workshops,
   writeTool,
@@ -68,7 +71,7 @@ import {
   type ServerTicket,
   watchLanes,
 } from "@keywork/server";
-import { jsonFileStore } from "@keywork/shared";
+import { jsonFileStore, type SecretVault } from "@keywork/shared";
 import { forwardCreatureMcp } from "../serve-mcp.ts";
 import { AwakeWhileLive, workspaceActivity } from "./activity.ts";
 import type { NodeConfig } from "./config.ts";
@@ -86,6 +89,9 @@ export interface CoreComposition {
   clock: Clock;
   say: (line: string) => void;
   routines?: (() => Promise<StartingRoutines | undefined>) | undefined;
+  // The operating system's key store the mesh keys live in; null where it has none. A test gives
+  // one of its own, so no test ever reads or writes this machine's real store.
+  vault?: SecretVault | null | undefined;
 }
 
 export const revocationRetryMs = 60_000;
@@ -102,9 +108,12 @@ export function screenHouseFile(stateDir: string): string {
 
 export async function composeCoreServices(composition: CoreComposition): Promise<CoreServices> {
   const { stateDir, config } = composition;
-  const stores = meshStores(stateDir);
+  const vault = vaultOf(composition.vault, stateDir);
+  const stores = meshStores(stateDir, vault);
   const claim = claimDeskOver(stores);
-  const trust = config.mesh.enabled ? await nodeMeshTrust(composition, stores) : undefined;
+  const trust = config.mesh.enabled
+    ? await movedThenTrusted(composition, stores, vault)
+    : undefined;
   return {
     reconcile: {
       workshops: nodeWorkshops(stateDir),
@@ -134,7 +143,7 @@ export async function composeCoreServices(composition: CoreComposition): Promise
 export function fileClaimDesk(
   stateDir: string,
 ): ClaimDesk & { claimStateNow(): "unclaimed" | "claimed" } {
-  return claimDeskOver(meshStores(stateDir));
+  return claimDeskOver(meshStores(stateDir, meshVaultFor(stateDir)));
 }
 
 export function nodeWorkshops(
@@ -159,6 +168,7 @@ export interface MeshConsoleOptions {
   // Where this machine's identity is read: its own tailscaled when left out. A test gives a
   // recorded one, because a machine without Tailscale has no identity to send a message under.
   tailnet?: Tailnet | undefined;
+  vault?: SecretVault | null | undefined;
   onPairing: (event: PairingEvent) => void;
   onGrant: (event: GrantEvent) => void;
   onLanes?: ((change: MeshPeersChange) => void) | undefined;
@@ -176,7 +186,8 @@ interface ConsoleTrust extends MeshConsole {
 export async function houseMeshConsole(options: MeshConsoleOptions): Promise<HouseMeshConsole> {
   const tailnet = options.tailnet ?? createTailnet(defaultTransport());
   const self = selfOn(tailnet);
-  const trust = await meshConsoleOver(meshStores(options.stateDir), self, options);
+  const stores = meshStores(options.stateDir, vaultOf(options.vault, options.stateDir));
+  const trust = await meshConsoleOver(stores, self, options);
   if (options.onLanes !== undefined) {
     watchLanes({
       read: async () =>
@@ -188,11 +199,13 @@ export async function houseMeshConsole(options: MeshConsoleOptions): Promise<Hou
       changed: options.onLanes,
     });
   }
+  const book = probeBook();
   return {
     ...trust,
     self,
     machine: hostname,
-    census: () => takeCensus({ tailnet, port: options.port, pairs: () => trust.pairing.pairs() }),
+    census: () =>
+      takeCensus({ tailnet, port: options.port, pairs: () => trust.pairing.pairs(), book }),
   };
 }
 
@@ -203,15 +216,20 @@ interface MeshStores {
 
 interface NodeMeshTrust extends MeshConsole {
   tailnet: Tailnet;
-  keys: KeyStore;
+  keyStore: KeyStore;
   close(): void;
 }
 
-function meshStores(stateDir: string): MeshStores {
+function meshStores(stateDir: string, vault: SecretVault | undefined): MeshStores {
   return {
-    keys: new UnprotectedFileKeyStore(meshKeysFile(stateDir)),
+    keys: meshKeyStore({ stateDir, vault }),
     pairs: filePairStore(meshPairingFile(stateDir)),
   };
+}
+
+function vaultOf(given: SecretVault | null | undefined, stateDir: string): SecretVault | undefined {
+  if (given === null) return undefined;
+  return given ?? meshVaultFor(stateDir);
 }
 
 function claimDeskOver({
@@ -228,6 +246,21 @@ function claimDeskOver({
       return { code: issued.code, expiresAt: issued.expiresAt };
     },
   };
+}
+
+async function movedThenTrusted(
+  composition: CoreComposition,
+  stores: MeshStores,
+  vault: SecretVault | undefined,
+): Promise<NodeMeshTrust | undefined> {
+  const { stateDir, say } = composition;
+  try {
+    await moveMeshKeysIn({ stateDir, vault, notice: (line) => say(`mesh: ${line}`) });
+  } catch (cause) {
+    say(`mesh: off: ${messageOf(cause)}`);
+    return undefined;
+  }
+  return nodeMeshTrust(composition, stores);
 }
 
 async function nodeMeshTrust(
@@ -249,7 +282,7 @@ async function nodeMeshTrust(
   return {
     ...trust,
     tailnet,
-    keys: stores.keys,
+    keyStore: stores.keys,
     close: retryRevocations(trust.grants, revocationRetryMs),
   };
 }
@@ -282,7 +315,8 @@ async function meshConsoleOver(
     gate: parcelGate(options.userRoot),
     onEvent: options.onGrant,
   });
-  return { pairing, grants, audit, client, warning: stores.keys.warning };
+  const keys = () => stores.keys.placement();
+  return { pairing, grants, audit, client, keys, warning: keysWarning(keys()) };
 }
 
 function selfOn(tailnet: Tailnet): () => Promise<SelfIdentity> {
@@ -321,7 +355,7 @@ async function openMeshListener(
           house: house.token,
           self: self.current,
           machine: hostname,
-          pairSecret: (pairId) => pairSecretOf(trust.keys, pairId),
+          pairSecret: (pairId) => pairSecretOf(trust.keyStore, pairId),
         },
         messages: {
           receive: (request) => forwardArrival(servedNow(composition), arrivalOf(request)),
@@ -332,7 +366,7 @@ async function openMeshListener(
           house: house.token,
           self: self.current,
           pairs: () => trust.pairing.pairs(),
-          pairSecret: (pairId) => pairSecretOf(trust.keys, pairId),
+          pairSecret: (pairId) => pairSecretOf(trust.keyStore, pairId),
         }),
         forward: (slug, arrival) => forwardCreatureMcp(servedNow(composition), slug, arrival),
         audit: trust.audit,
@@ -342,6 +376,10 @@ async function openMeshListener(
     inventory: {
       modelServers: () =>
         advertiseLocalServers({ http: probeHttp({ timeoutMs: manifestProbeTimeoutMs }) }),
+      keys: () => {
+        const { protection } = trust.keyStore.placement();
+        return protection === "memory" ? undefined : protection;
+      },
     },
     onEvent: (event) => {
       say(`mesh: ${JSON.stringify(event)}`);

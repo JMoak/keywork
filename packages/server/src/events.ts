@@ -1,12 +1,17 @@
 import type {
   CreatureChanged,
+  CreatureDeliveryChange,
   CreatureHandoffChange,
   CreatureLedgerChange,
+  CreaturePromises,
   CreatureSceneChange,
+  CreatureTalking,
   CreatureWorksiteChange,
   EngineEvents,
   EventBus,
   HonourChange,
+  NotificationEvents,
+  RoutineChecked,
   RoutineFinished,
   RoutineFired,
   RoutineNeedsYou,
@@ -37,10 +42,10 @@ export type EngineEventType = keyof EngineEvents;
 
 export interface ModelsChanged {
   node: string;
-  reason: "probe" | "manifest" | "health";
+  reason: "probe" | "manifest" | "health" | "connections";
 }
 
-export interface ServerEvents {
+export interface ServerEvents extends NotificationEvents {
   "memory.inbox": InboxTally;
   "session.state": SessionState;
   "surface.changed": { kind: SurfaceKind };
@@ -52,13 +57,17 @@ export interface ServerEvents {
   "creature.changed": CreatureChanged;
   "creature.handoff": CreatureHandoffChange;
   "creature.ledger": CreatureLedgerChange;
+  "creature.deliveries": CreatureDeliveryChange;
   "creature.worksites": CreatureWorksiteChange;
   "creature.honours": HonourChange;
   "creature.scenes": CreatureSceneChange;
+  "creature.promises": CreaturePromises;
+  "creature.talking": CreatureTalking;
   "model.wait": ModelWaitChange;
   "routine.fired": RoutineFired;
   "routine.finished": RoutineFinished;
   "routine.needs": RoutineNeedsYou;
+  "routine.checked": RoutineChecked;
   "workshop.changed": WorkshopChange;
   "models.changed": ModelsChanged;
   "mesh.listener": MeshListenerChange;
@@ -87,13 +96,17 @@ export const serverEventTypes = [
   "creature.changed",
   "creature.handoff",
   "creature.ledger",
+  "creature.deliveries",
   "creature.worksites",
   "creature.honours",
   "creature.scenes",
+  "creature.promises",
+  "creature.talking",
   "model.wait",
   "routine.fired",
   "routine.finished",
   "routine.needs",
+  "routine.checked",
   "workshop.changed",
   "models.changed",
   "mesh.listener",
@@ -108,6 +121,10 @@ export const serverEventTypes = [
   "show.settled",
   "show.arranged",
   "workspace.changed",
+  "notifications.notice",
+  "notifications.quiet",
+  "notifications.digest",
+  "notifications.settings",
 ] as const satisfies readonly (keyof ServerEvents)[];
 
 export type ServerEventType = (typeof serverEventTypes)[number];

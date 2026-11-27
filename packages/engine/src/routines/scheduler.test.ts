@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { backoffMs } from "../backoff.ts";
+import { noticeTierOf } from "../notices/tier.ts";
 import { hourMs, minuteMs } from "./clock.ts";
 import { grantDigest, type RoutineInput } from "./routine.ts";
 import type { RunRow } from "./run.ts";
 import { defaultSchedulerSettings, waitingOnAnswer } from "./scheduler.ts";
-import type { RoutineView } from "./service.ts";
+import type { NeedsYouItem, RoutineView } from "./service.ts";
 import {
   type HarnessOptions,
   heldOnGrants,
@@ -319,6 +320,25 @@ describe("the consent invariant: a fired trigger cannot grant", () => {
     ]);
   });
 
+  it("puts the engine's own tier on each needs-you item: a chore waiting on its grants is a digest, not an interrupt, until a run waits on them", async () => {
+    await started(writer);
+    const sameAsItsNotice = (items: readonly NeedsYouItem[]) =>
+      items.map((item) => [
+        item.tier,
+        noticeTierOf({ kind: "chore", need: item.kind, runHeld: item.runId !== null }),
+      ]);
+
+    expect(harness.service.needsYou()).toEqual([
+      expect.objectContaining({ kind: "grants", tier: "digest", runId: null }),
+    ]);
+    expect(sameAsItsNotice(harness.service.needsYou())).toEqual([["digest", "digest"]]);
+
+    expect(await harness.service.run("wren", "triage")).toMatchObject({ status: "parked" });
+    const held = harness.eventsOf("routine.needs").at(-1)?.items ?? [];
+    expect(held).toEqual([expect.objectContaining({ kind: "grants", tier: "interrupt" })]);
+    expect(sameAsItsNotice(held)).toEqual([["interrupt", "interrupt"]]);
+  });
+
   it("raises one needs-you item for a chore held on its grants, carrying the accept action, and the parked run proceeds when the keeper accepts", async () => {
     await started({ ...writer, enabled: false });
     expect(harness.service.needsYou()).toEqual([]);
@@ -329,7 +349,8 @@ describe("the consent invariant: a fired trigger cannot grant", () => {
         creature: "wren",
         routineId: "triage",
         kind: "grants",
-        reason: `accept the write grant set ${digest}`,
+        tier: "interrupt",
+        reason: "asks to write files",
         runId: runsOf()[0]?.runId,
         since: runsOf()[0]?.firedAt,
         action: { verb: "accept", digest },
@@ -501,7 +522,6 @@ describe("approvals", () => {
 
 describe("notification tiers", () => {
   const quiet = {
-    digest: ["08:30", "12:30"],
     quietHours: { start: "22:00", end: "07:00" },
     tz: "UTC",
   };
@@ -510,16 +530,18 @@ describe("notification tiers", () => {
     await started(routineInput({ trigger: { kind: "cron", expr: "0 23 * * *", tz: "UTC" } }), {
       notifications: quiet,
     });
-    harness.runner.finishAtOnce = { ended: "failed", reason: "boom" };
+    harness.deliverer.failWith = "the conversation is gone";
+    harness.runner.finishAtOnce = {};
     await harness.advanceTo(at("2026-11-05T23:02:00Z"));
     expect(runsOf()[0]?.notify).toEqual({ tier: "interrupt", at: "2026-11-06T07:00:00.000Z" });
   });
 
-  it("puts a run that notifies always into the next digest", async () => {
+  it("tells a run that notifies always at once, outside quiet hours", async () => {
     await started(routineInput({ notify: "always" }), { notifications: quiet });
     harness.runner.finishAtOnce = {};
     await harness.advanceTo(at("2026-11-05T09:02:00Z"));
-    expect(runsOf()[0]?.notify).toEqual({ tier: "digest", at: "2026-11-05T12:30:00.000Z" });
+    const [run] = runsOf();
+    expect(run?.notify).toEqual({ tier: "digest", at: run?.endedAt });
   });
 });
 

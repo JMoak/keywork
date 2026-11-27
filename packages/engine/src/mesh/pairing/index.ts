@@ -44,19 +44,35 @@ export {
   finishAttempt,
 } from "./initiator.ts";
 export {
+  type KeyNote,
+  type MeshKeyMove,
+  type MeshKeyPlace,
+  MeshKeysUnreachableError,
+  meshKeyNoteFile,
+  meshKeyStore,
+  meshKeysAt,
+  meshVaultFor,
+  moveMeshKeysIn,
+  readKeyNote,
+  vaultAnswersWithinMs,
+} from "./key-place.ts";
+export {
   type DeviceKey,
   deviceKeyName,
   type ExchangeKey,
+  FileKeyStore,
   isDevicePublicKey,
   isExchangePublicKey,
+  type KeyPlacement,
   type KeyProtection,
   type KeyStore,
+  keysWarning,
   loadDeviceKey,
   memoryKeyStore,
   meshKeysFile,
   newExchangeKey,
-  UnprotectedFileKeyStore,
-  unprotectedKeyWarning,
+  pairSecretPrefix,
+  vaultKeyStore,
   verifyDeviceSignature,
 } from "./keys.ts";
 export {

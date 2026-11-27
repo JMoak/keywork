@@ -69,6 +69,7 @@ export const routineOperations = {
     if (outcome === "too-large")
       return { status: 413, body: { error: "the body is larger than this hook takes" } };
     if (isRefusal(outcome)) return { status: 409, body: { error: outcome.refusal } };
+    if (outcome === "quiet") return { status: 200, body: { runId: null, status: "checked" } };
     return {
       status: statusOfFiredRun(outcome),
       body: { runId: outcome.runId, status: outcome.status },

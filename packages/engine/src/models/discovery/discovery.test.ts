@@ -173,11 +173,12 @@ describe("ModelInventory", () => {
         installed: true,
         loaded: true,
         contextAllocated: 32768,
+        decodeTokensPerSecond: null,
         health: expect.objectContaining({ state: "up", resident: true }),
         classes: ["vision"],
         ineligible: [
           { class: "strong", missing: ["contextAllocated"] },
-          { class: "loop", missing: ["contextAllocated", "decodeTokensPerSecond"] },
+          { class: "loop", missing: ["contextAllocated"] },
           { class: "decide", missing: ["decisionEndpoint"] },
         ],
         license: "apache-2.0",

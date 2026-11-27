@@ -13,6 +13,8 @@ import {
 export const askRefusals = {
   "write-once": "write and edit are approved once at a time",
   "nothing-to-remember": "this call has nothing a grant could remember; approve it once",
+  "carried-once":
+    "this question waited while the engine was stopped; it is answered for this one call, once",
 } as const;
 
 const askScopes = ["once", "session", "workspace"] as const satisfies readonly AskScope[];
@@ -40,7 +42,7 @@ export const askRoutes = [
     path: "/asks",
     operationId: "listAsks",
     summary:
-      "Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it.",
+      'Tool calls waiting on a person: every unanswered `gate.ask`, oldest first. Each carries `rules`, what a `session` or `workspace` answer would record, and for a `write` or `edit` the same `preview` its `gate.ask` carried: `{ path, before, after }`, the file as it is and as the call would leave it. Since contract 1.41 a question outlives the engine stopping: one asked before this server started carries `carried: true` (its turn ended when the engine stopped; nothing of it ran). Answering it once moves the work on: the session\'s stream gets the `gate.permission` that settles the call, as a live answer would, and a turn that tells the creature the answer, with `origin: { kind: "answer", callId, tool, verdict, reason?, note? }`; when granted, that same call with the same arguments runs once without asking; anything else asks as always.',
     authenticated: true,
     responses: { "200": "The pending asks." },
   },
@@ -49,12 +51,12 @@ export const askRoutes = [
     path: "/asks/{callId}",
     operationId: "answerAsk",
     summary:
-      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`, and in the person\'s own words with `note` (at most 1000 characters, the free text an `other` answer asks for). Both reach the model in the refused call\'s result, with a line telling it not to retry the call and not to report it as done, and ride on the `gate.permission` decision and in the journal. A grant ignores `reason` and `note`. Only `bash` and MCP calls can be granted beyond `once`. A grant beyond `once` fires `surface.changed` with `kind: "permissions"`.',
+      'Answer a pending ask. The turn resumes with the verdict and reports it as `gate.permission` with `gate: "user"` and the `scope` of a grant. `scope` defaults to `once`; `session` records the ask\'s `rules` for the rest of this session and `workspace` records them for every session of this workspace (see `GET /permissions`). A denial ignores `scope` and may say why with `reason`: `unsafe` (the call should not run), `not-now` (the moment, not the call) or `other`, and in the person\'s own words with `note` (at most 1000 characters, the free text an `other` answer asks for). Both reach the model in the refused call\'s result, with a line telling it not to retry the call and not to report it as done, and ride on the `gate.permission` decision and in the journal. A grant ignores `reason` and `note`. Only `bash` and MCP calls can be granted beyond `once`, and a carried question (`carried: true`) only `once`. A grant beyond `once` fires `surface.changed` with `kind: "permissions"`.',
     authenticated: true,
     requestBody: askAnswerBody,
     responses: {
       "200": "The ask was settled.",
-      "400": `The body is not \`${askAnswerShape}\`, or the call cannot be granted beyond \`once\` (\`write\` and \`edit\` never can, nor a command with no part to remember).`,
+      "400": `The body is not \`${askAnswerShape}\`, or the call cannot be granted beyond \`once\` (\`write\` and \`edit\` never can, nor a command with no part to remember, nor a question carried through a stop).`,
       "404": "No ask with that callId is pending.",
       "409": "That ask was already answered or timed out.",
     },
@@ -134,6 +136,7 @@ function refusalOf(outcome: Exclude<AnswerOutcome, "settled">): Response {
       return json(409, { error: "that ask was already answered or timed out" });
     case "write-once":
     case "nothing-to-remember":
+    case "carried-once":
       return json(400, { error: askRefusals[outcome] });
   }
 }

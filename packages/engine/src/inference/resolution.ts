@@ -6,7 +6,7 @@ import {
 import {
   endpointScheme,
   formatReference,
-  isLoopbackEndpoint,
+  isPrivateEndpoint,
   parseReference,
 } from "./references.ts";
 import {
@@ -294,7 +294,7 @@ function transportFailure(
   if (scheme === "https") return undefined;
   if (
     scheme === "http" &&
-    (isLoopbackEndpoint(registration.endpoint) || registration.insecureTransport)
+    (isPrivateEndpoint(registration.endpoint) || registration.insecureTransport)
   )
     return undefined;
   return {
@@ -302,6 +302,6 @@ function transportFailure(
     reference,
     provider: registration.name,
     endpoint: registration.endpoint,
-    message: `${registration.name} points at ${registration.endpoint}, which is not HTTPS and not loopback`,
+    message: `${registration.name} points at ${registration.endpoint}, which is not HTTPS, loopback or the tailnet`,
   };
 }

@@ -50,6 +50,7 @@ function marketServer(
     root: registration.endpoint,
     port: portOf(registration.endpoint),
     source: "registry",
+    connection: registration.name,
     auth: registration.credential.kind === "none" ? "none" : "key",
     fingerprint: null,
     version: null,
@@ -70,6 +71,7 @@ function marketModel(
     installed: false,
     loaded: false,
     contextAllocated: knownValue(record.contextAllocated) ?? null,
+    decodeTokensPerSecond: null,
     health,
     classes,
     ineligible: eligibilityOrder

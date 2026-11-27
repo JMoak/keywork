@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import type { CheckResult } from "./check.ts";
 import { isoOf } from "./clock.ts";
 import { grantDigest, type RoutineParse } from "./routine.ts";
 import type {
@@ -33,6 +34,7 @@ export interface IndexedRoutine {
   consecutiveErrors: number;
   disabled: { reason: string; at: number } | null;
   accepted: { digest: string; at: number } | null;
+  lastCheck: CheckResult | null;
 }
 
 export interface NewRun {
@@ -202,6 +204,19 @@ export class RoutineStore {
 
   accept(creature: string, id: string, digest: string, at: number): void {
     this.update(creature, id, "accepted_digest = ?, accepted_at = ?", digest, at);
+  }
+
+  recordCheck(creature: string, id: string, check: CheckResult): void {
+    this.update(creature, id, "last_check = ?", JSON.stringify(check));
+  }
+
+  allowOneMoreTry(creature: string, id: string, failuresBeforeDisable: number): void {
+    this.update(
+      creature,
+      id,
+      "disabled_reason = NULL, disabled_at = NULL, consecutive_errors = ?, retry_at = NULL",
+      Math.max(0, failuresBeforeDisable - 1),
+    );
   }
 
   insertRun(run: NewRun): RunRow | undefined {
@@ -433,7 +448,7 @@ export function runIdOf(creature: string, routineId: string, firedAt: number, at
   return `run-${createHash("sha256").update(identity).digest("hex").slice(0, 20)}`;
 }
 
-export const schemaVersion = 2;
+export const schemaVersion = 3;
 
 const migrations: readonly (readonly string[])[] = [
   [
@@ -512,6 +527,7 @@ const migrations: readonly (readonly string[])[] = [
        PRIMARY KEY (creature, routine_id)
      ) STRICT`,
   ],
+  ["ALTER TABLE routines ADD COLUMN last_check TEXT"],
 ];
 
 function configure(db: SqliteDatabase): void {
@@ -553,6 +569,7 @@ function indexedRoutineOf(row: SqliteRow): IndexedRoutine {
       row.accepted_digest === null
         ? null
         : { digest: String(row.accepted_digest), at: Number(row.accepted_at) },
+    lastCheck: parsedJson(row.last_check) as CheckResult | null,
   };
 }
 

@@ -1,7 +1,16 @@
+export {
+  type CheckOutcome,
+  type CheckRequest,
+  type CheckResult,
+  type CheckRunner,
+  type CheckVerdict,
+  shellCheckRunner,
+} from "./check.ts";
 export { type Cancel, type Clock, systemClock } from "./clock.ts";
 export { CronSyntaxError, nextCronSlot, parseCron } from "./cron.ts";
 export { type EffectIntent, type EffectOutcome, performEffect } from "./effects.ts";
 export {
+  type RoutineChecked,
   type RoutineEventSink,
   type RoutineEvents,
   type RoutineEventType,
@@ -35,22 +44,26 @@ export {
   type GrantRule,
   grantDigest,
   largestHookBytes,
+  type NotifyChoice,
   type Routine,
+  type RoutineCheck,
   type RoutineInput,
   type RoutineTrigger,
   routineJsonSchema,
   routineSchema,
   type ToolPosture,
 } from "./routine.ts";
-export type {
-  NotificationTier,
-  RunDelivery,
-  RunNotice,
-  RunProcess,
-  RunRow,
-  RunStatus,
-  RunTrigger,
-  RunUsage,
+export {
+  type NotificationTier,
+  needsKeeper,
+  type RunDelivery,
+  type RunNotice,
+  type RunProcess,
+  type RunRow,
+  type RunStatus,
+  type RunTrigger,
+  type RunUsage,
+  tellsNow,
 } from "./run.ts";
 export {
   type AskVerdict,
@@ -72,6 +85,8 @@ export {
   type SchedulerSettings,
 } from "./scheduler.ts";
 export {
+  type ChoreJournal,
+  type GrantsView,
   type HookDelivery,
   type HookRefusal,
   type MintedHook,
@@ -79,6 +94,7 @@ export {
   type NeedsYouAction,
   type NeedsYouItem,
   type NeedsYouKind,
+  type QuestionChoice,
   type Refusal,
   RoutineService,
   type RoutineServiceOptions,

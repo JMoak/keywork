@@ -18,7 +18,7 @@ export function scheduleTool(target: ScheduleTarget): Tool {
   return defineTool({
     name: "schedule",
     description:
-      "Ask to be woken later to continue on your own: once (in_minutes or at) or on a pace (every_minutes). The wakeup is a chore you own, on the keeper's chore board, which the keeper can cancel. It runs read-only unless you ask for write or act tools, and then only with grants the keeper already accepted for one of your chores; anything more parks until the keeper accepts it.",
+      "Ask to be woken later to continue on your own: once (in_minutes or at) or on a pace (every_minutes). The wakeup is a chore you own, on the keeper's chore board, which the keeper can cancel. It runs read-only unless you ask for write or act tools, and then only with grants the keeper already accepted for one of your chores; anything more parks until the keeper accepts it. With a check, a shell command runs first each time and you wake only when it exits non-zero; the keeper must approve that exact command before it ever runs.",
     schema: scheduleArgs,
     run: async (args) =>
       sentenceOf(await target.wakes.scheduleWake(target.creature, requestOf(args))),
@@ -58,6 +58,15 @@ const scheduleArgs = z
       .array(grantRule)
       .optional()
       .describe("The grant rules a write or act wakeup needs, as { action, resource }."),
+    check: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2_000)
+      .optional()
+      .describe(
+        "A shell command run in the workspace before each wake, with no model: exit 0 means nothing to do and you are not woken; any other exit wakes you. It waits for the keeper's approval.",
+      ),
   })
   .strict();
 
@@ -71,6 +80,7 @@ function requestOf(args: ScheduleArgs): WakeRequest {
     everyMinutes: args.every_minutes,
     tools: args.tools,
     grants: args.grants,
+    check: args.check,
   };
 }
 
@@ -80,11 +90,14 @@ function sentenceOf(outcome: ScheduledWake | Refusal | Missing): string {
   if ("refusal" in outcome) return `Not scheduled: ${outcome.refusal}.`;
   const { routine } = outcome;
   const when = routine.schedule.nextRunAt ?? "when the keeper runs it";
+  const held = routine.grants;
   const grants =
-    routine.grants === null || !routine.grants.needsAcceptance
+    held === null || !held.needsAcceptance
       ? "It runs read-only."
-      : routine.grants.accepted
-        ? `It runs with ${routine.grants.posture} tools under the grants you already hold (${outcome.inheritedFrom ?? "accepted"}).`
-        : `It asks for ${routine.grants.posture} tools the keeper has not accepted, so it will park until they do.`;
+      : held.accepted
+        ? `It runs with ${held.posture} tools under the grants you already hold (${outcome.inheritedFrom ?? "accepted"}).`
+        : held.check !== null
+          ? "Its check waits for the keeper to approve it, so nothing runs until they do."
+          : `It asks for ${held.posture} tools the keeper has not accepted, so it will park until they do.`;
   return `Scheduled ${routine.id}: next wake ${when}. ${grants} The keeper sees it on the chore board and can cancel it.`;
 }

@@ -88,7 +88,7 @@ describe("worksites under keywork serve", () => {
     }
   });
 
-  it("gives the home a row for each child folder a thread changed files in, in a bound project that is a parent folder", async () => {
+  it("gives the home one row at a bound project's own folder, wherever inside it a thread changed files", async () => {
     const userRoot = await tempDir();
     const parent = await steadPlace(userRoot);
     for (const child of ["alpha", "beta"]) await mkdir(join(parent.cwd, child));
@@ -108,11 +108,9 @@ describe("worksites under keywork serve", () => {
         text: "Tidy the notes in alpha and the plan in beta.",
       });
       await home.restingAt("lark");
-      const counted = (child: string) => ({
-        ...worksiteIn(join(parent.cwd, child), parent.cwd)("lark", false),
-        project,
-      });
-      expect(await home.worksites()).toEqual([counted("alpha"), counted("beta")]);
+      expect(await home.worksites()).toEqual([
+        { ...worksiteIn(parent.cwd, parent.cwd)("lark", false), project },
+      ]);
     } finally {
       await home.close();
       await runtime.close();

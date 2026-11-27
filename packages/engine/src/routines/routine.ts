@@ -155,6 +155,30 @@ const grantRule = z
   .object({ action: z.string().trim().min(1), resource: z.string().trim().min(1) })
   .strict();
 
+export const largestCheckSeconds = 600;
+
+const check = z
+  .object({
+    command: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2_000)
+      .describe(
+        "The command run in the workspace's shell before each run, with no model: exit 0 means nothing to do, so no run and no notice; any other exit wakes the model.",
+      ),
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(largestCheckSeconds)
+      .default(60)
+      .describe(
+        "How long the check may take; one that runs longer is stopped and counts as failed.",
+      ),
+  })
+  .strict();
+
 const budget = z
   .object({
     usd: z.number().positive().max(100),
@@ -212,6 +236,11 @@ export const routineSchema = z
     budget: budget
       .default({ usd: 0.5, minutes: 10 })
       .describe("Per-run ceilings; exceeding either ends the run blocked with the reason."),
+    check: check
+      .optional()
+      .describe(
+        "A script-gated check that spends no tokens (RUN-041). The keeper approves the exact command (POST .../accept with the digest); a changed command needs approval again, and a fired trigger never approves one.",
+      ),
     enabled: z.boolean().default(true).describe("Whether the schedule fires at all."),
     wake: wake
       .optional()
@@ -240,6 +269,7 @@ export type TriggerKind = RoutineTrigger["kind"];
 export type ToolPosture = Routine["tools"];
 export type GrantRule = Routine["grants"][number];
 export type NotifyChoice = Routine["notify"];
+export type RoutineCheck = NonNullable<Routine["check"]>;
 
 export type RoutineParse = { routine: Routine } | { problem: string };
 
@@ -248,16 +278,24 @@ export function parseRoutine(value: unknown): RoutineParse {
   return parsed.success ? { routine: parsed.data } : { problem: z.prettifyError(parsed.error) };
 }
 
-export function grantDigest(routine: Pick<Routine, "tools" | "grants">): string {
+export type Consented = Pick<Routine, "tools" | "grants"> & Partial<Pick<Routine, "check">>;
+
+export function grantDigest(routine: Consented): string {
   const grants = routine.grants
     .map(({ action, resource }) => `${action} ${resource}`)
     .sort()
     .join("\n");
-  return createHash("sha256").update(`${routine.tools}\n${grants}`).digest("hex").slice(0, 16);
+  const check = routine.check === undefined ? "" : `\ncheck ${routine.check.command}`;
+  return createHash("sha256")
+    .update(`${routine.tools}\n${grants}${check}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
-export function needsAcceptance(routine: Pick<Routine, "tools">): boolean {
-  return routine.tools !== "read-only";
+export function needsAcceptance(
+  routine: Pick<Routine, "tools"> & Partial<Pick<Routine, "check">>,
+): boolean {
+  return routine.tools !== "read-only" || routine.check !== undefined;
 }
 
 const calendarDatePattern = /^\d{4}-\d{2}-\d{2}$/;

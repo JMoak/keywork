@@ -96,6 +96,16 @@ export function workshopId(creature: string): string {
   return `${creature}-${randomBytes(3).toString("hex")}`;
 }
 
+export function missingFile(path: string, workshop: Workshop): Error {
+  return Object.assign(new Error(`${path} does not exist in workshop ${workshop.id}`), {
+    code: "ENOENT",
+  });
+}
+
+export function isMissingFile(cause: unknown): boolean {
+  return (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 export function notRunning(workshop: Workshop): WorkshopRefusal {
   return new WorkshopRefusal("not-running", `workshop ${workshop.id} is not running`);
 }

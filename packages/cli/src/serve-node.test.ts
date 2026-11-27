@@ -1,11 +1,20 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { meshKeysFile, type UsageLedgerEntry } from "@keywork/engine";
-import { EventLog } from "@keywork/server";
+import {
+  CapabilityCache,
+  InferenceRegistry,
+  MockProvider,
+  meshKeysFile,
+  refusedWaitMs,
+  type UsageLedgerEntry,
+} from "@keywork/engine";
+import { createKeyworkServer, EventLog } from "@keywork/server";
 import { scratchDirs } from "@keywork/shared/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { fakeTailnet } from "../../engine/src/mesh/transport/testing/fake-tailnet.ts";
 import { nodePaths } from "./node/paths.ts";
+import { servedHost } from "./serve.ts";
 import { normalizedUsageOf, servedNode, spentNanos } from "./serve-node.ts";
 
 const tempDir = scratchDirs("keywork-serve-node-");
@@ -54,8 +63,11 @@ describe("what a creature spent", () => {
 
     const second = await servedNode({ ...place, log: new EventLog(), notice: () => undefined });
 
-    expect(second.usage.spentOn("pip", today)).toBe(4_000_000);
-    expect(second.usage.spentOn("wren", today)).toBe(0);
+    expect(await second.usage.workedOn("pip", today)).toEqual({
+      sessions: ["s1"],
+      costNanos: 4_000_000,
+    });
+    expect(await second.usage.workedOn("wren", today)).toEqual({ sessions: [], costNanos: 0 });
   });
 });
 
@@ -129,6 +141,83 @@ describe("a served node's model stewardship", () => {
     expect(again).toEqual(first);
   });
 });
+
+describe("what a served engine asks of other machines", () => {
+  it("asks nothing beyond this machine at start with no cloud connected, and asks a machine that refused again only after its wait", async () => {
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        asked.push(input instanceof Request ? input.url : String(input));
+        throw new TypeError("fetch failed");
+      }),
+    );
+    const cwd = await tempDir();
+    await mkdir(join(cwd, ".keywork", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".keywork", "workspace.json"), JSON.stringify({ name: "asks" }));
+    const local = new MockProvider([]);
+    const models = new InferenceRegistry();
+    models.register({
+      name: "mill",
+      protocol: "chat-completions",
+      endpoint: "http://127.0.0.1:11434/v1",
+      credential: { kind: "none" },
+      models: [{ id: "puppet", origin: "declared" }],
+      openCatalog: false,
+      enabled: true,
+    });
+    const log = new EventLog();
+    try {
+      const host = await servedHost({
+        cwd,
+        sessionDir: await tempDir(),
+        userRoot: await tempDir(),
+        projectTrusted: true,
+        provider: local,
+        inference: { bind: (reference) => models.bind(reference), provider: () => local },
+        inventory: {
+          capabilities: new CapabilityCache(),
+          registrations: () => models.all(),
+          provider: () => local,
+          decider: () => {
+            throw new Error("no decider here");
+          },
+        },
+        tailnet: fakeTailnet(),
+        permissions: () => "deny",
+        checkpoints: "off",
+        log,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(asked.filter(leavesThisMachine)).toEqual([]);
+
+      const server = createKeyworkServer({ token: "asks", host, log, version: "test" });
+      const look = () =>
+        server.fetch(
+          new Request("http://keywork.test/mesh/peers", {
+            headers: { authorization: "Bearer asks" },
+          }),
+        );
+      const probesOfThePeer = () => asked.filter((url) => url.includes("100.88.77.66")).length;
+      await look();
+      await look();
+      expect(probesOfThePeer()).toBe(1);
+
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + refusedWaitMs + 1_000 });
+      await look();
+      await look();
+      expect(probesOfThePeer()).toBe(2);
+      await server.close();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+function leavesThisMachine(url: string): boolean {
+  return !["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname);
+}
 
 function entryCosting(cost: number | null): UsageLedgerEntry {
   return {

@@ -26,7 +26,7 @@ const acceptBody: JsonSchema = {
 };
 
 const routineRow =
-  "`{ creature, id, file, routine, problem, grants: { posture, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun }`";
+  "`{ creature, id, file, routine, problem, grants: { posture, check, digest, needsAcceptance, accepted, acceptedAt }, schedule: { enabled, disabled, nextRunAt, consecutiveErrors, retryAt }, activeRunId, lastRun, lastCheck }` (`grants.check` the exact check command the digest covers, or null; `lastCheck` the check's latest result `{ at, command, verdict, exitCode, ms, found, output }` with `verdict` `quiet`, `woke` or `failed`, or null; both since contract 1.41)";
 
 const runRow =
   "`{ runId, creature, routineId, attempt, trigger, catchUp, firedAt, scheduledFor, status, sessionId, startedAt, endedAt, process, delivery, verified, reason, usage, cost, output, notify }`";
@@ -55,7 +55,7 @@ export const routineRoutes = [
     path: "/creatures/{slug}/routines/{id}",
     operationId: "putRoutine",
     summary:
-      "Write the chore's file and index it. The body is the routine file (`id` may be left out; the path names it). Triggers are `cron` (with an IANA `tz` and an optional `until`), `interval` (with an optional `until` instant), `at` (one instant), `file-watch` (paths or globs under the workspace, debounced), `webhook` (fired through `POST /hooks/{slug}/{id}` with the chore's token) and `event` (a bus event by name, with a `where` filter), and `manual`; since contract 1.17 for the last four beside the first two. A fired trigger is a stored assignment, never consent: every trigger parks the same way on an unaccepted grant set. A chore with `wake` is one the creature asked for itself with the schedule tool; the keeper removes it like any other. `tools` is `read-only` unless the chore declares `write` or `act` with a `grants` set, and the keeper must accept that set once (`POST .../accept`) before such a chore runs; nothing in this body can accept it. Putting a chore that repeated failures disabled back with `enabled: true` reinstates it.",
+      "Write the chore's file and index it. The body is the routine file (`id` may be left out; the path names it). Triggers are `cron` (with an IANA `tz` and an optional `until`), `interval` (with an optional `until` instant), `at` (one instant), `file-watch` (paths or globs under the workspace, debounced), `webhook` (fired through `POST /hooks/{slug}/{id}` with the chore's token) and `event` (a bus event by name, with a `where` filter), and `manual`; since contract 1.17 for the last four beside the first two. A fired trigger is a stored assignment, never consent: every trigger parks the same way on an unaccepted grant set. A chore with `wake` is one the creature asked for itself with the schedule tool; the keeper removes it like any other. `tools` is `read-only` unless the chore declares `write` or `act` with a `grants` set, and the keeper must accept that set once (`POST .../accept`) before such a chore runs; nothing in this body can accept it. A `check` (`{ command, timeoutSeconds }`, since contract 1.41) is a script-gated check that spends no tokens: before each run a trigger fires, the engine runs the command in the workspace's shell with no model; exit 0 means nothing to do, so there is no run, no thread and no notice; any other exit wakes the model, whose prompt names a file holding what the check printed. A check that does not finish in time or cannot start fails the run like any failure. The exact command is part of the digest the keeper accepts, so a read-only chore with a check waits for acceptance too, a changed command voids it, and until it is accepted a trigger runs nothing. A run by hand skips the check. Putting a chore that repeated failures disabled back with `enabled: true` reinstates it.",
     authenticated: true,
     requestBody: routineJsonSchema,
     responses: {
@@ -107,12 +107,13 @@ export const routineRoutes = [
     path: "/creatures/{slug}/routines/{id}/accept",
     operationId: "acceptRoutineGrants",
     summary:
-      "The keeper accepts a write or act chore's declared grant set, named by the `digest` its row shows, so the keeper accepts exactly what they read. A changed file changes the digest and voids the acceptance; a fired trigger, a run by hand or a routine body never accepts.",
+      "The keeper accepts a write or act chore's declared grant set and its check command, named by the `digest` its row shows, so the keeper accepts exactly what they read. A changed file changes the digest and voids the acceptance; a fired trigger, a run by hand or a routine body never accepts.",
     authenticated: true,
     requestBody: acceptBody,
     responses: {
       "200": "`{ routine }` with `grants.accepted: true`.",
-      "400": "The body is not `{ digest }`, the digest is stale, or the chore is read-only.",
+      "400":
+        "The body is not `{ digest }`, the digest is stale, or the chore is read-only with no check.",
       "404": missing,
     },
   },
@@ -133,7 +134,7 @@ export const routineRoutes = [
     path: "/routines/needs-you",
     operationId: "listNeedsYou",
     summary:
-      "Every chore that needs the keeper, across creatures, from one source: `{ items }`, each `{ creature, routineId, kind, reason, runId, since, action }`. `kind` is `grants` (a write or act chore held on an unaccepted grant set; `action` is `{ verb: accept, digest }` and `runId` names the run that was refused, when one was), `run` (the last run ended and needs you: failed, timed out, over budget or blocked), `disabled` (repeated failures turned the chore off) or `invalid` (its file does not parse). `since` is when that began, when known. A held run has no session, so the item carries the chore, never a thread. `routine.needs` on the event stream carries the same items per chore whenever they change, empty once the chore no longer needs you. Since contract 1.10.",
+      "Every chore that needs the keeper, across creatures, from one source: `{ items }`, each `{ creature, routineId, kind, tier, reason, runId, since, action }`. `tier` is the engine's own decision, the same as the notice for the item on `notifications.notice` (since contract 1.41): `interrupt` wants a keystroke now, `digest` can wait and arrives at once without a bell, and only an `interrupt` brings the creature to the porch. `kind` is `grants` (a write or act chore, or a chore with a check, waiting on an unaccepted grant set; `action` is `{ verb: accept, digest }` and `runId` names the run that was refused, when one was; `tier` is `digest` until a run waits on the acceptance, then `interrupt`; `reason` says in plain words what the chore asks to do, such as `asks to write files`, and never carries the digest), `run` (the last run ended and needs you: a run by hand that failed or timed out, any run over budget or blocked, or one whose delivery failed or is unknown; a scheduled run that failed is tried again on its own and is not an item while it is), `disabled` (it kept failing, so it stopped; `action` is `{ verb: answer }` since contract 1.41: the creature's question about it in `GET /creatures/{slug}/promises` carries the choices) or `invalid` (its file does not parse); every kind but a `grants` item with no run waiting is `interrupt`. `since` is when that began, when known. A held run has no session, so the item carries the chore, never a thread. `routine.needs` on the event stream carries the same items per chore whenever they change, empty once the chore no longer needs you. Since contract 1.10.",
     authenticated: true,
     responses: { "200": "`{ items }`." },
   },
@@ -163,7 +164,7 @@ export const routineHookRoutes = [
     responses: {
       "202": "`{ runId, status }`: the run started.",
       "200":
-        "`{ runId, status }`: the run did not start: parked on its grant set, or failed at once.",
+        '`{ runId, status }`: the run did not start: parked on its grant set, or failed at once; or `{ runId: null, status: "checked" }` when the chore\'s check found nothing to do.',
       "401": "No hook answers that token (or that chore has none).",
       "409":
         "The chore is turned off, or `{ runId, status }` for a run turned away by a cap or the lock.",

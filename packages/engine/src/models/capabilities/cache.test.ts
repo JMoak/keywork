@@ -38,30 +38,20 @@ describe("CapabilityCache", () => {
 });
 
 describe("class eligibility", () => {
-  it("never treats an unknown capability as present", () => {
+  it("never treats unknown tool calls as present, and learns context and decode in use", () => {
     expect(eligibleClasses(record())).toEqual([]);
-    expect(missingFor(record(), "loop").map((missing) => missing.capability)).toEqual([
-      "tools",
-      "contextAllocated",
-      "decodeTokensPerSecond",
-    ]);
+    expect(missingFor(record(), "loop").map((missing) => missing.capability)).toEqual(["tools"]);
   });
 
-  it("admits loop only with tools, 64K allocated and measured decode at 40 tok/s", () => {
-    const capable = record({
-      tools: known(true, route),
-      contextAllocated: known(65_536, { source: "native-route", route: "/api/ps" }),
-    });
-    expect(missingFor(capable, "loop")).toEqual([
-      {
-        capability: "decodeTokensPerSecond",
-        needs: "decode measured at or above 40 tok/s on this node",
-      },
+  it("admits loop with tools and no allocated context known short of 64K, whatever its decode", () => {
+    const capable = record({ tools: known(true, route) });
+    expect(missingFor(capable, "loop")).toEqual([]);
+    const short = { ...capable, contextAllocated: known(32_768, route) };
+    expect(missingFor(short, "loop").map((missing) => missing.capability)).toEqual([
+      "contextAllocated",
     ]);
-    expect(missingFor(withMeasuredDecode(capable, 39.9, now().toISOString()), "loop")).toHaveLength(
-      1,
-    );
-    expect(eligibleClasses(withMeasuredDecode(capable, 76.9, now().toISOString()))).toEqual([
+    const allocated = { ...capable, contextAllocated: known(65_536, route) };
+    expect(eligibleClasses(withMeasuredDecode(allocated, 12.5, now().toISOString()))).toEqual([
       "loop",
     ]);
   });

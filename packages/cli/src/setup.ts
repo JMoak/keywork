@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { connectionDraftProblem, parseReference } from "@keywork/engine";
+import { connectionDraftProblem, parseReference, plainHttpRefusal } from "@keywork/engine";
 import { toError } from "@keywork/shared";
 import type {
   ConnectionDraft,
@@ -32,6 +32,7 @@ export interface ConnectOptions {
   io?: ConnectIo | undefined;
   signIn?: ((method: "browser" | "device") => Promise<string>) | undefined;
   decider?: DeciderConnection | undefined;
+  console?: boolean | undefined;
 }
 
 const connectionGroups = ["local", "flagship", "openrouter"] as const;
@@ -90,37 +91,40 @@ async function connect(
   io: ConnectIo,
 ): Promise<number> {
   const { argument, group, firstModel } = options;
-  if (argument === undefined && group === undefined && firstModel !== undefined) {
-    const standing = firstModel.standing();
+  const guidedFirstModel = options.console === true ? undefined : firstModel;
+  if (argument === undefined && group === undefined && guidedFirstModel !== undefined) {
+    const standing = guidedFirstModel.standing();
     if (standing.kind === "available")
-      return reviewStartingModel(port, firstModel, standing.reference, io);
+      return reviewStartingModel(port, guidedFirstModel, standing.reference, io);
   }
   const chosen = await chooseTarget(port, options, io);
   if (chosen === undefined) return 1;
   if (chosen === existingModelChoice) return chooseFirstModel(firstModel, undefined, io);
   if (chosen === codexChoiceId) {
-    const signedIn = await signInToCodex(io, options.signIn);
+    const signedIn = await signInToCodex(io, options.signIn, options.console === true);
     if (signedIn !== 0) return signedIn;
     await firstModel?.refresh();
     return chooseFirstModel(firstModel, codexProviderName, io);
   }
   if ("target" in chosen) return connectDecider(chosen, io);
   return connectDraft(port, chosen, io, {
-    guided: group !== undefined || firstModel !== undefined,
+    guided: group !== undefined || guidedFirstModel !== undefined,
     firstModel,
+    console: options.console === true,
   });
 }
 
 interface DraftGuidance {
   guided: boolean;
   firstModel: FirstModelSetup | undefined;
+  console: boolean;
 }
 
 async function connectDraft(
   port: ConnectionsPort,
   initial: ConnectionDraft,
   io: ConnectIo,
-  { guided, firstModel }: DraftGuidance,
+  { guided, firstModel, console }: DraftGuidance,
 ): Promise<number> {
   let draft = await completeDraft(port, initial, io, guided);
   while (draft !== undefined) {
@@ -130,7 +134,7 @@ async function connectDraft(
       await port.save(draft, verification);
       io.print(`\n${receipt(port, draft, verification, guided)}`);
       if (firstModel !== undefined) return chooseFirstModel(firstModel, draft.name, io);
-      io.print(`Try it:  keywork panes   then /model to pick ${draft.name}/<model>`);
+      if (!console) io.print(`Try it:  keywork panes   then /model to pick ${draft.name}/<model>`);
       return 0;
     }
     io.print(`not saved: ${verification.reason}`);
@@ -173,7 +177,11 @@ async function reviewStartingModel(
   io.print(`Starting model: ${reference}`);
   io.print(`last check failed ${lastFailure.at} · ${lastFailure.reason}`);
   if (await confirmed(io, `Fix ${name} now? [y/N]: `))
-    return connectDraft(port, port.draftFor(failing), io, { guided: true, firstModel });
+    return connectDraft(port, port.draftFor(failing), io, {
+      guided: true,
+      firstModel,
+      console: false,
+    });
   io.print(`Starting model unchanged · fix ${name} later with keywork connect ${name}`);
   return 1;
 }
@@ -192,19 +200,19 @@ function failingConnectionBehind(
 
 async function chooseTarget(
   port: ConnectionsPort,
-  { argument, group, firstModel, decider }: ConnectOptions,
+  { argument, group, firstModel, decider, console }: ConnectOptions,
   io: ConnectIo,
 ): Promise<Choice | undefined> {
   if (argument !== undefined && argument !== "")
     return choiceFromArgument(port, argument, decider, io);
   if (group !== undefined) return chooseGroupTarget(port, group, io);
-  if (firstModel !== undefined) {
+  if (firstModel !== undefined && console !== true) {
     const selected = await chooseGroup(firstModel, io);
     if (selected === existingModelChoice || selected === undefined) return selected;
     return chooseGroupTarget(port, selected, io);
   }
   const targets = port.targets();
-  io.print("keywork connect: add an inference provider\n");
+  io.print(console === true ? "Connect a model\n" : "keywork connect: add an inference provider\n");
   for (const [index, target] of targets.entries()) {
     io.print(`  ${index + 1}. ${describeTarget(target)}`);
   }
@@ -284,9 +292,7 @@ async function chooseLocalTarget(
       .map((value) => ({ value, label: describeTarget(value) })),
   ];
   const target = await pick(choices, io);
-  if (target === undefined) return undefined;
-  const draft = port.draftFor(target);
-  return target.kind === "custom" ? { ...draft, credential: "none" } : draft;
+  return target === undefined ? undefined : port.draftFor(target);
 }
 
 async function findLocal(port: ConnectionsPort, io: ConnectIo) {
@@ -319,6 +325,10 @@ async function chooseFirstModel(
   if (setup === undefined) return 0;
   const standing = setup.standing();
   if (standing.kind === "available") {
+    if (standing.configured === undefined && setup.choices().length === 1) {
+      io.print(`${standing.reference} answers from now on: it is the only model connected.`);
+      return 0;
+    }
     if (
       standing.configured === undefined &&
       (provider === undefined || standing.reference.startsWith(`${provider}/`))
@@ -445,7 +455,7 @@ async function completeDraft(
     .find((candidate) => candidate.name === initial.name && candidate.kind !== "custom");
   let draft = { ...initial, apiKey: "" };
   for (;;) {
-    draft = await editDraft(draft, target, io);
+    draft = await allowingPlainHttp(await editDraft(draft, target, io), io);
     const problem =
       draft.endpoint === "" && draft.name !== ""
         ? "a connection needs an endpoint URL"
@@ -455,6 +465,16 @@ async function completeDraft(
     if (!guided || !(await confirmed(io, "Edit the connection and try again? [y/N]: ")))
       return undefined;
   }
+}
+
+async function allowingPlainHttp(draft: ConnectionDraft, io: ConnectIo): Promise<ConnectionDraft> {
+  if (connectionDraftProblem(draft) !== plainHttpRefusal) return draft;
+  const host = new URL(draft.endpoint).host;
+  const allowed = await confirmed(
+    io,
+    `${host} is not on this machine or the tailnet, and plain http is not encrypted. Reach it anyway? [y/N]: `,
+  );
+  return allowed ? { ...draft, insecureTransport: true } : draft;
 }
 
 async function editDraft(
@@ -487,6 +507,7 @@ async function askKey(
 async function signInToCodex(
   io: ConnectIo,
   signIn: ConnectOptions["signIn"] = defaultCodexSignIn,
+  console = false,
 ): Promise<number> {
   const method = (
     await answerFrom(io.ask("Sign in via [b]rowser or [d]evice code (for SSH)? [b]: "))
@@ -494,7 +515,7 @@ async function signInToCodex(
   try {
     const file = await signIn(method.startsWith("d") ? "device" : "browser");
     io.print(`\nSigned in. Credentials saved to ${file}`);
-    io.print("Try it:  keywork panes");
+    if (!console) io.print("Try it:  keywork panes");
     return 0;
   } catch (cause) {
     io.print(`sign-in failed: ${toError(cause).message}`);

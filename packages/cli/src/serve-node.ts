@@ -1,17 +1,28 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type BenchOpener,
   benchBook,
+  bindForClass,
+  bindingCapabilities,
   CapabilityCache,
+  type ConnectedServer,
   type CostSource,
+  capabilityLearningFileIn,
   carriesUsage,
   costNanosOf,
+  createTailnet,
   type Decider,
+  defaultTransport,
   fileLicenseBook,
   type InferenceBinding,
+  isLoopbackEndpoint,
+  isTailnetEndpoint,
+  type KeptCapabilities,
+  keepCapabilities,
   localBenchOpener,
+  localityOf,
   ModelInventory,
   type ModelReference,
   modelAcknowledgementsFile,
@@ -27,8 +38,10 @@ import {
   readSlate,
   registryBenchOpener,
   routinesStateOf,
+  serverRootOf,
   stewardedInventory,
   type Tailnet,
+  type TailnetNode,
   type Usage,
   UsageLedger,
   type UsageLedgerEntry,
@@ -40,8 +53,8 @@ import { toError } from "@keywork/shared";
 import { type HouseMeshConsole, houseMeshConsole, nodeWorkshops } from "./node/compose.ts";
 import { readNodeConfig } from "./node/config.ts";
 import { nodePaths, workspaceStateDir } from "./node/paths.ts";
-import { conversationModel } from "./serve-conversation-model.ts";
-import { configuredLoopbackModels } from "./serve-models.ts";
+import { type AskingTheServer, conversationModel } from "./serve-conversation-model.ts";
+import { configuredModels } from "./serve-models.ts";
 
 export interface ServedNodeOptions {
   cwd: string;
@@ -63,6 +76,9 @@ export interface NodeInventorySeams {
   decider(binding: InferenceBinding): Decider;
   inherit?: (() => ModelReference | undefined) | undefined;
   answers?: ProviderAnswers | undefined;
+  headersFor?:
+    | ((registration: ProviderRegistration) => Record<string, string> | undefined)
+    | undefined;
 }
 
 export type NodePolicy = Required<Pick<PolicyEnvironment, "capabilityOf" | "refusalOf">>;
@@ -72,15 +88,23 @@ export interface ServedNode {
   routines: RoutinesState;
   workshops: Workshops;
   models: ModelsPort;
+  ask: AskingTheServer;
+  reach: AskingTheServer;
   policy: NodePolicy;
   usage: TurnUsage;
   mesh: HouseMeshConsole | undefined;
+  learning: KeptCapabilities;
 }
 
 export interface TurnUsage {
   record(turn: MeteredTurn): void;
-  spentOn(creature: string, date: string): number | null;
+  workedOn(creature: string, date: string): Promise<CreatureDay>;
   flush(): Promise<void>;
+}
+
+export interface CreatureDay {
+  sessions: readonly string[];
+  costNanos: number | null;
 }
 
 export interface MeteredTurn {
@@ -97,10 +121,18 @@ export async function servedNode(options: ServedNodeOptions): Promise<ServedNode
   const state = nodePaths(options.userRoot).state;
   const workspaceState = workspaceStateDir(options.userRoot, options.cwd, options.workspaceSlug);
   const capabilities = options.inventory?.capabilities ?? new CapabilityCache();
+  const learning = keepCapabilities(
+    capabilities,
+    capabilityLearningFileIn(workspaceState),
+    options.notice,
+  );
   const licenses = fileLicenseBook(modelAcknowledgementsFile(state));
   const slate = await readSlate().catch(() => undefined);
+  const machineOf = machineNamer(machine, options.tailnet);
   const inventory = new ModelInventory({
     nodes: async () => [{ node: machine, address: localAddress, scan: true }],
+    connections: () =>
+      connectedServers(options.inventory?.registrations() ?? [], machineOf, options.inventory),
     cache: capabilities,
     ...(options.modelProbe !== undefined && { http: options.modelProbe }),
     announce: { node: machine, changed: (change) => log.record("", "models.changed", change) },
@@ -109,40 +141,120 @@ export async function servedNode(options: ServedNodeOptions): Promise<ServedNode
     capabilityOf: probedCapabilities(capabilities),
     refusalOf: unacknowledgedLicense(licenses, slate),
   };
+  const configured = configuredModels(
+    stewardedInventory(inventory, {
+      licenses,
+      benches: benchBook({
+        dir: modelBenchDir(state),
+        openers: benchOpenersOver(capabilities, options),
+      }),
+      slate,
+      registrations: options.inventory?.registrations,
+      answers: options.inventory?.answers,
+      inherit: options.inventory?.inherit,
+      policy,
+    }),
+    {
+      registrations: options.inventory?.registrations,
+      capabilities,
+      headersFor: options.inventory?.headersFor,
+      toolsKnown: (registration, model) => {
+        const bound = bindForClass({ provider: registration.name, model }, "strong", [
+          registration,
+        ]);
+        return bound.ok && bindingCapabilities(bound.binding, policy).tools.known;
+      },
+      answers: (endpoint, headers) => inventory.answers(endpoint, headers),
+      conversation:
+        options.inventory === undefined
+          ? undefined
+          : () =>
+              conversationModel(options.inventory?.inherit?.(), {
+                registrations: options.inventory?.registrations() ?? [],
+                ...policy,
+              }),
+    },
+  );
   return {
     state,
     routines: routinesStateOf(workspaceState),
     workshops: nodeWorkshops(state, (change) => log.record("", "workshop.changed", change)),
-    models: configuredLoopbackModels(
-      stewardedInventory(inventory, {
-        licenses,
-        benches: benchBook({
-          dir: modelBenchDir(state),
-          openers: benchOpenersOver(capabilities, options),
-        }),
-        slate,
-        registrations: options.inventory?.registrations,
-        answers: options.inventory?.answers,
-        inherit: options.inventory?.inherit,
-        policy,
-      }),
-      {
-        registrations: options.inventory?.registrations,
-        capabilities,
-        conversation:
-          options.inventory === undefined
-            ? undefined
-            : () =>
-                conversationModel(options.inventory?.inherit?.(), {
-                  registrations: options.inventory?.registrations() ?? [],
-                  ...policy,
-                }),
-      },
-    ),
+    models: configured.models,
+    ask: configured.ask,
+    reach: configured.reach,
     policy,
     usage: await usageLedgerAt(join(workspaceState, "usage"), machine, options),
     mesh: await meshConsoleFor(state, options),
+    learning,
   };
+}
+
+export type MachineOf = (endpoint: string) => Promise<string>;
+
+export async function connectedServers(
+  registrations: readonly ProviderRegistration[],
+  machineOf: MachineOf,
+  seams?: Pick<NodeInventorySeams, "headersFor"> | undefined,
+): Promise<ConnectedServer[]> {
+  const local = registrations.filter(
+    (registration) => registration.enabled && localityOf(registration.endpoint) === "local",
+  );
+  return Promise.all(
+    local.map(async (registration) => {
+      const headers = seams?.headersFor?.(registration);
+      return {
+        name: registration.name,
+        node: await machineOf(registration.endpoint),
+        root: serverRootOf(registration.endpoint),
+        auth: registration.credential.kind === "none" ? ("none" as const) : ("key" as const),
+        ...(headers !== undefined && { headers }),
+      };
+    }),
+  );
+}
+
+export function machineNamer(machine: string, tailnet: Tailnet | undefined): MachineOf {
+  let peers: { at: number; nodes: Promise<readonly TailnetNode[]> } | undefined;
+  const tailnetNodes = (): Promise<readonly TailnetNode[]> => {
+    if (peers === undefined || Date.now() - peers.at > peersMaxAgeMs) {
+      const reader = tailnet ?? createTailnet(defaultTransport());
+      const nodes = reader
+        .status()
+        .then((status) => [...(status.self === null ? [] : [status.self]), ...status.peers])
+        .catch(() => []);
+      peers = { at: Date.now(), nodes };
+    }
+    return peers.nodes;
+  };
+  return async (endpoint) => {
+    if (isLoopbackEndpoint(endpoint)) return machine;
+    const host = hostOf(endpoint);
+    if (host === undefined) return endpoint;
+    if (!isTailnetEndpoint(endpoint) && host.includes(".")) return host;
+    const nodes = await tailnetNodes();
+    const found = nodes.find((node) => namesNode(node, host));
+    return found === undefined ? host : found.hostName;
+  };
+}
+
+const peersMaxAgeMs = 30_000;
+
+function namesNode(node: TailnetNode, host: string): boolean {
+  const dnsName = node.dnsName.replace(/\.$/, "").toLowerCase();
+  return (
+    node.tailscaleIPs.includes(host) ||
+    dnsName === host ||
+    dnsName.split(".")[0] === host ||
+    node.hostName.toLowerCase() === host
+  );
+}
+
+function hostOf(endpoint: string): string | undefined {
+  try {
+    return new URL(endpoint).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 export function normalizedUsageOf(usage: Usage, model: string | undefined): NormalizedUsage | null {
@@ -219,10 +331,27 @@ async function usageLedgerAt(
         session: turn.session,
         usage: normalizedUsageOf(turn.usage, turn.model),
       }),
-    spentOn: (creature, date) =>
-      spentNanos(ledger.entries({ creature }).filter((entry) => dayOf(entry.at) === date)),
+    workedOn: async (creature, date) => {
+      await written;
+      const workspaces = dirname(dirname(dir));
+      const entries = (await everyWorkspaceDay(workspaces, date)).filter(
+        (entry) => entry.creature === creature && dayOf(entry.at) === date,
+      );
+      return {
+        sessions: [...new Set(entries.flatMap((entry) => entry.session ?? []))],
+        costNanos: spentNanos(entries),
+      };
+    },
     flush: () => written,
   };
+}
+
+async function everyWorkspaceDay(workspaces: string, date: string): Promise<UsageLedgerEntry[]> {
+  const names = await readdir(workspaces).catch(() => [] as string[]);
+  const days = await Promise.all(
+    names.map((name) => savedEntries(join(workspaces, name, "usage", `${date}.jsonl`))),
+  );
+  return days.flat();
 }
 
 async function persist(dir: string, file: string, entry: UsageLedgerEntry): Promise<void> {

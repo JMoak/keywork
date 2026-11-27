@@ -14,9 +14,10 @@ import {
   type CreatureSessions,
   type CreatureSessionTag,
   type CreatureThreads,
+  type CreatureWorksite,
   conversationEndedOf,
   creatureHost,
-  creatureInjection,
+  creatureStanding,
   creatureTagOf,
   hostWorkshop,
   type InjectOutcome,
@@ -37,11 +38,13 @@ import {
   temperamentSentence,
   turnFactsOf,
   type WakeScheduler,
+  type WorkElsewhere,
   type Workshops,
 } from "@keywork/engine";
 import { type PermissionRule, resolveVaultPath, toError } from "@keywork/shared";
 import { layerRoots } from "./bots.ts";
 import type { CreatureSeat } from "./compose.ts";
+import type { CreatureDay } from "./serve-node.ts";
 
 export interface CreaturePlace {
   cwd: string;
@@ -65,7 +68,8 @@ export interface ServedCreaturesOptions {
   sessions: ServedCreatureSessions;
   workshops: Pick<Workshops, "remove">;
   nextRun(slug: string): Promise<RoutineRunAhead | undefined>;
-  spentToday(slug: string, date: string): Promise<number | null>;
+  workedToday(slug: string, date: string): Promise<CreatureDay>;
+  elsewhere?: ((slug: string) => Promise<WorkElsewhere>) | undefined;
   notice(text: string): void;
 }
 
@@ -73,6 +77,7 @@ export interface SeatOptions {
   registry: CreatureRegistry;
   workshops: Pick<Workshops, "tools" | "detail">;
   grants(sessionId: string): readonly PermissionRule[];
+  keeperRules?: (() => readonly PermissionRule[]) | undefined;
   wakes?: (() => WakeScheduler | undefined) | undefined;
   payload?: ((sessionId: string) => Promise<PayloadRef | undefined>) | undefined;
   mail?: (() => Pick<CreatureMail, "send"> | undefined) | undefined;
@@ -113,18 +118,20 @@ export function creatureSeats(
     const creature = bot === undefined ? undefined : await options.registry.read(bot);
     if (creature === undefined) return undefined;
     const sessionId = store.header.id;
-    const workshopState = await workshopStateLine(creature, options.workshops);
+    const reach = await workshopReachOf(creature, options.workshops);
     const wakes = options.wakes?.();
     const payload = await options.payload?.(sessionId);
     const mail = options.mail?.();
     return {
       ...(payload !== undefined && { readable: [payload.file] }),
       workshop: creature.file.workshop,
-      injection: () =>
+      worksOnACopy: !reach.inPlace,
+      identity: creature.file.introduction,
+      injection: async () =>
         [
-          creatureInjection(creature.file, options.grants(sessionId)),
-          temperamentSentence(creature.file),
-          workshopState,
+          creatureStanding(options.grants(sessionId), options.keeperRules?.() ?? []),
+          temperamentSentence((await options.registry.read(creature.slug))?.file ?? creature.file),
+          reach.line,
           inboundSection(creature.slug, store.contextEntries(), options.staged?.() ?? []),
         ]
           .filter((section) => section !== "")
@@ -150,20 +157,26 @@ export function inboundSection(
   return [mail === "" ? inboundBlockHeading : mail, ...addressed.map(addressedLine)].join("\n");
 }
 
-export async function workshopStateLine(
+export interface WorkshopReach {
+  line: string;
+  inPlace: boolean;
+}
+
+export async function workshopReachOf(
   creature: Pick<Creature, "slug" | "file">,
   workshops: Pick<Workshops, "detail">,
-): Promise<string> {
+): Promise<WorkshopReach> {
   const { workshop } = creature.file;
-  if (workshop === hostWorkshop) {
-    return "Your workshop is this host: your file and shell tools work in the workspace directly.";
-  }
+  if (workshop === hostWorkshop) return { line: hostWorkshopLine, inPlace: true };
   const detail = await workshops.detail(workshop).catch((cause: unknown) => ({
     refused: "failed" as const,
     error: toError(cause).message,
   }));
   if (isRefused(detail)) {
-    return `Your workshop ${workshop} answered no state (${detail.error}): say so in words before calling a tool.`;
+    return {
+      line: `Your workshop ${workshop} answered no state (${detail.error}): say so in words before calling a tool.`,
+      inPlace: false,
+    };
   }
   const place =
     detail.workspace.access === "direct"
@@ -171,15 +184,24 @@ export async function workshopStateLine(
       : detail.workspace.access === "working-copy"
         ? `it works on a copy of the workspace; ${detail.workspace.returns}`
         : detail.workspace.returns;
-  return `Your workshop ${workshop} (${detail.substrate}) is ${detail.state}; ${place}. A stopped workshop starts on your first tool call; one that cannot start says so in that call's answer, and you then tell the keeper in words and call no more tools.`;
+  return {
+    line: `Your workshop ${workshop} (${detail.substrate}) is ${detail.state}; ${place}. A stopped workshop starts on your first tool call; one that cannot start says so in that call's answer, and you then tell the keeper in words and call no more tools.`,
+    inPlace: detail.workspace.access === "direct",
+  };
 }
+
+export const workshopLineOpening = "Your workshop ";
+
+const hostWorkshopLine = `${workshopLineOpening}is this host: your file and shell tools work in the workspace directly.`;
 
 export function servedCreatures(options: ServedCreaturesOptions): CreatureHost {
   const host = creatureHost({
     registry: options.registry,
     sessions: creatureSessionsOver(options.sessions),
     nextRun: options.nextRun,
-    spentToday: options.spentToday,
+    workedToday: options.workedToday,
+    elsewhere: options.elsewhere,
+    notice: options.notice,
   });
   return {
     ...host,
@@ -189,6 +211,17 @@ export function servedCreatures(options: ServedCreaturesOptions): CreatureHost {
       if (workshop !== null) await tearDownWorkshop(workshop, options);
       return removal;
     },
+  };
+}
+
+export function workElsewhereOf(rows: readonly CreatureWorksite[], slug: string): WorkElsewhere {
+  const own = rows.filter((row) => row.creature === slug);
+  return {
+    working: own.some((row) => row.active),
+    latest: own
+      .map((row) => row.latest)
+      .sort()
+      .at(-1),
   };
 }
 
@@ -234,10 +267,13 @@ export function firstLineOf(text: string): string {
 }
 
 export function turnLabelOf(settled: Pick<SettledThread, "store" | "lastReply">): string {
-  const sentence = firstSentenceOf(settled.lastReply);
+  return reportLineOf(settled.lastReply, lastTurnFilesOf(settled.store.entries()));
+}
+
+export function reportLineOf(reply: string, changed: readonly string[]): string {
+  const sentence = firstSentenceOf(reply);
   if (sentence !== "") return sentence;
-  const files = lastTurnFilesOf(settled.store.entries());
-  return files.length === 0 ? wordlessTurn : `Changed ${files.join(", ")}.`;
+  return changed.length === 0 ? wordlessTurn : `Changed ${changed.join(", ")}.`;
 }
 
 export function firstSentenceOf(text: string): string {

@@ -393,14 +393,24 @@ describe("resolvePolicy judges a cloud model by declared facts, never by what on
     });
   });
 
-  it("still refuses a local mill that was never measured, naming what was not measured", () => {
+  it("serves loop on a local mill whose decode was never measured, but never on unverified tool calls", () => {
+    const loop = {
+      modelClass: "loop" as const,
+      levels: { creature: { loop: slot("ollama", "qwen3.6-35b-a3b") } },
+    };
     const unmeasured = { tools: known(true, probed), contextAllocated: known(131_072, probed) };
-    const resolution = resolvePolicy(
-      { modelClass: "loop", levels: { creature: { loop: slot("ollama", "qwen3.6-35b-a3b") } } },
-      probedEnvironment([ollama], { "ollama/qwen3.6-35b-a3b": unmeasured }),
-    );
-    expect(failureOf(resolution).failure.message).toBe(
-      "ollama/qwen3.6-35b-a3b cannot serve the loop class: its decode was never measured on this node, and it needs decode measured at or above 40 tok/s on this node",
+    expect(
+      referencesOf(
+        resolvePolicy(loop, probedEnvironment([ollama], { "ollama/qwen3.6-35b-a3b": unmeasured })),
+      ),
+    ).toEqual(["ollama/qwen3.6-35b-a3b"]);
+    const unasked = { contextAllocated: known(131_072, probed) };
+    expect(
+      failureOf(
+        resolvePolicy(loop, probedEnvironment([ollama], { "ollama/qwen3.6-35b-a3b": unasked })),
+      ).failure.message,
+    ).toBe(
+      "ollama/qwen3.6-35b-a3b cannot serve the loop class: its tool calls were never verified, and it needs tool calls arriving in tool_calls",
     );
   });
 });

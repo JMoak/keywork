@@ -14,6 +14,7 @@ export interface WakeRequest {
   everyMinutes?: number | undefined;
   tools?: ToolPosture | undefined;
   grants?: readonly GrantRule[] | undefined;
+  check?: string | undefined;
 }
 
 export interface WakeSettings {
@@ -47,6 +48,7 @@ export function wakeRoutineOf(
     trigger: trigger.trigger,
     tools: request.tools ?? "read-only",
     grants: request.grants ?? [],
+    ...(request.check !== undefined && { check: { command: request.check } }),
     wake: { requestedAt: isoOf(now) },
   });
   return "problem" in parsed ? { problem: parsed.problem } : parsed;
@@ -61,6 +63,7 @@ export function wakeIdOf(now: number, taken: (id: string) => boolean): string {
 
 export function coversGrants(accepted: Routine, wanted: Routine): boolean {
   return (
+    wanted.check === undefined &&
     postureRank[accepted.tools] >= postureRank[wanted.tools] &&
     wanted.grants.every((rule) =>
       accepted.grants.some(

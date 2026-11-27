@@ -11,6 +11,16 @@ export interface TriggerPayload {
   data: unknown;
 }
 
+export interface CheckPayload {
+  command: string;
+  exitCode: number | null;
+  output: string;
+}
+
+export type SavedPayload =
+  | (TriggerPayload & { check?: CheckPayload })
+  | { kind: "check"; receivedAt: string; check: CheckPayload };
+
 export interface PayloadRef {
   file: string;
   bytes: number;
@@ -25,7 +35,7 @@ export function payloadFileOf(outputsDir: string, run: RunIdentity): string {
 export async function savePayload(
   outputsDir: string,
   run: RunIdentity,
-  payload: TriggerPayload,
+  payload: SavedPayload,
 ): Promise<PayloadRef> {
   const file = payloadFileOf(outputsDir, run);
   const text = `${JSON.stringify(payload, null, 2)}\n`;

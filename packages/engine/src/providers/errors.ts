@@ -38,7 +38,7 @@ export class ProviderEmptyResponseError extends Error {
 function describeHttpFailure(provider: string, status: number, body: string): string {
   const meaning = meaningOf(provider, status, body);
   return meaning === undefined
-    ? `${provider} request failed (${status}): ${excerptOf(body)}`
+    ? `${provider} request failed (${status}): ${excerptOf(providerMessageOf(body))}`
     : `${meaning} · (${status}) ${leadOf(body)}`.trimEnd();
 }
 

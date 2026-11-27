@@ -33,7 +33,7 @@ export function withdrawTool(target: ShowTarget): Tool {
         mood: wordInput(moodWords)
           .optional()
           .describe(
-            "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with your temperament, if you have one, else in the mood it arrived with.",
+            "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with the temperament you are in now, if you have one, else in the mood it arrived with.",
           ),
       })
       .strict(),

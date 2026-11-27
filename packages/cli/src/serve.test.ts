@@ -1923,8 +1923,8 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
     const before = await read<{ leafId: string; activePath: string[] }>(
       await call(`/sessions/${id}/entries`),
     );
-    expect(before.activePath).toHaveLength(6);
-    const firstAnswer = before.activePath[1] ?? "";
+    expect(before.activePath).toHaveLength(8);
+    const firstAnswer = before.activePath[2] ?? "";
 
     const moved = await post(call, `/sessions/${id}/leaf`, { entryId: firstAnswer });
     expect(await moved.json()).toEqual({ leafId: firstAnswer });
@@ -1944,8 +1944,8 @@ describe("K2 under serve: the tree and the diff over JSONL and the shadow repo",
       await call(`/sessions/${id}/entries`),
     );
     expect(after.entries.filter((entry) => entry.parentId === firstAnswer)).toHaveLength(2);
-    expect(after.activePath.slice(0, 2)).toEqual(before.activePath.slice(0, 2));
-    expect(after.activePath).toHaveLength(5);
+    expect(after.activePath.slice(0, 3)).toEqual(before.activePath.slice(0, 3));
+    expect(after.activePath).toHaveLength(7);
     expect((await post(call, `/sessions/${id}/leaf`, { entryId: "nope" })).status).toBe(404);
     await reader.close();
     await server.close();

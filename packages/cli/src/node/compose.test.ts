@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as engine from "@keywork/engine";
-import { meshKeysFile, systemClock, unprotectedKeyWarning } from "@keywork/engine";
+import { meshKeysFile, systemClock } from "@keywork/engine";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CoreComposition, composeCoreServices } from "./compose.ts";
 import { defaultNodeConfig } from "./config.ts";
@@ -27,6 +27,7 @@ function composition(mesh: boolean): CoreComposition & { said: string[] } {
     version: "0.0.0-test",
     clock: systemClock,
     say: (line) => said.push(line),
+    vault: null,
   };
 }
 
@@ -36,7 +37,9 @@ describe("composeCoreServices", () => {
     const services = await composeCoreServices(built);
     expect(services.mesh).toBeDefined();
     expect(existsSync(meshKeysFile(built.stateDir))).toBe(true);
-    expect(built.said).toContain(`mesh: ${unprotectedKeyWarning}`);
+    expect(built.said).toContain(
+      "mesh: This machine's mesh keys are protected only by file permissions: they are in a file only this user can read, because this system has no OS key store keywork can use. Anything running as this user can read that file.",
+    );
     expect(await services.reconcile.claim?.claimState()).toBe("unclaimed");
     await services.close?.();
   });

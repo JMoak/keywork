@@ -46,7 +46,7 @@ import {
   verdictMarksOf,
 } from "./review.ts";
 import { SpillStore } from "./spill.ts";
-import { turnFactsOf } from "./turn-facts.ts";
+import { turnFactsOf, turnProgressOf } from "./turn-facts.ts";
 import { type OutcomeMark, outcomeMarksOf } from "./turn-outcomes.ts";
 
 export interface SessionStats {
@@ -438,7 +438,7 @@ export class SessionStore {
   }
 
   private pinTurnCheckpoint(entry: SessionEntry): void {
-    const facts = turnFactsOf(entry);
+    const facts = turnFactsOf(entry) ?? turnProgressOf(entry);
     if (facts?.checkpoint === undefined) return;
     const prompt = this.byId.get(facts.prompt);
     if (prompt?.type !== "message" || prompt.checkpoint !== undefined) return;
@@ -531,6 +531,14 @@ function isPromptOrigin(value: unknown): value is PromptOrigin {
     typeof value === "object" &&
     value !== null &&
     "kind" in value &&
-    (value.kind === "creature" || value.kind === "external")
+    typeof value.kind === "string" &&
+    promptOriginKinds.has(value.kind)
   );
 }
+
+const promptOriginKinds: ReadonlySet<string> = new Set([
+  "creature",
+  "external",
+  "keeper",
+  "answer",
+]);

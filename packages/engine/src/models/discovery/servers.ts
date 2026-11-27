@@ -1,3 +1,4 @@
+import { isLoopbackEndpoint } from "../../inference/references.ts";
 import type { ManifestModelServer, NodeManifest } from "../../mesh/discovery/manifest.ts";
 import { urlHost } from "../../mesh/transport/tailnet-address.ts";
 import { EndpointUnreachableError, joinUrl, type ProbeHttp } from "../adapters/http.ts";
@@ -12,6 +13,20 @@ export interface KnownPort {
   kinds: readonly ServerKind[];
 }
 
+export interface LocalServerPreset {
+  name: string;
+  label: string;
+  kind: ServerKind;
+  port: number;
+}
+
+export const localServerPresets: readonly LocalServerPreset[] = [
+  { name: "ollama", label: "Ollama", kind: "ollama", port: 11434 },
+  { name: "lmstudio", label: "LM Studio", kind: "lm-studio", port: 1234 },
+  { name: "llamacpp", label: "llama.cpp server", kind: "llama-server", port: 9931 },
+  { name: "vllm", label: "vLLM", kind: "vllm", port: 8000 },
+];
+
 export const knownServerPorts: readonly KnownPort[] = [
   { port: 11434, kinds: ["ollama"] },
   { port: 9931, kinds: ["llama-server"] },
@@ -21,7 +36,7 @@ export const knownServerPorts: readonly KnownPort[] = [
   { port: 30000, kinds: ["sglang"] },
 ];
 
-export type DiscoverySource = "advertised" | "probed";
+export type DiscoverySource = "advertised" | "probed" | "connection";
 
 export interface DiscoveredServer {
   node: string;
@@ -31,6 +46,15 @@ export interface DiscoveredServer {
   source: DiscoverySource;
   auth: "none" | "key";
   advertised: { installed: readonly string[]; loaded: readonly string[] } | null;
+  connection?: string | undefined;
+}
+
+export interface ConnectedServer {
+  name: string;
+  node: string;
+  root: string;
+  auth: "none" | "key";
+  headers?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface ScanOptions {
@@ -72,6 +96,51 @@ export function mergeDiscovered(
 ): DiscoveredServer[] {
   const roots = new Set(advertised.map((server) => server.root));
   return [...advertised, ...probed.filter((server) => !roots.has(server.root))];
+}
+
+export function withConnections(
+  found: readonly DiscoveredServer[],
+  connected: readonly ConnectedServer[],
+): DiscoveredServer[] {
+  const named = found.map((server) => {
+    const connection = connected.find((candidate) => sameServer(candidate.root, server.root));
+    return connection === undefined ? server : { ...server, connection: connection.name };
+  });
+  const unfound = connected.filter(
+    (connection) => !found.some((server) => sameServer(server.root, connection.root)),
+  );
+  return [...named, ...unfound.map(connectedServer)];
+}
+
+export function sameServer(left: string, right: string): boolean {
+  const a = addressOf(left);
+  const b = addressOf(right);
+  if (a === undefined || b === undefined) return left === right;
+  return a.port === b.port && (a.host === b.host || (a.loopback && b.loopback));
+}
+
+function connectedServer(connection: ConnectedServer): DiscoveredServer {
+  return {
+    node: connection.node,
+    root: connection.root,
+    port: addressOf(connection.root)?.port ?? 0,
+    kind: "openai-compatible",
+    source: "connection",
+    auth: connection.auth,
+    advertised: null,
+    connection: connection.name,
+  };
+}
+
+function addressOf(root: string): { host: string; port: number; loopback: boolean } | undefined {
+  try {
+    const url = new URL(root);
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+    return { host, port, loopback: isLoopbackEndpoint(root) };
+  } catch {
+    return undefined;
+  }
 }
 
 export async function advertiseLocalServers(options: ScanOptions): Promise<ManifestModelServer[]> {

@@ -68,6 +68,7 @@ export interface ThreadHost {
   prompt(sessionId: string, text: string): Promise<"started" | "queued" | "missing">;
   abort(sessionId: string): Promise<unknown>;
   denyAsk(callId: string): Promise<unknown>;
+  discard(sessionId: string): Promise<void>;
   watch(sessionId: string, listener: (signal: ThreadSignal) => void): () => void;
 }
 
@@ -75,12 +76,18 @@ export function threadRunner(host: ThreadHost): RoutineRunner {
   return {
     start: async (request, signals) => {
       const sessionId = await host.openThread(threadOf(request));
-      await host.confine(sessionId, request.posture, request.grants);
       const turn = new RoutineTurn(signals);
       const unwatch = host.watch(sessionId, (signal) => turn.observe(signal));
       turn.finished.finally(unwatch);
-      if ((await host.prompt(sessionId, request.prompt)) === "missing") {
-        turn.fail("the routine's session disappeared before its prompt was accepted");
+      try {
+        await host.confine(sessionId, request.posture, request.grants);
+        if ((await host.prompt(sessionId, request.prompt)) === "missing") {
+          turn.fail("the routine's session disappeared before its prompt was accepted");
+        }
+      } catch (cause) {
+        unwatch();
+        await host.discard(sessionId).catch(() => undefined);
+        throw cause;
       }
       return {
         sessionId,

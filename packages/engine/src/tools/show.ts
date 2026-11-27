@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { KeeperAway } from "../notices/quiet.ts";
 import {
   type Arrangement,
   type ArrangementShape,
@@ -55,6 +56,7 @@ import {
 } from "../show/vocabularies.ts";
 import { listed, quoted, wordInput } from "../show/words.ts";
 import type { Tool } from "../tools.ts";
+import { awaySetOutWords, besideWhileAway } from "./away.ts";
 import { defineTool } from "./define.ts";
 import {
   keptSceneWords,
@@ -64,6 +66,7 @@ import {
   sceneNameInput,
   setOutScene,
 } from "./scenes.ts";
+import type { TemperamentSeat } from "./temperament.ts";
 
 export type ShowSettings = Pick<
   SettingStore,
@@ -81,11 +84,13 @@ export type ShowSettings = Pick<
 export interface ShowTarget {
   creature: string | null;
   sessionId: string;
+  away?: (() => KeeperAway | undefined) | undefined;
   agent?: SettingAgent | undefined;
   home?: SteadPlace | undefined;
   places?: PlaceBook | undefined;
   scenes?: SceneShelf | undefined;
   temperament?: (() => Promise<Mood | undefined>) | undefined;
+  temperaments?: TemperamentSeat | undefined;
   fileExists?: ((ref: string) => Promise<boolean>) | undefined;
   settings(): ShowSettings | undefined;
 }
@@ -100,11 +105,13 @@ export function showTool(target: ShowTarget): Tool {
     alwaysAsks: (args) => machinePaneAsked(target, args) !== undefined,
     run: async (args) => {
       const settings = target.settings();
+      const away = target.away?.();
       const shown =
         settings === undefined
           ? nothingShown(noKeeperSurface)
-          : await setOutAsked(settings, target, args);
-      if (args.keep === undefined) return shown.said;
+          : await setOutAsked(settings, target, args, away);
+      const { said } = shown;
+      if (args.keep === undefined) return said;
       const kept =
         settings === undefined || shown.out.length === 0
           ? nothingKept(args.keep)
@@ -114,7 +121,7 @@ export function showTool(target: ShowTarget): Tool {
               { name: args.keep, panes: shown.out.map(({ id }) => id), from: undefined },
               (said) => said,
             );
-      return `${shown.said} ${kept}`;
+      return `${said} ${kept}`;
     },
   });
 }
@@ -128,13 +135,16 @@ async function setOutAsked(
   settings: ShowSettings,
   target: ShowTarget,
   args: ShowArgs,
+  away: KeeperAway | undefined,
 ): Promise<Shown> {
   const temperament = target.temperament === undefined ? undefined : await target.temperament();
   const things = Array.isArray(args.what) ? args.what : [args.what];
   if (things.length > 1 && args.seat !== undefined) return nothingShown(oneSeatForSeveral);
   const reading = new Reading();
-  const proposals = things.map((thing) => proposalOf(target, args, thing, reading, temperament));
-  const shape = reading.word("shape", shapeWords, args.shape);
+  const wanted = things.map((thing) => proposalOf(target, args, thing, reading, temperament));
+  const proposals = away === undefined ? wanted : wanted.map(besideWhileAway);
+  const shapeSaid = reading.word("shape", shapeWords, args.shape);
+  const shape = away === undefined ? shapeSaid : undefined;
   if (reading.problem !== undefined) return nothingShown(`Not set out: ${reading.problem}.`);
   if (shape !== undefined && proposals.some(({ where }) => where === "beside"))
     return nothingShown(shapeBeside);
@@ -162,6 +172,7 @@ async function setOutAsked(
       timeAsked: args.until !== undefined,
       placeNamed: proposal.place !== undefined && !samePlace(proposal.place, target.home),
       caller: target.creature,
+      away,
     });
     return { said, out: [outcome.setting] };
   }
@@ -172,7 +183,9 @@ async function setOutAsked(
   const arranged =
     shape === undefined ? undefined : arrangedTogether(settings, target, done, shape);
   const several = { done, stopped, asked: asked.length, arranged };
-  const said = [await severalWords(settings, target, several, args), ...leftOut].join(" ");
+  const said = [await severalWords(settings, target, several, { ...args, away }), ...leftOut].join(
+    " ",
+  );
   return { said, out: done.map(({ setting }) => setting) };
 }
 
@@ -242,7 +255,7 @@ const showArgs = z.strictObject(
     mood: wordInput(moodWords)
       .optional()
       .describe(
-        `How it moves in, motion only: ${moodsDescribed}. Left out, it moves with your temperament, if you have one.`,
+        `How it moves in, motion only: ${moodsDescribed}. Left out, it moves with the temperament you are in now, if you have one.`,
       ),
     mark: markSaidInput
       .optional()
@@ -377,7 +390,12 @@ export async function sceneSetOutWords(
   };
   const stillThere = ({ what }: { what: SettingWhat }) =>
     target.scenes?.stillThere(what) ?? Promise.resolve(true);
-  const { done, missing, stopped } = await setOutScene(settings, seat, scene, stillThere, mood);
+  const away = target.away?.();
+  const proposing: Pick<ShowSettings, "propose"> =
+    away === undefined
+      ? settings
+      : { propose: (proposal) => settings.propose(besideWhileAway(proposal)) };
+  const { done, missing, stopped } = await setOutScene(proposing, seat, scene, stillThere, mood);
   const gone = missingWords(missing);
   if (done.length === 0)
     return [
@@ -389,7 +407,7 @@ export async function sceneSetOutWords(
     settings,
     target,
     { done, stopped, asked: scene.things.length - missing.length, arranged: undefined },
-    { mood: moodSaid, until: undefined },
+    { mood: moodSaid, until: undefined, away },
     lead,
   );
   return [words, ...gone].join(" ");
@@ -648,16 +666,18 @@ interface Said {
   timeAsked: boolean;
   placeNamed: boolean;
   caller: string | null;
+  away: KeeperAway | undefined;
 }
 
 function sentenceOf(
   { setting, replaced }: SetOut,
   outside: StandingOutside | undefined,
-  { lasting, first, signalSaid, timeAsked, placeNamed, caller }: Said,
+  { lasting, first, signalSaid, timeAsked, placeNamed, caller, away }: Said,
 ): string {
   const saidAlready = outside?.arrived.startsWith(replacedInPlace) === true;
+  const arrived = away === undefined ? placedAs[setting.rung] : awaySetOutWords(away, 1);
   return [
-    outside?.arrived ?? placedAs[setting.rung],
+    outside?.arrived ?? arrived,
     ...(placeNamed ? [`It rises from ${placeSaid(setting.place, caller)}.`] : []),
     goesWhen(setting.until, lasting),
     ...(replaced === undefined || saidAlready
@@ -768,7 +788,7 @@ async function severalWords(
   settings: ShowSettings,
   target: ShowTarget,
   { done, stopped, asked, arranged }: Several,
-  args: Pick<ShowArgs, "mood" | "until">,
+  args: Pick<ShowArgs, "mood" | "until"> & { away: KeeperAway | undefined },
   lead?: string,
 ): Promise<string> {
   const mine = done.map(({ setting }) => setting);
@@ -791,9 +811,11 @@ async function severalWords(
     first?.mood === undefined || outside.length === 0
       ? []
       : [`They arrived ${mannerOf(first.mood, args.mood)}.`];
+  const unfoldsBeside = args.away === undefined && stood.some(({ where }) => where === "beside");
   return [
+    ...(args.away === undefined ? [] : [awaySetOutWords(args.away, mine.length)]),
     `${lead ?? `Set out ${mine.length}`}: ${stood.map(placedWords).join("; ")}.`,
-    ...(stood.some(({ where }) => where === "beside") ? [besideUnfolds] : []),
+    ...(unfoldsBeside ? [besideUnfolds] : []),
     ...laidOutWords(arranged),
     ...mannered,
     theyGoWhen(first?.until ?? "seen", lastingSaid(args.until)),

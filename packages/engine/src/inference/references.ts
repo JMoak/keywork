@@ -1,4 +1,5 @@
 import { connectionNamePattern } from "@keywork/shared";
+import { isTailnetAddress } from "../mesh/transport/tailnet-address.ts";
 import type { ModelReference } from "./types.ts";
 
 export function formatReference(reference: ModelReference): string {
@@ -42,9 +43,22 @@ export function connectionDraftProblem(draft: {
   if ((scheme !== "http" && scheme !== "https") || !/^https?:\/\/\S+$/i.test(endpoint))
     return "endpoint must be an http(s) URL";
   if (draft.credential === "env:") return "name the environment variable";
-  if (scheme === "http" && !isLoopbackEndpoint(endpoint) && !draft.insecureTransport)
-    return "plain http off loopback is refused until you allow it";
+  if (scheme === "http" && !isPrivateEndpoint(endpoint) && !draft.insecureTransport)
+    return plainHttpRefusal;
   return undefined;
+}
+
+export const plainHttpRefusal = "plain http off loopback is refused until you allow it";
+
+export function isTailnetEndpoint(endpoint: string): boolean {
+  const host = hostOf(endpoint)
+    ?.replace(/^\[|\]$/g, "")
+    .toLowerCase();
+  return host !== undefined && (host.endsWith(".ts.net") || isTailnetAddress(host));
+}
+
+export function isPrivateEndpoint(endpoint: string): boolean {
+  return isLoopbackEndpoint(endpoint) || isTailnetEndpoint(endpoint);
 }
 
 function hostOf(endpoint: string): string | undefined {

@@ -3,6 +3,8 @@ export {
   CommandMissingError,
   type CommandResult,
   type CommandRunner,
+  CommandTimedOutError,
+  commandWithin,
   runCommand,
 } from "./command.ts";
 export {

@@ -18,6 +18,7 @@ import {
   modelClasses,
   noChores,
   nodeStateOfLedger,
+  OutsideRangeError,
   overturnKeeperDecision,
   promoteKeeperClass,
   RatchetUnreachableError,
@@ -31,6 +32,7 @@ import {
   substrateKinds,
   type Temperament,
   temperaments,
+  UnusableModelError,
 } from "@keywork/engine";
 import type { SessionHost } from "../host.ts";
 import { servedBy, unserved } from "./answers.ts";
@@ -151,6 +153,15 @@ const patchShape = `the body must change at least one of { name?: string, body?:
 
 const removalShape = "the query takes confirmed=true and keepWorkshop=true|false only";
 
+const mannerBody: JsonSchema = {
+  type: "object",
+  required: ["manner"],
+  properties: { manner: { enum: [...temperaments] } },
+  additionalProperties: false,
+};
+
+const mannerShape = `the body must be { manner: ${temperamentsSaid} }`;
+
 const ruleClassBody: JsonSchema = {
   type: "object",
   required: ["ruleClass"],
@@ -177,7 +188,7 @@ export const creatureRoutes = [
     path: "/creatures",
     operationId: "listCreatures",
     summary:
-      "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, and its `temperament`, its standing manner: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent`, which its panes move with when it names no mood (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
+      "Every creature in this workspace: a bot (`GET /bots`) whose directory also holds a `creature.json`. Each row carries the bot's `slug` and `sigil`, the keeper's `name` for it, when it was `created`, its body (`skin`, `seed`) for the habitat, its `workshop` (`host` for the bare node, else a workshop id), its model policy `models` (`strong`, `loop`, `decide`, `vision`, each `inherit` or `{ provider, model }`), the id of its `conversation` once one exists (`null` before the first `GET /creatures/{slug}` opens it) how many live `threads` it has, `paused`, when the keeper paused it (`POST /creatures/{slug}/pause`) or `null` while it runs, its `temperament`, its favourite: `calm`, `brisk`, `eager`, `playful`, `decisive` or `tentative`, the moods of the window tools without `urgent` (since contract 1.40; a creature made before then has one read from its seed, the same every time, and keeps it once anything about it changes), its `range`, the three temperaments it can be, the favourite among them, in that order (two drawn from its seed besides the favourite, kept the same way), and its `manner`, the one it is in now, which its panes move with when it names no mood and which the stead walks it in: the favourite, or another of its range it took on with `arrange`'s `temperament` and keeps until it has been without a turn for half an hour, when it settles back (since contract 1.41; `creature.changed` with `change: \"updated\"` fires when it takes one on and when it settles). A bot without a `creature.json` is not listed; a creature with the host workshop and `inherit` everywhere behaves exactly as that bot would.",
     authenticated: true,
     responses: { "200": "The creatures.", "503": "This host serves no creatures." },
   },
@@ -204,7 +215,7 @@ export const creatureRoutes = [
     path: "/creatures/{slug}",
     operationId: "readCreature",
     summary:
-      'One creature with what a console opened mid-day needs before the first event: the summary row, its `introduction`, the `conversation` id (opened now, bound to the bot and tagged `kind: conversation`, when the creature had none; it is never trashed while the creature exists), its live `threads` newest first, each `{ id, kind: thread | routine, title, state, children, lastActivityAt }` with `state` one of `working`, `waiting` (an ask is pending), `back`, `blocked` or `paused` and `children` the sub-agents rolled up into it, the `nextRun` of its routines (`{ routineId, at }` or `null`), today\'s `usage` (`{ date, sessions, costNanos }`, `costNanos` `null` when no ledger has priced it, never 0) and the `routines` directory under the creature. Live state afterward rides the session events on /events; thread summaries reach the conversation as prompts whose `origin` is `{ kind: "creature", creature, thread }`.',
+      "One creature with what a console opened mid-day needs before the first event: the summary row, its `introduction`, the `conversation` id (opened now, bound to the bot and tagged `kind: conversation`, when the creature had none; it is never trashed while the creature exists), its live `threads` newest first, each `{ id, kind: thread | routine, title, state, children, lastActivityAt }` with `state` one of `working`, `waiting` (an ask is pending), `back`, `blocked` or `paused` and `children` the sub-agents rolled up into it, the `nextRun` of its routines (`{ routineId, at }` or `null`), today's `usage` (`{ date, sessions, costNanos }`, `costNanos` `null` when no ledger has priced it, never 0), the `routines` directory under the creature, and `talking`, the model its conversation talks on from its next turn, in the shape `GET /models` gives `conversation` for the starting model: `{ provider, model, mode, detail?, projectCheck? }`, `mode` `tools` or `chat`, and for `chat` the same plain `detail` sentence (`mill/puppet answered without calling a tool when it was asked to, so it can talk but cannot use tools.`), or `{ refused, detail }` when no model can answer it. It follows the creature's own choice for talking (`models.strong`, `inherit` being the starting model), a model set on the conversation, and what the model's server answered when asked whether it calls tools (a local server not asked yet is asked first); `creature.talking` carries it when it changes (since contract 1.41; absent from a host that keeps no model inventory). Live state afterward rides the session events on /events; thread summaries reach the conversation as prompts whose `origin` is `{ kind: \"creature\", creature, thread }`.",
     authenticated: true,
     responses: {
       "200": "The creature.",
@@ -217,13 +228,31 @@ export const creatureRoutes = [
     path: "/creatures/{slug}",
     operationId: "updateCreature",
     summary:
-      'Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy), `cloudFallback`, its `temperament` (since contract 1.40) and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: "updated"` follows.',
+      'Change what the keeper may change about a creature in `creature.json`: its `name` (the slug stays its handle; an introduction still in the words it was composed with follows the new name, one the keeper edited is kept), its `body` (`skin`, `seed`), its model policy `models` (only the classes named change; `inherit` hands a class back to the workspace and user policy; a changed `strong` moves the conversation of the creature onto it at its next turn, since contract 1.41), `cloudFallback`, its `temperament`, its favourite, which must be one of its `range` and brings it back from any other manner at once (since contract 1.40; the range since 1.41), and `inbound`, who may message it over the mesh (`nobody`, `paired` for creatures on this machine or a paired one, or `{ named: [...] }`, creature slugs optionally pinned with `@machine`; every summary carries it, `paired` when never set; see `POST /mesh/messages`). The file is validated as a whole before it is written. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: "updated"` follows.',
     authenticated: true,
     requestBody: patchBody,
     responses: {
       "200": "The creature's summary after the change.",
       "400": "The body changes nothing or is not a creature patch.",
       "404": "No creature has that slug.",
+      "409":
+        '`{ error, refused, usable }`: a model named for a class cannot answer for it (an unknown provider or model, a provider with no credential, or a model that cannot do what the class needs). `error` says why in words and names the models that would; `refused` is the reason\'s code; `usable` lists those models as `provider/model`, from the models listed and those each connected model server reports when asked. Or `{ error, refused: "outside-range", range }`: the `temperament` named is not one of its `range`. Nothing was written. Since contract 1.41.',
+      "503": "This host serves no creatures.",
+    },
+  },
+  {
+    method: "PUT",
+    path: "/creatures/{slug}/manner",
+    operationId: "takeCreatureManner",
+    summary:
+      "The creature takes on another temperament of its `range` as its `manner`, as `arrange`'s `temperament` does in its own conversation: a bound project's runtime calls it for a creature working there, so it is one creature everywhere. The body is `{ manner }`; its favourite brings it back to the favourite. It holds until the creature has been without a turn for half an hour, anywhere. Answers the summary as `GET /creatures` lists it; a `creature.changed` event with `change: \"updated\"` follows. The app does not call it: the keeper chooses the favourite with `PATCH`. Since contract 1.41.",
+    authenticated: true,
+    requestBody: mannerBody,
+    responses: {
+      "200": "The creature's summary, in its new manner.",
+      "400": mannerShape,
+      "404": "No creature has that slug.",
+      "409": '`{ error, refused: "outside-range", range }`: not one of its temperaments.',
       "503": "This host serves no creatures.",
     },
   },
@@ -365,6 +394,25 @@ export const creatureFamily = {
           return updated === undefined ? missingCreature() : json(200, updated);
         } catch (cause) {
           if (cause instanceof MalformedCreatureError) return json(400, { error: cause.message });
+          if (cause instanceof OutsideRangeError) return outsideRange(cause);
+          if (cause instanceof UnusableModelError) {
+            return json(409, {
+              error: cause.message,
+              refused: cause.refused,
+              usable: cause.usable,
+            });
+          }
+          throw cause;
+        }
+      }),
+      takeCreatureManner: creatures(async (port, request, { slug }) => {
+        const manner = mannerOfBody(await bodyOf(request));
+        if (manner === undefined) return json(400, { error: mannerShape });
+        try {
+          const taken = await port.takeManner(slug ?? "", manner);
+          return taken === undefined ? missingCreature() : json(200, taken);
+        } catch (cause) {
+          if (cause instanceof OutsideRangeError) return outsideRange(cause);
           throw cause;
         }
       }),
@@ -493,6 +541,16 @@ export function creaturePatchOf(body: unknown): CreaturePatch | undefined {
     ...(inbound !== undefined && { inbound }),
     ...(temperament !== undefined && { temperament }),
   };
+}
+
+function mannerOfBody(body: unknown): Temperament | undefined {
+  const fields = fieldsOf<{ manner: unknown }>(body);
+  if (fields === undefined || !onlyKeys(fields, ["manner"])) return undefined;
+  return isTemperament(fields.manner) ? fields.manner : undefined;
+}
+
+function outsideRange(cause: OutsideRangeError): Response {
+  return json(409, { error: cause.message, refused: "outside-range", range: cause.range });
 }
 
 function temperamentPatchOf(value: unknown): Temperament | undefined | null {

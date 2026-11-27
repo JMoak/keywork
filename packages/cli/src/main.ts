@@ -7,6 +7,7 @@ import {
   type PermissionResolver,
   type Provider,
   ResolutionError,
+  type ResolutionFailure,
 } from "@keywork/engine";
 import { contractVersion, type KeyworkClient } from "@keywork/server";
 import {
@@ -415,7 +416,9 @@ ${connectHint}`,
       override: values.model,
       default: current.config.model,
     });
-    return resolved.ok ? current.runtime.provider(resolved.binding) : setupRequiredProvider;
+    return resolved.ok
+      ? current.runtime.provider(resolved.binding)
+      : setupRequiredProvider(resolved.failure);
   };
   return {
     ok: true,
@@ -425,11 +428,12 @@ ${connectHint}`,
       managedHome: context.managedHome,
       workspaceSlug,
       memoryDecider,
-      provider: bound.ok ? runtime.provider(bound.binding) : setupRequiredProvider,
+      provider: bound.ok ? runtime.provider(bound.binding) : setupRequiredProvider(bound.failure),
       currentProvider,
       refreshInference: () => live.reload(),
       closingProvider: roleProvider(runtime, config, closingRole),
       permissions: presets.resolver,
+      keeperRules: () => presets.rules(),
       presets,
       inference: {
         bind: (reference) => live.current().runtime.registry.bind(reference),
@@ -440,6 +444,7 @@ ${connectHint}`,
         registrations: () => live.current().runtime.registry.all(),
         provider: (binding) => live.current().runtime.provider(binding),
         decider: (binding) => live.current().runtime.decider(binding),
+        headersFor: (registration) => live.current().runtime.headersFor(registration),
       },
       checkpoints: values["no-checkpoints"] ? "off" : "on",
       sessionDir: values["session-dir"],
@@ -455,12 +460,26 @@ ${connectHint}`,
   };
 }
 
-const setupRequiredProvider: Provider = {
-  name: "model-setup",
-  stream: () => {
-    throw new Error("Choose an available model before starting a creature conversation.");
-  },
-};
+function setupRequiredProvider(failure: ResolutionFailure): Provider {
+  return {
+    name: "model-setup",
+    stream: () => {
+      throw new Error(modelSetupWords(failure));
+    },
+  };
+}
+
+function modelSetupWords(failure: ResolutionFailure): string {
+  if (failure.code === "ambiguous") {
+    const named = failure.candidates.slice(0, 3).join(", ");
+    const more = failure.candidates.length > 3 ? " and more" : "";
+    return `${failure.candidates.length} models could answer (${named}${more}) and none is chosen. Choose one for this creature, or as the starting model`;
+  }
+  if (failure.code === "unconfigured") {
+    return "No model is connected yet. Connect one and this creature answers on it";
+  }
+  return `No model can answer yet: ${failure.message}`;
+}
 
 async function runAttach(context: CommandContext, { values }: ParsedInvocation): Promise<number> {
   const { io } = context;
@@ -550,7 +569,10 @@ async function runConnect(
     argument: positionals[0],
     decider: inference.decider,
     ...(group !== undefined && { group }),
-    ...(values["first-model"] && { firstModel: firstModelSetupFor(inference) }),
+    ...((values["first-model"] || values.console) && {
+      firstModel: firstModelSetupFor(inference),
+    }),
+    ...(values.console && { console: true }),
   });
 }
 
@@ -815,6 +837,7 @@ function parseInvocationArgs(args: readonly string[]) {
       model: { type: "string" },
       group: { type: "string" },
       "first-model": { type: "boolean", default: false },
+      console: { type: "boolean", default: false },
       preset: { type: "string" },
       bot: { type: "string" },
       global: { type: "boolean", default: false },

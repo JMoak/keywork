@@ -6,6 +6,7 @@ import { campaignFamily } from "./routes/campaigns.ts";
 import { changesFamily } from "./routes/changes.ts";
 import { creatureProjectFamily } from "./routes/creature-projects.ts";
 import { creatureFamily } from "./routes/creatures.ts";
+import { deliveryFamily } from "./routes/deliveries.ts";
 import { documentFamily } from "./routes/document.ts";
 import { eventFamily } from "./routes/events.ts";
 import type {
@@ -27,7 +28,9 @@ import { memoryFamily } from "./routes/memory.ts";
 import { meshFamily } from "./routes/mesh.ts";
 import { modelWaitFamily } from "./routes/model-waits.ts";
 import { modelFamilyFor } from "./routes/models.ts";
+import { notificationFamily } from "./routes/notifications.ts";
 import { permissionFamily } from "./routes/permissions.ts";
+import { promiseFamily } from "./routes/promises.ts";
 import { queueFamily } from "./routes/queue.ts";
 import { quietFamily } from "./routes/quiet.ts";
 import { registerRoutineRoutes } from "./routes/routines.ts";
@@ -76,10 +79,13 @@ export const routeFamilies = [
   honourFamily,
   sceneFamily,
   ledgerFamily,
+  deliveryFamily,
+  promiseFamily,
   creatureMcpFamily((host) => host.creatureMcp),
   registerRoutineRoutes(({ host }) => host.routines),
   modelFamilyFor(({ host }) => host.models),
   modelWaitFamily,
+  notificationFamily,
   workshopFamily((host) => host.workshops),
   meshFamily((host) => host.mesh),
   showFamily((host) => host.show),

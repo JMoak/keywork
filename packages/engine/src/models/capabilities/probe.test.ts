@@ -18,7 +18,7 @@ async function serve(server: FixtureServer): Promise<string> {
 }
 
 describe("probeServer", () => {
-  it("never marks a capability from /v1/models alone", async () => {
+  it("never marks a capability from /v1/models alone, and keeps an empty record to ask it by", async () => {
     const root = await serve(
       new FixtureServer().route("GET /v1/models", {
         body: {
@@ -32,14 +32,17 @@ describe("probeServer", () => {
     );
     const cache = new CapabilityCache(now);
     const result = await probeServer(root, { http: probeHttp(), cache, now });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "unrecognized",
       root,
       listedOnly: ["gpt-4o-vision-tools-128k", "qwen3.8-27b-instruct-tools"],
     });
-    expect(cache.kindOf(root)).toBeUndefined();
-    expect(cache.record(root, "gpt-4o-vision-tools-128k")).toBeUndefined();
-    expect(cache.recordsFor(root)).toEqual([]);
+    expect(cache.kindOf(root)).toBe("openai-compatible");
+    expect(cache.recordsFor(root).map((record) => record.model)).toEqual([
+      "gpt-4o-vision-tools-128k",
+      "qwen3.8-27b-instruct-tools",
+    ]);
+    expect(cache.recordsFor(root).flatMap(knownCapabilities)).toEqual([]);
   });
 
   it("leaves every capability unknown when a recognized server's native routes stay silent", async () => {

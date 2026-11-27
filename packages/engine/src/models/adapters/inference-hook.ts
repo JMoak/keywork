@@ -1,6 +1,6 @@
 import type { ModelCapabilities } from "../../capabilities.ts";
+import { isTailnetEndpoint } from "../../inference/references.ts";
 import type { InferenceBinding, ProviderRegistration } from "../../inference/types.ts";
-import { isTailnetAddress } from "../../mesh/transport/tailnet-address.ts";
 import type { Provider } from "../../provider.ts";
 import type { AuthHeaders, FetchLike } from "../../providers/transport.ts";
 import type { CapabilityRecord, ServerKind } from "../capabilities/types.ts";
@@ -12,6 +12,7 @@ export interface LocalServerDirectory {
   kindOf(root: string): ServerKind | undefined;
   record(root: string, model: string): CapabilityRecord | undefined;
   fieldMemory(root: string, model: string): FieldMemory;
+  measuredDecode?(root: string, model: string, tokensPerSecond: number): void;
 }
 
 export interface LocalServerProviderOptions {
@@ -40,7 +41,11 @@ export function localServerProvider(
     fetchFn: options.fetchFn,
     replayReasoning: replay?.known === true && replay.value,
     fieldMemory: options.directory.fieldMemory(root, model),
-    onUsage: (report) => options.onUsage?.(binding, report),
+    onUsage: (report) => {
+      const decode = report.usage?.tokS ?? null;
+      if (decode !== null && decode > 0) options.directory.measuredDecode?.(root, model, decode);
+      options.onUsage?.(binding, report);
+    },
   });
 }
 
@@ -66,10 +71,7 @@ export function registrationFor(
   };
 }
 
-export function isTailnetEndpoint(endpoint: string): boolean {
-  const host = hostnameOf(endpoint);
-  return host !== undefined && (host.endsWith(".ts.net") || isTailnetAddress(host));
-}
+export { isTailnetEndpoint };
 
 function capabilitiesOf(record: CapabilityRecord | undefined): ModelCapabilities {
   if (record === undefined) return { input: ["text"], toolCalls: false };
@@ -79,12 +81,4 @@ function capabilitiesOf(record: CapabilityRecord | undefined): ModelCapabilities
     toolCalls: record.tools.known && record.tools.value,
     ...(record.contextAllocated.known && { contextWindow: record.contextAllocated.value }),
   };
-}
-
-function hostnameOf(endpoint: string): string | undefined {
-  try {
-    return new URL(endpoint).hostname.replace(/^\[|\]$/g, "");
-  } catch {
-    return undefined;
-  }
 }

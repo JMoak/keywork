@@ -15,9 +15,16 @@ export async function filePreview(
   const size = await sizeOf(target);
   if (size !== undefined && size > previewCapBytes) return undefined;
   const before = size === undefined ? null : await readFile(target, "utf8");
-  const after = edited(before);
+  return previewOf(shownPath(scope, target), before, edited(before));
+}
+
+export function previewOf(
+  path: string,
+  before: string | null,
+  after: string | undefined,
+): ToolPreview | undefined {
   if (after === undefined || !previewable(before) || !previewable(after)) return undefined;
-  return { path: shownPath(scope, target), before, after };
+  return { path, before, after };
 }
 
 async function sizeOf(path: string): Promise<number | undefined> {

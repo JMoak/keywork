@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { ToolFact } from "../messages.ts";
+import type { KeeperAway } from "../notices/quiet.ts";
 import {
   type Arrangement,
   type ArrangementAsk,
@@ -31,20 +33,27 @@ import {
 } from "../show/vocabularies.ts";
 import { quoted, wordInput } from "../show/words.ts";
 import type { Tool } from "../tools.ts";
+import { awayArrangeWords } from "./away.ts";
 import { defineTool } from "./define.ts";
 import { forgottenWords, keptSceneWords, machinePaneOfScene, sceneNameInput } from "./scenes.ts";
 import { type ShowSettings, type ShowTarget, sceneSetOutWords } from "./show.ts";
+import { temperamentAlone, temperamentTakenWords } from "./temperament.ts";
 
 export const arrangeToolName = "arrange";
 
-export function arrangeTool(target: ShowTarget): Tool {
+export function arrangeTool(target: ShowTarget, told?: (fact: ToolFact) => void): Tool {
   return defineTool({
     name: arrangeToolName,
     description:
-      'Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {"<id or title>": "left-two-thirds"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and "all" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {"<id>": "done"}} or {mark: {"<id>": {text: "done", tone: "good"}}}, and signal raises or lowers its outline; either can go alone. {keep: "<name>"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: "<name>"} sets a kept scene out again, and {forget: "<name>"} lets one go. It moves only the app\'s own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.',
+      'Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {"<id or title>": "left-two-thirds"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and "all" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {"<id>": "done"}} or {mark: {"<id>": {text: "done", tone: "good"}}}, and signal raises or lowers its outline; either can go alone. {keep: "<name>"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: "<name>"} sets a kept scene out again, and {forget: "<name>"} lets one go. {temperament: "<word>"} takes on another of your temperaments until you settle back. It moves only the app\'s own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.',
     schema: arrangeArgs,
     alwaysAsks: (args) => machinePaneOfScene(target, recordOf(args).scene) !== undefined,
     run: async (args) => {
+      const { temperament: temperamentSaid, ...rest } = args;
+      if (temperamentSaid !== undefined)
+        return Object.values(rest).some((given) => given !== undefined)
+          ? temperamentAlone
+          : temperamentTakenWords(target.temperaments, temperamentSaid, told);
       const settings = target.settings();
       if (settings === undefined) return noKeeperSurface;
       const temperament = target.temperament === undefined ? undefined : await target.temperament();
@@ -63,6 +72,9 @@ export function arrangeTool(target: ShowTarget): Tool {
         return whyWithoutASignal;
       if ((marks.length > 0 || signals.length > 0) && onlyMarks(args))
         return markedOnly(settings, target, { marks, signals, why: args.why });
+      const away = target.away?.();
+      if (away !== undefined)
+        return heldWhileAway(settings, target, away, { marks, signals, why: args.why });
       const arrangement = settings.arrange(target, ask);
       if ("refused" in arrangement) return `Not arranged: ${arrangement.error}.`;
       const marked = marks.length === 0 ? [] : settings.mark(target, marks, false);
@@ -160,7 +172,16 @@ const arrangeArgs = z
     mood: wordInput(moodWords)
       .optional()
       .describe(
-        "How the panes move into place, as motion only: one of show's moods; left out, your temperament's if you have one, else brisk. The answer names the mood it moved with.",
+        "How the panes move into place, as motion only: one of show's moods, for this call; left out, the temperament you are in now if you have one, else brisk. The answer names the mood it moved with.",
+      ),
+    temperament: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .optional()
+      .describe(
+        "Take on another of your temperaments from now on, one of the three your prompt names: your panes move with it whenever you name no mood, until you settle back to your favourite by yourself once you have rested a while. Naming your favourite settles you back now. It goes alone.",
       ),
     keep: sceneNameInput
       .optional()
@@ -273,6 +294,17 @@ interface MarksAsked {
   marks: readonly Marking[];
   signals: readonly SignalAsked[];
   why: string | undefined;
+}
+
+function heldWhileAway(
+  settings: ShowSettings,
+  target: ShowTarget,
+  away: KeeperAway,
+  asked: MarksAsked,
+): string {
+  const moved = awayArrangeWords(away);
+  if (asked.marks.length === 0 && asked.signals.length === 0) return moved;
+  return `${markedOnly(settings, target, asked)} ${moved}`;
 }
 
 function markedOnly(

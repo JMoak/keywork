@@ -1,13 +1,17 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
+  type Creature,
   type CreatureHandle,
   CreatureRegistry,
+  type CreatureSessionTag,
+  type CreatureTemperamentFacts,
   creatureTagOf,
   type KeptScene,
   keptElsewhere,
   keptScenesIn,
   type Mood,
+  mannerOf,
   type SceneKeeping,
   type SceneKeepingInput,
   type SceneShelf,
@@ -17,7 +21,10 @@ import {
   sceneNameOf,
   scenesFileIn,
   shownOf,
-  temperamentOf,
+  type Temperament,
+  type TemperamentSeat,
+  temperamentFactsOf,
+  temperamentSeatOf,
 } from "@keywork/engine";
 import { resolveAnchor } from "@keywork/shared";
 import { workspaceStateDir } from "./node/paths.ts";
@@ -32,6 +39,7 @@ export interface ProjectThreadTag {
 
 export interface VisitingSeat {
   temperament(): Promise<Mood | undefined>;
+  temperaments: TemperamentSeat;
   scenes: SceneShelf;
   home(): SteadPlace;
 }
@@ -41,10 +49,18 @@ export interface HomeScenes {
   forget(creature: CreatureHandle, name: string): Promise<boolean>;
 }
 
+export interface HomeManners {
+  take(
+    creature: CreatureHandle,
+    temperament: Temperament,
+  ): Promise<CreatureTemperamentFacts | undefined>;
+}
+
 export interface VisitingOptions {
   userRoot: string;
   workspace: string;
   homeScenes: HomeScenes;
+  homeManners: HomeManners;
   worksiteOf(conversation: string): string | undefined;
   stillThere(what: SettingWhat): Promise<boolean>;
 }
@@ -74,6 +90,15 @@ export function projectThreadTag(entries: readonly SessionEntry[]): ProjectThrea
   return undefined;
 }
 
+export function workingCreatureOf(
+  entries: readonly SessionEntry[],
+): CreatureSessionTag | undefined {
+  const own = creatureTagOf(entries);
+  if (own !== undefined) return own;
+  const visiting = projectThreadTag(entries);
+  return visiting === undefined ? undefined : { creature: visiting.creature.slug, kind: "thread" };
+}
+
 export function sameHandle(one: CreatureHandle | undefined, other: CreatureHandle): boolean {
   return one?.workspace === other.workspace && one.slug === other.slug;
 }
@@ -89,6 +114,13 @@ export function visitingSeat(
 ): VisitingSeat {
   return {
     temperament: () => homeTemperamentOf(options.userRoot, creature.slug),
+    temperaments: temperamentSeatOf(
+      {
+        read: async () => homeTemperamentsOf(options.userRoot, creature.slug),
+        takeManner: (_slug, temperament) => options.homeManners.take(creature, temperament),
+      },
+      creature.slug,
+    ),
     scenes: homeSceneShelf(options, creature, thread.id),
     home: () => ({
       kind: "project",
@@ -105,11 +137,30 @@ export function fileExistsIn(cwd: string): (ref: string) => Promise<boolean> {
 }
 
 export async function homeTemperamentOf(userRoot: string, slug: string): Promise<Mood | undefined> {
+  const found = await homeCreatureOf(userRoot, slug);
+  return found === undefined ? undefined : mannerOf(found.file);
+}
+
+async function homeTemperamentsOf(
+  userRoot: string,
+  slug: string,
+): Promise<CreatureTemperamentFacts | undefined> {
+  const found = await homeCreatureOf(userRoot, slug);
+  return found === undefined ? undefined : temperamentFactsOf(found.file);
+}
+
+async function homeCreatureOf(userRoot: string, slug: string): Promise<Creature | undefined> {
   const home = managedHomeOf(userRoot);
   if (home === undefined) return undefined;
   const registry = new CreatureRegistry({ root: home, trusted: true, keeper: "" });
-  const found = await registry.read(slug).catch(() => undefined);
-  return found === undefined ? undefined : temperamentOf(found.file);
+  return registry.read(slug).catch(() => undefined);
+}
+
+export async function homeCreaturesOf(userRoot: string): Promise<Creature[]> {
+  const home = managedHomeOf(userRoot);
+  if (home === undefined) return [];
+  const registry = new CreatureRegistry({ root: home, trusted: true, keeper: "" });
+  return registry.list().catch(() => []);
 }
 
 export function homeScenesOf(userRoot: string, creature: string): KeptScene[] {

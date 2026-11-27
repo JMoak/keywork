@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { scratchDirs } from "@keywork/shared/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { botsDir } from "../extensions/bots.ts";
+import { minuteMs } from "../routines/clock.ts";
+import { FakeClock } from "../routines/testing.ts";
 import { type CreatureChanged, type CreatureHostSeams, creatureHost } from "./host.ts";
 import { CreatureRegistry } from "./registry.ts";
 import { FakeCreatureSessions } from "./testing.ts";
@@ -45,6 +47,8 @@ describe("the creatures port", () => {
       paused: null,
       inbound: "paired",
       temperament: "brisk",
+      range: ["calm", "brisk", "eager"],
+      manner: "brisk",
     });
     await host.create({ name: "Mo" });
     await host.openThread("pip", "thread");
@@ -110,3 +114,40 @@ describe("the creatures port", () => {
     expect(await host.remove("pip")).toBeUndefined();
   });
 });
+
+describe("a creature's temperaments", () => {
+  it("holds a manner it took on while it keeps working, and settles back to its favourite after a quiet half hour", async () => {
+    const clock = new FakeClock(at.getTime());
+    const { host, sessions, changes } = await fixture({ clock });
+    await host.create({ name: "Pip" });
+    const turn = sessions.add({ creature: "pip", kind: "conversation" }, { working: true });
+    const minutes = (count: number) => at.getTime() + count * minuteMs;
+    const mannerNow = async () => (await host.list())[0]?.manner;
+    const passTo = (count: number) => clock.advanceTo(minutes(count), () => breathe());
+
+    expect(await host.takeManner("pip", "eager")).toMatchObject({
+      temperament: "brisk",
+      range: ["calm", "brisk", "eager"],
+      manner: "eager",
+    });
+    await passTo(45);
+    expect(await mannerNow()).toBe("eager");
+
+    turn.working = false;
+    turn.lastActivityAt = new Date(minutes(50)).toISOString();
+    await passTo(50);
+    host.worked("pip");
+    await breathe();
+    await passTo(79);
+    expect(await mannerNow()).toBe("eager");
+
+    await passTo(81);
+    await vi.waitFor(async () => expect(await mannerNow()).toBe("brisk"));
+    expect(changes.filter(({ change }) => change === "updated")).toHaveLength(2);
+    host.close();
+  });
+});
+
+function breathe(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 20));
+}

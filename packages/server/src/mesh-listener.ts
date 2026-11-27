@@ -39,7 +39,10 @@ export interface MeshListenerOptions {
   localAddresses?: (() => readonly string[]) | undefined;
 }
 
-export type ManifestInventory = Pick<ManifestSources, "substrates" | "gpus" | "modelServers">;
+export type ManifestInventory = Pick<
+  ManifestSources,
+  "substrates" | "gpus" | "modelServers" | "keys"
+>;
 
 export const defaultNodeRoles: readonly NodeRole[] = ["reachable"];
 

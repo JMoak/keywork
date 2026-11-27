@@ -7,6 +7,7 @@ export {
   type DelegatedOutcome,
   type DelegatedTurn,
   type GrantedScope,
+  type MessageKeeper,
   NestedRefusalError,
   type PermissionResolver,
   type PermissionRuling,
@@ -16,13 +17,17 @@ export {
   rulingOf,
   type SendOptions,
   type SpillSource,
+  stoppedBeforeItRan,
+  stoppedWhileItRan,
   type ToolBatchSettler,
   type ToolGuard,
   type ToolPermission,
   type ToolSource,
+  type TurnCompleter,
   type TurnDelegate,
   type TurnOpener,
   type TurnSettler,
+  waitingThroughTheStop,
 } from "./agent.ts";
 export {
   type AgentHooks,
@@ -32,15 +37,18 @@ export {
 } from "./agent-hooks.ts";
 export { type BackoffPolicy, backoffMs } from "./backoff.ts";
 export {
+  type AnswerOrigin,
   type ChildFinished,
   type ChildOutcome,
   type ChildStarted,
   type EngineEvents,
   EventBus,
+  type KeeperOrigin,
   type PromptOrigin,
   type QueuedPrompt,
   type RefusedCall,
   type SendBehavior,
+  type TurnCompletion,
 } from "./bus.ts";
 export * from "./campaigns/index.ts";
 export {
@@ -214,11 +222,14 @@ export {
   endpointScheme,
   formatReference,
   isLoopbackEndpoint,
+  isPrivateEndpoint,
+  isTailnetEndpoint,
   parseReference,
+  plainHttpRefusal,
   sameReference,
 } from "./inference/references.ts";
 export { InferenceRegistry } from "./inference/registry.ts";
-export type { CatalogEntry } from "./inference/resolution.ts";
+export { type CatalogEntry, catalogOf } from "./inference/resolution.ts";
 export {
   type CredentialHandle,
   type CredentialState,
@@ -894,9 +905,11 @@ export {
   type RedactedThinkingPart,
   type Role,
   type SpillReference,
+  type TemperamentFact,
   type TextPart,
   type ThinkingPart,
   type ToolCallPart,
+  type ToolFact,
   type ToolResultPart,
   textMessage,
   toolCalls,
@@ -919,6 +932,7 @@ export * from "./models/ledger/index.ts";
 export * from "./models/licenses/index.ts";
 export * from "./models/policy/index.ts";
 export { followMutations, mutatingToolNames } from "./mutations.ts";
+export * from "./notices/index.ts";
 export {
   memoryGrants,
   PermissionLedger,
@@ -945,10 +959,15 @@ export {
   withTurnCost,
 } from "./pricing.ts";
 export { processExists } from "./proc.ts";
+export * from "./promises/index.ts";
 export {
   buildSystemPrompt,
+  keyworkIdentity,
   loadProjectInstructions,
   type SystemPromptOptions,
+  speakingAs,
+  toolGuidance,
+  workingManner,
 } from "./prompt.ts";
 export {
   assertRequestControls,
@@ -1256,25 +1275,34 @@ export {
   trashDirName,
 } from "./session/trash.ts";
 export {
+  type CarriedWork,
   type ChangeTotals,
+  carriedTurnsOf,
+  cutTurnAlong,
   type FileChange,
   fileChangeOf,
   latestSessionTotals,
   type PathTurn,
   pathsTouchedFromTurn,
   recordTurnFacts,
+  recordTurnProgress,
   sessionBaseline,
   sessionFilesAt,
   settledTurnFacts,
   type TurnEnding,
   type TurnFacts,
   type TurnOutcome,
+  type TurnProgress,
   type TurnSession,
   type TurnTrees,
   totalsOf,
   turnFactsOf,
   turnFactsType,
+  turnProgressAlong,
+  turnProgressOf,
+  turnProgressType,
   turnsAlong,
+  workAcross,
 } from "./session/turn-facts.ts";
 export { type OutcomeMark, outcomeMarksOf } from "./session/turn-outcomes.ts";
 export * from "./show/index.ts";
@@ -1364,6 +1392,7 @@ export {
   suggestTitle,
   type TitleContext,
 } from "./titles.ts";
+export { toolActivityOf } from "./tool-activity.ts";
 export {
   type AfterSave,
   annotatedResult,
@@ -1419,6 +1448,11 @@ export {
 } from "./tools/shell-session.ts";
 export { type ShowSettings, type ShowTarget, showTool, showToolName } from "./tools/show.ts";
 export { shownTool, shownToolName } from "./tools/shown.ts";
+export {
+  type TemperamentSeat,
+  type Temperaments,
+  temperamentTakenWords,
+} from "./tools/temperament.ts";
 export { withdrawTool, withdrawToolName } from "./tools/withdraw.ts";
 export { writeTool } from "./tools/write.ts";
 export { heardNoteSource, yardPrompt, yardToolNames, yardTools } from "./tools/yard.ts";

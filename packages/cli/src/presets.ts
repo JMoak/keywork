@@ -2,10 +2,12 @@ import type { PermissionResolver } from "@keywork/engine";
 import {
   type ActivePreset,
   activePreset,
+  type PermissionRule,
   type PermissionsConfig,
   type PresetName,
   permissionPolicy,
   permissionPresets,
+  permissionRules,
   presetOrder,
   requiresConfirmation,
 } from "@keywork/shared";
@@ -19,6 +21,7 @@ export interface PresetPort {
 
 export interface PresetSwitch extends PresetPort {
   resolver: PermissionResolver;
+  rules(): readonly PermissionRule[];
 }
 
 export interface PresetSwitchOptions {
@@ -32,6 +35,7 @@ export function createPresetSwitch(options: PresetSwitchOptions): PresetSwitch {
   let resolver = permissionsResolver(permissions, options.workspace);
   return {
     resolver: (call) => resolver(call),
+    rules: () => permissionRules(permissions),
     active: () => activePreset(permissions),
     apply: async (name) => {
       await options.persist(permissionPresets[name]);

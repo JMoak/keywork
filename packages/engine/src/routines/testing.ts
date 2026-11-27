@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { z } from "zod";
 import type { Cancel, Clock } from "./clock.ts";
 import type { RoutineEvents, RoutineEventType } from "./events.ts";
 import { routineFilePath } from "./files.ts";
 import type { CreatureDirectory } from "./mirror.ts";
-import type { NotificationSettings } from "./notify.ts";
+import { type KeeperSettings, notificationSettingsSchema } from "./notify.ts";
 import type { Routine, RoutineInput } from "./routine.ts";
 import type { RunRow } from "./run.ts";
 import type {
@@ -175,7 +176,7 @@ export interface HarnessOptions {
   start: number;
   creatures?: readonly string[];
   settings?: Partial<SchedulerSettings>;
-  notifications?: NotificationSettings;
+  notifications?: z.input<typeof notificationSettingsSchema>;
   wakes?: Partial<WakeSettings>;
 }
 
@@ -279,7 +280,7 @@ export class RoutineHarness {
       ...(this.options.wakes !== undefined && { wakes: this.options.wakes }),
       ...(this.options.settings !== undefined && { settings: this.options.settings }),
       ...(this.options.notifications !== undefined && {
-        notifications: this.options.notifications,
+        notifications: keptOf(this.options.notifications),
       }),
     });
   }
@@ -295,4 +296,9 @@ export class RoutineHarness {
 
 function databaseOf(root: string): string {
   return join(root, "state", "routines.db");
+}
+
+function keptOf(settings: z.input<typeof notificationSettingsSchema>): () => KeeperSettings {
+  const kept = { settings: notificationSettingsSchema.parse(settings), doNotDisturbSince: null };
+  return () => kept;
 }

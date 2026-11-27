@@ -19,23 +19,45 @@ export class CommandMissingError extends Error {
   }
 }
 
-export const runCommand: CommandRunner = (command, args, input) =>
-  new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { stdio: "pipe", windowsHide: true });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error: NodeJS.ErrnoException) =>
-      reject(error.code === "ENOENT" ? new CommandMissingError(command) : error),
-    );
-    child.on("close", (code) =>
-      resolve({
-        code: code ?? -1,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
-    child.stdin.on("error", () => undefined);
-    child.stdin.end(input ?? "");
-  });
+export class CommandTimedOutError extends Error {
+  constructor(
+    readonly command: string,
+    readonly ms: number,
+  ) {
+    super(`${command} did not answer within ${Math.round(ms / 1000)} seconds`);
+    this.name = "CommandTimedOutError";
+  }
+}
+
+export const runCommand: CommandRunner = commandWithin(undefined);
+
+export function commandWithin(ms: number | undefined): CommandRunner {
+  return (command, args, input) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(command, [...args], {
+        stdio: "pipe",
+        windowsHide: true,
+        ...(ms !== undefined && { timeout: ms }),
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error: NodeJS.ErrnoException) =>
+        reject(error.code === "ENOENT" ? new CommandMissingError(command) : error),
+      );
+      child.on("close", (code, signal) => {
+        if (ms !== undefined && signal !== null) {
+          reject(new CommandTimedOutError(command, ms));
+          return;
+        }
+        resolve({
+          code: code ?? -1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(input ?? "");
+    });
+}

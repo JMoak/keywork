@@ -94,6 +94,37 @@ export function conversationEndedOf(
   return { at, by, decided: typeof decided === "string" ? decided : "" };
 }
 
+export const talkingChoiceType = "keywork.creature.talking-choice";
+
+export type TalkingChoice = "inherit" | { provider: string; model: string };
+
+export function talkingChoiceOf(entries: readonly SessionEntry[]): TalkingChoice | undefined {
+  const found = entries.findLast(
+    (entry) => entry.type === "custom" && entry.customType === talkingChoiceType,
+  );
+  const choice =
+    found?.type === "custom" ? (found.data as { choice?: unknown })?.choice : undefined;
+  if (choice === "inherit") return choice;
+  const { provider, model } = (choice ?? {}) as { provider?: unknown; model?: unknown };
+  return typeof provider === "string" && typeof model === "string"
+    ? { provider, model }
+    : undefined;
+}
+
+export async function recordTalkingChoice(
+  store: SessionStore,
+  choice: TalkingChoice,
+): Promise<void> {
+  await store.appendCustom(talkingChoiceType, {
+    choice: choice === "inherit" ? choice : { provider: choice.provider, model: choice.model },
+  });
+}
+
+export function sameTalkingChoice(left: TalkingChoice, right: TalkingChoice): boolean {
+  if (left === "inherit" || right === "inherit") return left === right;
+  return left.provider === right.provider && left.model === right.model;
+}
+
 function customDataOf(entries: readonly SessionEntry[], type: string): unknown {
   for (const entry of entries) {
     if (entry.type === "custom" && entry.customType === type) return entry.data;

@@ -1,19 +1,23 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SecretVault } from "@keywork/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { issueClaimCode, liveClaimCode, spendClaimCode } from "./claim-code.ts";
+import { meshKeyStore, moveMeshKeysIn, readKeyNote } from "./key-place.ts";
 import {
   deviceKeyName,
+  FileKeyStore,
   isDevicePublicKey,
+  keysWarning,
   loadDeviceKey,
   memoryKeyStore,
   meshKeysFile,
   newExchangeKey,
-  UnprotectedFileKeyStore,
   verifyDeviceSignature,
 } from "./keys.ts";
 import { macHeaders, macHolds, macProofOf, replayGuard, signedHeaders } from "./mac.ts";
+import { pairSecretName } from "./store.ts";
 
 const directories: string[] = [];
 
@@ -58,11 +62,12 @@ describe("device keys", () => {
 
   it("keeps keys in a private file under the node state dir and says it is unprotected", async () => {
     const file = meshKeysFile(stateDir());
-    const store = new UnprotectedFileKeyStore(file);
-    expect(store.protection).toBe("unprotected-file");
-    expect(store.warning).toMatch(/plain file/);
+    const reason = () => "no OS key store answers here";
+    const store = new FileKeyStore(file, reason);
+    expect(store.placement()).toEqual({ protection: "file", store: null, reason: reason() });
+    expect(keysWarning(store.placement())).toMatch(/protected only by file permissions/);
     const key = await loadDeviceKey(store);
-    expect((await loadDeviceKey(new UnprotectedFileKeyStore(file))).publicKey).toBe(key.publicKey);
+    expect((await loadDeviceKey(new FileKeyStore(file, reason))).publicKey).toBe(key.publicKey);
     expect(Object.keys(JSON.parse(readFileSync(file, "utf8")))).toEqual([deviceKeyName]);
     if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
     await store.write("other", "value");
@@ -71,6 +76,52 @@ describe("device keys", () => {
     expect(await store.read("other")).toBe("value");
   });
 });
+
+describe("moving the keys into the OS key store", () => {
+  it("moves a device key from the plain file and keeps the device's identity", async () => {
+    const dir = stateDir();
+    const before = new FileKeyStore(meshKeysFile(dir), () => "");
+    const identity = await loadDeviceKey(before);
+    await before.write(pairSecretName("pair-1"), "c2VjcmV0");
+    const vault = fakeVault();
+    const told: string[] = [];
+
+    const placed = await moveMeshKeysIn({
+      stateDir: dir,
+      vault,
+      notice: (line) => told.push(line),
+    });
+
+    expect(placed).toEqual({ protection: "os", store: "fake vault", reason: null });
+    expect(existsSync(meshKeysFile(dir))).toBe(false);
+    expect(readKeyNote(dir)).toMatchObject({ protection: "os", store: "fake vault" });
+    expect([...vault.held.keys()].sort()).toEqual([deviceKeyName, pairSecretName("pair-1")]);
+    expect(told).toEqual([
+      "moved 2 mesh keys from the plain file into the fake vault; this machine keeps its identity",
+    ]);
+    const after = meshKeyStore({ stateDir: dir, vault });
+    expect(after.placement().protection).toBe("os");
+    const reloaded = await loadDeviceKey(after);
+    expect(reloaded.publicKey).toBe(identity.publicKey);
+    expect(verifyDeviceSignature(identity.publicKey, "m", reloaded.sign("m"))).toBe(true);
+    expect(await after.read(pairSecretName("pair-1"))).toBe("c2VjcmV0");
+  });
+});
+
+function fakeVault(): SecretVault & { held: Map<string, string> } {
+  const held = new Map<string, string>();
+  return {
+    held,
+    backend: "fake vault",
+    store: async (name, value) => {
+      held.set(name, value);
+    },
+    lookup: async (name) => held.get(name),
+    forget: async (name) => {
+      held.delete(name);
+    },
+  };
+}
 
 describe("claim codes", () => {
   it("lives fifteen minutes, normalizes what the keeper types, and is spent once", async () => {

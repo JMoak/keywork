@@ -8,7 +8,7 @@ import { RetryingProvider } from "./providers/retry.ts";
 import type { Tool } from "./tools.ts";
 
 const declinedWithoutRetry = expect.stringMatching(
-  /^declined by user\nThe call did not run, .*never report it as done\.$/s,
+  /^declined by user\nThe user declined this call, so it did not run .*do not ask for it again in this turn.*never report it as done\.$/s,
 );
 
 async function* streamOf(deltas: TurnDelta[]): AsyncIterable<TurnDelta> {

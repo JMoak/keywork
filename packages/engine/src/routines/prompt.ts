@@ -11,6 +11,8 @@ export interface RunTiming {
   catchUp: boolean;
   attempt: number;
   payload?: PayloadRef | undefined;
+  checkExit?: number | undefined;
+  byKeeper?: boolean | undefined;
 }
 
 export const onTimeToleranceMs = 2 * minuteMs;
@@ -27,6 +29,9 @@ function runContext(routine: Routine, creature: string, timing: RunTiming): stri
     ...(late > onTimeToleranceMs
       ? ["It is running late: check that the work still makes sense now before acting on it."]
       : []),
+    ...(timing.checkExit === undefined || routine.check === undefined
+      ? []
+      : [checkLine(routine.check.command, timing.checkExit)]),
     ...(timing.payload === undefined ? [] : [payloadLine(timing.payload)]),
     ...(isLastWake(routine, timing.firedAt) ? [lastWakeLine] : []),
     `Tools:${routine.tools}. Budget: $${routine.budget.usd.toFixed(2)} and ${routine.budget.minutes} minutes.`,
@@ -34,9 +39,13 @@ function runContext(routine: Routine, creature: string, timing: RunTiming): stri
 }
 
 function occasionOf(routine: Routine, timing: RunTiming): string {
+  if (timing.byKeeper === true)
+    return "tried again because the keeper asked, after it kept failing";
   if (timing.attempt > 1) return `retry ${timing.attempt - 1} of a run that did not finish`;
   if (timing.catchUp) return "a catch-up for a run missed while the node was down or asleep";
-  return routine.trigger.kind === "manual" ? "run by hand" : `a ${routine.trigger.kind} run`;
+  const { kind } = routine.trigger;
+  if (kind === "manual") return "run by hand";
+  return `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run`;
 }
 
 const lastWakeLine =
@@ -45,6 +54,10 @@ const lastWakeLine =
 function isLastWake(routine: Routine, firedAt: number): boolean {
   const expiry = wakeExpiryOf(routine);
   return expiry !== undefined && firedAt >= expiry;
+}
+
+function checkLine(command: string, exitCode: number): string {
+  return `Its check \`${command}\` exited ${exitCode}, so there is something to do; what the check printed is in the file named next.`;
 }
 
 function payloadLine({ file, bytes }: PayloadRef): string {

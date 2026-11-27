@@ -109,7 +109,8 @@ function grantsItem(routineId = "triage"): NeedsYouItem {
     creature: "pip",
     routineId,
     kind: "grants",
-    reason: "accept the write grant set abc",
+    tier: "digest",
+    reason: "asks to write files",
     runId: null,
     since: null,
     action: { verb: "accept", digest: "abc" },
@@ -235,7 +236,7 @@ describe("a question for the keeper", () => {
     });
     chores.set("pip/digest", { ...(chores.get("pip/digest") as ChoreFacts), accepted: true });
 
-    const run: NeedsYouItem = { ...grantsItem(), kind: "run", action: null };
+    const run: NeedsYouItem = { ...grantsItem(), kind: "run", tier: "interrupt", action: null };
     await ledger.choresNeeding([grantsItem("triage"), run]);
 
     const questions = await entriesOf(ledger);

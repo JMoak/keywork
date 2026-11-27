@@ -66,6 +66,15 @@ export interface ToolResultPart {
   isError: boolean;
   spill?: SpillReference;
   exitCode?: number;
+  fact?: ToolFact;
+}
+
+export type ToolFact = TemperamentFact;
+
+export interface TemperamentFact {
+  kind: "temperament";
+  manner: string;
+  favourite: string;
 }
 
 export type Part =

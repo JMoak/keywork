@@ -74,6 +74,26 @@ export function bashTool(
   });
 }
 
+export interface ShellOutcome {
+  exitCode: number | null;
+  output: string;
+}
+
+export async function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  shell: Shell = detectShell(),
+): Promise<ShellOutcome> {
+  let exitCode: number | null = null;
+  const output = await execute(shell, shellLaunch(shell, command, cwd), timeoutMs, undefined, {
+    onExit: (code) => {
+      exitCode = code;
+    },
+  });
+  return { exitCode, output };
+}
+
 export function isMsysShell(shell: Shell, platform: NodeJS.Platform = process.platform): boolean {
   return platform === "win32" && shell.name === "bash";
 }

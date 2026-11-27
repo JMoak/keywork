@@ -14,7 +14,7 @@
   "tools": [
     {
       "name": "arrange",
-      "description": "Here \"you\" is pip, the creature you work through. Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {\"<id or title>\": \"left-two-thirds\"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and \"all\" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {\"<id>\": \"done\"}} or {mark: {\"<id>\": {text: \"done\", tone: \"good\"}}}, and signal raises or lowers its outline; either can go alone. {keep: \"<name>\"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: \"<name>\"} sets a kept scene out again, and {forget: \"<name>\"} lets one go. It moves only the app's own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.",
+      "description": "Here \"you\" is pip, the creature you work through. Lay out your windows outside, at any sizes in any combination. Give a shape (grid, columns, rows, lead-and-cards, lead-and-stack, split, board), how the things relate (sequence, alternatives, tasks, notes), or a spot for each, {seats: {\"<id or title>\": \"left-two-thirds\"}}; with none of them the app chooses. lead names the one that gets the large spot and side where it stands. panes picks which things: all your windows outside when left out, and \"all\" also brings out what sits beside your conversation. {back: true} undoes your last arrangement. mark changes the word on a window, {mark: {\"<id>\": \"done\"}} or {mark: {\"<id>\": {text: \"done\", tone: \"good\"}}}, and signal raises or lowers its outline; either can go alone. {keep: \"<name>\"} keeps what you have out, and where each thing stands, as a scene by that name (up to twelve); {scene: \"<name>\"} sets a kept scene out again, and {forget: \"<name>\"} lets one go. {temperament: \"<word>\"} takes on another of your temperaments until you settle back. It moves only the app's own windows, never takes focus, and leaves alone what the keeper placed. The answer says where everything now stands.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -211,11 +211,17 @@
             "enum": ["room", "display"]
           },
           "mood": {
-            "description": "How the panes move into place, as motion only: one of show's moods; left out, your temperament's if you have one, else brisk. The answer names the mood it moved with.",
+            "description": "How the panes move into place, as motion only: one of show's moods, for this call; left out, the temperament you are in now if you have one, else brisk. The answer names the mood it moved with.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
             "enum": ["calm", "brisk", "eager", "playful", "urgent", "decisive", "tentative"]
+          },
+          "temperament": {
+            "description": "Take on another of your temperaments from now on, one of the three your prompt names: your panes move with it whenever you name no mood, until you settle back to your favourite by yourself once you have rested a while. Naming your favourite settles you back now. It goes alone.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
           },
           "keep": {
             "description": "Keep what you have out as a scene by this name, as it stands now: each thing, and its seat outside or its place beside your conversation. With panes, only those. Keeping a name you already keep replaces it. You keep up to twelve scenes.",
@@ -572,7 +578,7 @@
             "enum": ["lead", "support", "aside"]
           },
           "mood": {
-            "description": "How it moves in, motion only: calm (slow and soft), brisk (the default, plain), eager (quick, close together), playful (out of turn, in a rhythm), urgent (all at once, fast), decisive (all at once, landing firmly) or tentative (a little slow, one at a time with pauses, landing lightly). Left out, it moves with your temperament, if you have one.",
+            "description": "How it moves in, motion only: calm (slow and soft), brisk (the default, plain), eager (quick, close together), playful (out of turn, in a rhythm), urgent (all at once, fast), decisive (all at once, landing firmly) or tentative (a little slow, one at a time with pauses, landing lightly). Left out, it moves with the temperament you are in now, if you have one.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
@@ -734,7 +740,7 @@
             ]
           },
           "mood": {
-            "description": "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with your temperament, if you have one, else in the mood it arrived with.",
+            "description": "How it leaves, as motion only: one of show's moods. Leave it out and it leaves with the temperament you are in now, if you have one, else in the mood it arrived with.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80,

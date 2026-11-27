@@ -14,11 +14,18 @@ export async function freezeTurn(
   trees: TurnTrees | undefined,
   ending?: TurnEnding,
 ): Promise<void> {
-  const facts = await factsOf(store, promptId, checkpoint, trees);
+  await freezeTurnFacts(store, await turnFactsAt(store, promptId, checkpoint, trees), ending);
+}
+
+export async function freezeTurnFacts(
+  store: SessionStore,
+  facts: TurnFacts,
+  ending?: TurnEnding,
+): Promise<void> {
   await recordTurnFacts(store, { ...facts, ...ending });
 }
 
-function factsOf(
+export function turnFactsAt(
   store: SessionStore,
   prompt: string,
   checkpoint: string | undefined,

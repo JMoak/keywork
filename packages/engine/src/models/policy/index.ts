@@ -27,6 +27,7 @@ export { type Locality, localityOf } from "./locality.ts";
 export { type CapabilityLookup, probedCapabilities } from "./probed.ts";
 export {
   bindForClass,
+  bindingCapabilities,
   declaredFingerprint,
   type LocalOnlyCandidate,
   type PlannedCandidate,
@@ -36,6 +37,7 @@ export {
   type PolicyResolution,
   type RefusedCandidate,
   resolvePolicy,
+  toolsNotAskedYet,
   type UnresolvedCandidate,
 } from "./resolve.ts";
 export {

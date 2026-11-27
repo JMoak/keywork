@@ -699,4 +699,37 @@ describe("a creature's temperament", () => {
       ["show.settled", "playful"],
     ]);
   });
+
+  it("refuses to take on a temperament outside its range, in words that name its range", async () => {
+    const taken: unknown[] = [];
+    const own = {
+      favourite: "calm",
+      range: ["calm", "eager", "decisive"],
+      manner: "calm",
+    } as const;
+    const tools = yardTools({
+      creature: "wren",
+      sessionId: "s1",
+      temperaments: {
+        read: async () => own,
+        take: async (temperament) => {
+          taken.push(temperament);
+          return { ...own, manner: temperament };
+        },
+      },
+      settings: () => undefined,
+    });
+    const become = (temperament: string) => findTool(tools, "arrange").execute({ temperament });
+
+    expect(await become("playful")).toBe(
+      "Not changed: playful is not one of your temperaments; yours are calm, eager and decisive.",
+    );
+    expect(await become("urgent")).toBe(
+      "Not changed: urgent is a mood for one call, never a temperament; yours are calm, eager and decisive.",
+    );
+    expect(await become("grumpy")).toBe(
+      'Not changed: "grumpy" is not one of your temperaments; yours are calm, eager and decisive.',
+    );
+    expect(taken).toEqual([]);
+  });
 });

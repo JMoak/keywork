@@ -33,10 +33,17 @@ describe("models.changed from the inventory", () => {
     expect(changes).toEqual([{ node: "spark-ad4d", reason: "manifest" }]);
   });
 
-  it("says probe for the inventory's own node after any probe", async () => {
-    const { inventory, changes } = watched();
+  it("says probe for the inventory's own node when a probe learned something new, and stays quiet when it learned the same again", async () => {
+    const { inventory, changes, http } = watched();
     await inventory.probe({ endpoint: "http://127.0.0.1:11434" });
-    expect(changes).toEqual([{ node: "moak-main", reason: "probe" }]);
+    await inventory.probe({ endpoint: "http://127.0.0.1:11434" });
+    http.up = true;
+    await inventory.probe({ endpoint: "http://127.0.0.1:11434" });
+    await inventory.probe({ endpoint: "http://127.0.0.1:11434" });
+    expect(changes).toEqual([
+      { node: "moak-main", reason: "probe" },
+      { node: "moak-main", reason: "probe" },
+    ]);
   });
 });
 

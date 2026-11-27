@@ -35,6 +35,7 @@ async function servedPip() {
       return "noted" as const;
     },
     read: async (slug: string) => (slug === "pip" ? detail : undefined),
+    takeManner: async () => undefined,
   };
   const audit = memoryAuditLog();
   const { creatureMcp } = servedCreatureMcp({
@@ -65,6 +66,7 @@ describe("servedCreatureMcp", () => {
       inbound: async () => undefined,
       deliver: async () => "missing" as const,
       read: async () => undefined,
+      takeManner: async () => undefined,
     };
     expect(servedCreatureMcp({ creatures, sessions, mesh: undefined })).toEqual({});
   });

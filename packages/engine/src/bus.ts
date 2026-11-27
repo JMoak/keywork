@@ -1,10 +1,15 @@
 import type { MemoryDecision } from "./memory/decider.ts";
-import type { Message, SpillReference, ToolCallPart, Usage } from "./messages.ts";
+import type { Message, SpillReference, ToolCallPart, ToolFact, Usage } from "./messages.ts";
 import type { FallbackTrigger } from "./models/policy/fallback.ts";
 import type { ModelClass } from "./models/policy/types.ts";
 import type { TurnDelta } from "./provider.ts";
 import type { ProviderResume, ProviderWait } from "./providers/retry.ts";
-import type { ContextInjection, PermissionAsk, PermissionDecision } from "./session/journal.ts";
+import type {
+  ContextInjection,
+  DenyReason,
+  PermissionAsk,
+  PermissionDecision,
+} from "./session/journal.ts";
 
 export type SendBehavior = "steer" | "queue";
 
@@ -19,7 +24,20 @@ export interface CreatureOrigin {
   thread: string;
 }
 
-export type PromptOrigin = ExternalOrigin | CreatureOrigin;
+export interface KeeperOrigin {
+  kind: "keeper";
+}
+
+export interface AnswerOrigin {
+  kind: "answer";
+  callId: string;
+  tool: string;
+  verdict: "granted" | "denied";
+  reason?: DenyReason;
+  note?: string;
+}
+
+export type PromptOrigin = ExternalOrigin | CreatureOrigin | KeeperOrigin | AnswerOrigin;
 
 export interface ModelFallback {
   class: ModelClass;
@@ -59,10 +77,14 @@ export interface ChildFinished {
   refused?: readonly RefusedCall[];
 }
 
+export interface TurnCompletion {
+  delivery?: string | null;
+}
+
 interface LiveEvents {
   "turn.started": { userText: string; entryId?: string; origin?: PromptOrigin };
   "turn.delta": { delta: TurnDelta };
-  "turn.completed": { message: Message; usage: Usage };
+  "turn.completed": { message: Message; usage: Usage } & TurnCompletion;
   "turn.interrupted": { message: Message };
   "turn.waiting": ProviderWait;
   "turn.resumed": ProviderResume;
@@ -75,6 +97,7 @@ interface LiveEvents {
     isError: boolean;
     spill?: SpillReference;
     exitCode?: number;
+    fact?: ToolFact;
   };
   "gate.ask": { ask: PermissionAsk };
   "gate.permission": { decision: PermissionDecision };

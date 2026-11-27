@@ -1,10 +1,15 @@
 export {
+  answeredKeptMs,
   type CensusManifest,
   type CensusOptions,
   type CensusPair,
   type CensusPeer,
   type MeshCensus,
+  type ProbeBook,
+  probeBook,
   readPeerManifest,
+  refusedWaitAtMostMs,
+  refusedWaitMs,
   takeCensus,
 } from "./census.ts";
 export {
@@ -31,8 +36,10 @@ export {
 export {
   buildManifest,
   type MachineFacts,
+  type ManifestKeyProtection,
   type ManifestModelServer,
   type ManifestSources,
+  manifestKeyProtections,
   manifestModelServerSchema,
   manifestVersion,
   meshManifestPath,

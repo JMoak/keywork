@@ -123,7 +123,7 @@ Fires when a prompt begins its turn, after the user message joins the context.
 |---|---|---|
 | `userText` | `string` | The prompt text. |
 | `entryId` | `string`, optional | The id of the prompt's session entry: present on replay of a stored user message, and live under `keywork serve`, which writes the entry before the event fires (since contract 1.7). A host that keeps no session log leaves it out. |
-| `origin` | `PromptOrigin`, optional | `{ kind: "external", client }` when the prompt came through `POST /sessions/{id}/inject` on `keywork serve`; `{ kind: "creature", creature, thread }` when it is the one-line summary a creature's finished thread sent to the creature's conversation (`thread` is that session's id; since contract 1.8); absent for a typed prompt. |
+| `origin` | `PromptOrigin`, optional | `{ kind: "external", client }` when the prompt came through `POST /sessions/{id}/inject` on `keywork serve`; `{ kind: "creature", creature, thread }` when it is the one-line summary a creature's finished thread sent to the creature's conversation (`thread` is that session's id; since contract 1.8); `{ kind: "keeper" }` when it is the keeper's own words sent from the home to a creature's thread in a bound project (since contract 1.41; it was `external` with a `creature-<uuid>` client); `{ kind: "answer", callId, tool, verdict, reason?, note? }` when it is the keeper's answer to a question that waited through a stop, carried to the turn that moves the work on: `callId` and `tool` name the call asked about, `verdict` is `granted` (always once) or `denied`, with the denial's `reason` and the keeper's `note` when given, so a client draws `you allowed it once` from these fields and never the text the creature was told (since contract 1.41); absent for a typed prompt. |
 
 On replay, a compaction or branch summary also fires `turn.started` with the summary as
 `userText`, so the transcript shows where history was folded. A memory flush never fires it:
@@ -131,7 +131,7 @@ the flush is not a prompt (see [Memory flush entries](#memory-flush-entries)).
 
 Under `keywork serve` the prompt's `message` entry is written to the session log as the turn
 starts, before `turn.started` fires and stamped with that moment, so the event carries its id
-and the entry comes before the asks, decisions and injections the turn journals; the turn's other messages follow when it settles, and a `turn_facts` entry closes it
+and the entry comes before the asks, decisions and injections the turn journals. Since contract 1.41 each of the turn's other messages is written as it happens (an assistant message once it has streamed whole and before any call it makes is ruled on, a tool result as soon as its tool returns and before the next call is ruled on), a `turn_progress` entry records the turn opening and its first change, and a `turn_facts` entry closes it
 (see [Turn facts and journal-only entries](#turn-facts-and-journal-only-entries)). Since
 contract 1.6; a log written earlier carries the prompt at settle time, after its turn's
 journal entries.
@@ -166,6 +166,7 @@ Fires when an assistant message ends with no tool calls to run.
 |---|---|---|
 | `message` | `Message` | The final assistant message (`role`, `parts`). |
 | `usage` | `Usage` | `inputTokens`, `outputTokens`, optional `cacheCreationInputTokens`, `cacheReadInputTokens`, `costUsd`. |
+| `delivery` | `string \| null`, optional | Whether this turn made a delivery to the storehouse (see `creature.deliveries`): the delivery's id when it did, `null` when it did not. Under `keywork serve` it is on every live turn of a creature's own conversation, of one of its threads and of a creature's thread in a bound project (on that project's server; the home shelves it under the same id). Only work is a delivery: a turn delivers when it changed files (or, where the server cannot see which files changed, ran a tool that writes), and a thread of its own the creature sent away to do work also delivers when it first finishes; a plain reply never delivers, at home or in a project, and a ledger entry's short conversation is always `null` (since contract 1.41; a project thread's every finished turn delivered before). A turn that carries on one the engine stopped in (an `answer` origin) lists the files of both. The delivery is recorded, and its `creature.deliveries` fires, before this event. The turn's own record in the session log keeps it (`turn_facts`), so a replay carries it exactly as the live event did, and `GET /sessions/{id}` gives it on the turn's `outcomes` mark for a client that replays from there; a delivery that has since folded out of the storehouse still counts. Absent on a chore run's turn, whose delivery the run decides (`routine.finished` with `run.delivery: "delivered"`, followed at once by `creature.deliveries`), on any session of no creature, on a turn completed before contract 1.41, and from a host that keeps no storehouse. Since contract 1.41. |
 
 ### turn.interrupted
 
@@ -256,6 +257,7 @@ Fires when a tool returns or throws.
 | `isError` | `boolean` | True when the tool threw or was refused. |
 | `spill` | `SpillReference`, optional | Present when the output was clipped: `{ id, bytes, elidedFrom, elidedTo }` names the spill file beside the session. Over `keywork serve`, `GET /sessions/{id}/spills/{spill.id}` reads it, by default exactly the clipped `[elidedFrom, elidedTo)`. |
 | `exitCode` | `number`, optional | The exit code of the command a `bash` call ran, `0` included, so a client marks a failed command without reading `(exit code N)` out of `output`. Absent for every other tool, and for a command that never exited on its own (a timeout, an abort, a shell that died). The tool result in the session keeps it, so a replay carries it too. Since contract 1.32. |
+| `fact` | `ToolFact`, optional | What the call did, in plain fields, for a call whose effect a client draws in words of its own. Today one kind: `{ kind: "temperament", manner, favourite }` when `arrange` took on a temperament, `manner` the one the creature is in now and `favourite` its favourite, so a client says `is brisk for now` (or `is back to eager, its favourite` when the two are the same) rather than `arranged them`. Absent when the call changed nothing. The tool result in the session keeps it, so a replay carries it too. Since contract 1.41. |
 
 ## Child sessions
 
@@ -313,6 +315,16 @@ and never replayed. The session journal keeps each ask as a `permission_ask` ent
 `{ tool, callId, rule, rules, change? }`, where `change` is `{ creates, linesBefore,
 linesAfter }` from the preview; the arguments already ride the assistant message, and the
 preview's text is never journaled ([`backlog/122`](backlog/122-tool-decision-evidence.md)).
+
+Since contract 1.41 an unanswered ask outlives the engine stopping. The server keeps each one in
+its workspace state until it is answered or lapses; a server that stops, or dies, ends the turn
+(its call gets the result `not run yet: the engine stopped while this call waited...`, nothing of
+it ran) and, when it starts again, the ask is back in `GET /asks` with `carried: true` and still
+waiting on the creature's ledger, with no new `gate.ask`. Answered `once` (the only scope it
+takes), the session gets a turn telling the creature the answer; when granted, that call with the
+same arguments runs once without asking, recorded as `gate.permission` with `gate: "user"`,
+`asked: true`, `scope: "once"` and no `gate.ask` before it. A carried answer writes its ratchet row
+when it is given.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -411,14 +423,23 @@ count a `not-now` as a judgment of the call.
 `note` is the person's own words on a denial, the free text an `other` answer asks for (sent as
 `note` on `POST /asks/{callId}`, trimmed, at most 1000 characters). Since contract 1.6. The
 model reads both: the refused call's `tool.finished` output opens with `declined by user` and
-the reason (`· they judged this call unsafe`, `· not now, though the call itself may be fine
-later`), quotes the note on its own line (`The user said: "…"`), and closes with a line telling
-the model the call did not run, not to retry it or a variant unless the person asks, and never
-to report it as done. A headless refusal opens with `not approved: this run has no one to ask`
-and closes the same way. An ask that timed out under `keywork serve` is still a `headless`
+the reason (`· they judged this call unsafe`, `· not now`), quotes the note on its own line
+(`The user said: "…"`), and closes with one sentence telling the model the person declined the
+call, so it did not run and changed nothing, that it must not ask for it again in this turn, in
+that form or another, unless the person asks, and that it never reports it as done (since
+contract 1.41; before, a `not-now` read "though the call itself may be fine later", which a model
+took as leave to ask again at once). A headless refusal opens with `not approved: this run has no
+one to ask` and closes with a line saying the call did not run, not to retry it or a variant
+unless the person asks, and never to report it as done. An ask that timed out under `keywork serve` is still a `headless`
 decision, but the model reads `not approved: nobody answered the ask in time, so the person
 probably stepped away and the call was refused` instead, since someone could have answered
 (since contract 1.7). Asks a closing or recomposing server refuses keep the headless line.
+
+A question that waited through a stop (`carried: true` in `GET /asks`) settles on its session's stream
+exactly as a live one does: when the keeper answers it, `gate.permission` fires for that `callId`
+with `gate: "user"`, `asked: true`, and `scope: "once"` on a grant (or the denial's `reason` and
+`note`), before the turn that carries the work on starts, and the session's journal keeps it, so a
+session read again shows the call answered. Since contract 1.41.
 
 ### gate.preset
 
@@ -747,7 +768,7 @@ port notifies its subscribers. Since contract 1.8.
 | Field | Type | Meaning |
 |---|---|---|
 | `slug` | `string` | The creature. |
-| `change` | `"created" \| "updated" \| "paused" \| "resumed" \| "removed" \| "conversation" \| "threads"` | Why: `created` after `POST /creatures`; `updated` after `PATCH /creatures/{slug}` (a rename, a body or a policy change, since contract 1.14); `paused` and `resumed` after `POST /creatures/{slug}/pause` and `/resume` (since contract 1.14); `removed` after a confirmed `DELETE /creatures/{slug}`; `conversation` when the first `GET /creatures/{slug}` opened the conversation (a read with one idempotent side effect, kept for milestone one); `threads` when a thread was opened or finished (its summary entry reached the conversation). |
+| `change` | `"created" \| "updated" \| "paused" \| "resumed" \| "removed" \| "conversation" \| "threads"` | Why: `created` after `POST /creatures`; `updated` after `PATCH /creatures/{slug}` (a rename, a body or a policy change, since contract 1.14), and when the creature takes on another temperament of its range (`arrange`'s `temperament`, or `PUT /creatures/{slug}/manner` from a bound project) or settles back to its favourite after half an hour without a turn, so `manner` reads differently (since contract 1.41); `paused` and `resumed` after `POST /creatures/{slug}/pause` and `/resume` (since contract 1.14); `removed` after a confirmed `DELETE /creatures/{slug}`; `conversation` when the first `GET /creatures/{slug}` opened the conversation (a read with one idempotent side effect, kept for milestone one); `threads` when a thread was opened or finished (its summary entry reached the conversation). |
 
 ### creature.handoff
 
@@ -796,10 +817,11 @@ belongs to the session that delegated it.
 The server writes every change as it happens and keeps the ledger for the workspace under the
 node's state (`creatures/ledger.json` beside the hand-off tally), so it outlives a restart and
 the sessions it names. It is never rebuilt from history and began empty with contract 1.37; the
-one thing read back is which chores are held on grants, from the chore journal at every start. No
-ask or turn outlives the server, so a question about an ask a stopped server left waiting is
-answered `lapsed`, and a task it left running is `blocked`, when the next server starts; those
-settle without an event. Each creature keeps its 50 most recent closed entries; an older one
+one thing read back is which chores are held on grants, from the chore journal at every start. When the next server starts, a question
+about an ask a stopped server left waiting is answered `lapsed` unless the ask is carried through
+the stop (`carried: true` in `GET /asks`), and a task it left running is `blocked` unless a question
+of its thread is carried, when the task stays `running` and the answer carries its work on (both
+since contract 1.41); those settle without an event. Each creature keeps its 50 most recent closed entries; an older one
 leaves the list with `change: "folded"` and adds to `folded`. Open entries are always kept.
 Removing a creature (a confirmed `DELETE /creatures/{slug}`) drops its ledger with no event of
 its own beside `creature.changed`, so a creature made again under the same slug starts from none.
@@ -810,8 +832,13 @@ sends none and serves no `GET /creatures/{slug}/ledger`.
 Work in a bound project is on the creature's ledger too (since contract 1.40). A project's threads
 run in that project's own runtime, which keeps their questions and their tasks for the home's
 creature by the same rules (a permission ask on the thread or a sub-agent of it is a question; the
-thread is a task, running until its first turn settles, titled with the opening words of what was
-asked until the thread has a title of its own). This server reads them from that runtime with
+thread is a task, titled with the opening words of what was asked until the thread has a title of
+its own). Since contract 1.41 the task stands for what the keeper asked for: it runs across the
+thread's turns until a turn delivers work (`finished`) or fails (`blocked`), so a reply that only
+asks for leave keeps it running, and when a question is asked in the thread, or a turn delivers,
+while no task runs there, a task opens first, titled with the words that turn was asked (for a turn
+carrying on one the engine stopped in, the words that turn was asked); before, it ran until the
+thread's first turn settled. This server reads them from that runtime with
 `GET /creatures/{slug}/ledger?visitor=<its workspace identity>` at the moments it reads that
 project's worksites: at start, as soon as that runtime says something changed there
 (`POST /creature-projects/{project}/changed`, sent when a turn of one of its threads begins or one of
@@ -868,6 +895,43 @@ runtime.
 | `entry.conversation` | `object \| null` | `{ session, state, openedAt, endedAt, endedBy }` once a conversation about the entry was opened: `session` is its session, `state` is `open` or `ended`, `endedAt` and `endedBy` (`answer` or `keeper`) are `null` while it is open. `null` when none was opened. Since contract 1.38. |
 | `entry.project` | `string \| null` | The bound project's id (as in `GET /creatures/{slug}/projects`) when the work runs in that project's runtime: `session` and `directory` are then that runtime's, and a question is answered there. `null` for work on this server. Since contract 1.40. |
 | `folded` | `number` | How many of the creature's closed entries have left the list so far. |
+
+### creature.deliveries
+
+Fires when something is shelved in the storehouse, opened by the keeper, or folded out of the kept list,
+so a console that draws the storehouse follows it without re-fetching `GET /creature-deliveries`, which
+serves the whole storehouse for a cold start. The storehouse holds work: a delivery is one piece of
+finished work a creature delivered, and a plain reply stays in the conversation. A finished turn of the
+creature's own conversation, of one of its threads or of its thread in a bound project delivers when it
+changed files (where the server keeps no checkpoints, or the creature's workshop works on a copy of the
+workspace, when it ran a tool that writes); a thread of its own it sent away to do work also delivers when
+it first finishes (never a ledger entry's short conversation); a chore run delivers when its run row says
+`delivered`; a plain reply never delivers, at home or in a project, and a failed or interrupted turn
+delivers nothing (since contract 1.41, for project threads too). A turn carrying on one the engine
+stopped in lists every file both changed. A turn's own `turn.completed`
+names the delivery it made, or `null`, and this event comes before it. Work in a bound project counts: that project's runtime keeps its deliveries for the creature
+and this server reads them as it reads that project's ledger, so a project's delivery arrives here within
+about a second of its turn ending. Each creature keeps its 50 latest; older ones fold into a count that
+only grows while the creature stands. Deliveries, and whether each was opened, are kept for the
+workspace under the node's state and outlive a restart; removing a creature drops its own. For display
+only: a delivery grants, widens and implies nothing. Server event (`sessionId` is `""`). Since contract
+1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"delivered" \| "opened" \| "folded"` | `delivered` for a new delivery; `opened` when the keeper opened it (`POST /creature-deliveries/{id}/opened`); `folded` when it left the kept list. |
+| `delivery.id` | `string` | Stable for the life of the delivery. |
+| `delivery.creature` | `string` | The creature's slug. |
+| `delivery.line` | `string` | The one report line: the first sentence of what the creature said, or `Changed <files>.` when it said nothing. |
+| `delivery.title` | `string \| null` | The thread's or chore's title, or the opening words of what was asked; `null` for the creature's own conversation. |
+| `delivery.files` | `{ path, added, deleted }[]` | Each file the delivering turn changed, relative to `directory`, with lines added and deleted; empty for a thread or chore that changed none, or where the server cannot see the changes (it keeps no checkpoints, or the workshop works on a copy). |
+| `delivery.at` | `string` | When it was delivered (ISO 8601). |
+| `delivery.directory` | `string` | The folder the work was done in. |
+| `delivery.session` | `string \| null` | The conversation it came from, opened on the server named by `project`; `null` while that conversation is in the trash. |
+| `delivery.project` | `string \| null` | The bound project's id when the work ran in that project's runtime; `null` for work on this server. |
+| `delivery.about` | `object` | `{ kind: "conversation" }`, `{ kind: "thread" }` or `{ kind: "chore", routineId, runId }`. |
+| `delivery.openedAt` | `string \| null` | When the keeper opened it; `null` until then, kept across a restart. |
+| `folded` | `number` | How many of that creature's deliveries have folded out of the list so far. |
 
 ### creature.worksites
 
@@ -1011,6 +1075,49 @@ contract 1.40; an older server sends none.
 | `scene.holds` | `object[]` | `{ kind, title }` for each thing it sets out, in order: `kind` a setting's `what.kind`, `title` its title or, without one, its ref. |
 | `scene.keptAt` | `string` | When it was kept (ISO 8601). |
 
+### creature.promises
+
+Fires whenever what a creature keeps changes: a chore ran, failed, was tried again or stopped, a check
+found something new, a model server was found answering or silent, a repair began, tried again or ended,
+or a question was asked or answered. A later check that finds the same thing fires none (`checkedAt`
+alone moving is not news). The payload is the whole body `GET /creatures/{slug}/promises` serves, so a consumer replaces
+what it held for the creature; an empty `promises` list means the creature is gone. Each creature keeps
+four promises, always in this order: `chores-ran`, `models-reachable`, `workshop-healthy` and
+`gates-valid`, each with what it checks in words and the evidence found. A broken promise starts a
+bounded repair where the engine can repair it: a failed chore is run again with backoff, at most five
+times in a row, and a model server that stops answering while the creature talks with you is asked again
+three times over about three and a half minutes. A repair that works is recorded and tells nobody. One
+that fails ends in one question, with the choices that would fix it; `notifications.notice` rings for it
+once. Nothing here counts down: `nextAt` is when a repair tries again, for display. Server event. Since
+contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `creature` | `string` | The creature's slug. |
+| `promises[].kind` | `"chores-ran" \| "models-reachable" \| "workshop-healthy" \| "gates-valid"` | Which promise. |
+| `promises[].state` | `"kept" \| "repairing" \| "broken" \| "unknown"` | `unknown` while there is nothing to judge (no chore yet, a model not asked yet). |
+| `promises[].checks` | `string` | Exactly what the engine checks for it today, in plain words. |
+| `promises[].evidence` | `object[]` | `{ subject, checkedAt, found, ok }` per thing checked: a chore, a model with what the creature uses it for, the workshop, a gate. `ok` is `null` when there is nothing to judge. |
+| `promises[].repairs` | `object[]` | `{ subject, startedAt, tries, bound, nextAt, endedAt, outcome }`, `outcome` `repairing`, `repaired` or `failed`. |
+| `questions` | `object[]` | Each `{ id, creature, promise, sentence, address, lastFailure, since, choices, about }`: one question per cause. `sentence` asks it in a keeper's words, names the creature and carries no model, address or engine word: `Una's model is not answering. Is its server running?`, `"Morning look" did not run: Una's model is not answering.`, `Una's chore "Morning look" kept failing, so it stopped. Try it again?`. The detail is in fields of its own, to show small on asking: the silent model is `about.model`, `address` the address its server was asked at (`null` when the cause is not a silent model), and `lastFailure` what failed the last time, in the engine's words (`null` for a silent model). `choices` are `{ id: "retry", label }`, `{ id: "model", label, models }` (the `{ provider, model }` references that would answer for the work waiting: from each model server connected on the stead, the models it reports when asked as the question is composed, whether or not its connection lists any, and none from a server that does not answer; from a market provider, the models it lists) and `{ id: "off", label }` (when only chores wait). `about` is `{ chores, conversation, model }`: the chores and whether talking with the keeper wait on it, and the silent model when that is the cause. Answer with `POST /creatures/{slug}/questions/{id}`. |
+
+### creature.talking
+
+Fires when what a creature's conversation talks on changes: the model, whether it can use tools, or
+whether any model can answer it at all. The causes are the keeper's choice for talking (`models.strong`
+through `PATCH /creatures/{slug}` or a question's "Choose another model"), a new starting model while
+the choice is `inherit`, a model set on the conversation itself, a connection added, removed or given a
+key, and a model server answering, when asked, that it does not call tools. The payload is the creature's
+`talking` as `GET /creatures/{slug}` serves it, so a consumer replaces what it held. It fires only for a
+creature whose profile was read since the server started (the read gives the first value), and never when
+a later look finds the same thing. For display only: it grants nothing. Server event (`sessionId` is
+`""`). Since contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `slug` | `string` | The creature. |
+| `talking` | `object` | `{ provider, model, mode, detail?, projectCheck? }`: the model the conversation talks on from its next turn; `mode` is `tools`, or `chat` for a model that can talk but cannot use tools, with `detail` the same plain sentence `GET /models` gives the starting model's `conversation` (`mill/puppet answered without calling a tool when it was asked to, so it can talk but cannot use tools.`) and, for a loopback model with enough context, `projectCheck` `{ endpoint, model }` for an explicit tool check. Or `{ refused, detail }` when no model can answer it (`refused` the IR-18 code, `detail` in words). |
+
 ### model.wait
 
 Fires when a turn has waited two seconds on a model that is not answering yet, and again when that
@@ -1033,6 +1140,80 @@ time, attempt or count is carried, so nothing can count down. For display only. 
 | `wait.server` | `string \| null` | The origin of the local model server it waits on, as `GET /models` gives a server's `root` (for example `http://127.0.0.1:11434`); `null` for a cloud provider. |
 | `wait.reason` | `"busy" \| "limited"` | Why the model is not answering yet. |
 | `wait.since` | `string` | When the wait began (ISO 8601). |
+
+### notifications.notice
+
+Fires once for each thing that would notify the keeper, as it happens, carrying the tier the engine
+decided for it, so a client never decides one; `GET /notifications` serves what is held now and the
+keeper's settings for a cold start. The tiers: `interrupt` for a question waiting on the keeper (a gate
+ask), a question a failed repair asks (`question`, one per cause, from `GET /creatures/{slug}/promises`),
+a chore that needs the keeper (its last run needs them, its file is invalid, or a run is parked on its
+grant set) and the memory inbox rising to three items waiting for review; `digest` for a chore whose grant
+set waits with no run held on it and for a finished run of a chore that notifies `always`; `log` for a
+finished run that needs nobody otherwise. A chore run that ends needing the keeper is announced once, as
+the chore's `run` need. A scheduled run that failed and will be tried again tells nobody; a chore that
+kept failing and stopped is announced once, as its creature's `question`, never also as a chore need. A
+question that waited through a stop of the engine is not announced again when it starts: one that
+already rang stays told, and one quiet held stays held. A notice is `held` while quiet hours or do not
+disturb hold it back, whatever its tier but `log`; outside quiet a digest-tier notice arrives at once,
+with no bell, in the unseen digest (`notifications.digest` follows it). A client rings for
+`tier: "interrupt"` with `held: false` and for nothing else. While quiet holds, creatures keep working
+and a question still waits in `GET /asks`. For display and ringing only: a notice grants, widens and
+implies nothing. Server event (`sessionId` is `""`). Since contract 1.41; an older server sends none
+and serves no `GET /notifications`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `notice.id` | `string` | Stable for the thing: `ask:<callId>`, `question:<creature>/<questionId>`, `chore:<creature>/<routineId>/<need>` (with `/<runId>` when a run is named), `run:<runId>`, or `inbox`. |
+| `notice.tier` | `"interrupt" \| "digest" \| "log"` | How the keeper hears of it. |
+| `notice.held` | `boolean` | True while quiet holds it back (an `interrupt` or a `digest`); it then arrives in the digest when quiet ends. Never true for a `log`. |
+| `notice.creature` | `string \| null` | The creature it concerns, or `null`. |
+| `notice.session` | `string \| null` | The session it concerns, or `null`. |
+| `notice.title` | `string` | One line a keeper who knows nothing of the engine understands, standing alone in a toast or on the card of what waited: who (the creature's name), what they want, about what. `Osk asks to write notes/first.md`, `Osk asks to run bun test`, `Osk's chore "Tidy notes" asks to write files`, `Osk's chore "Tidy notes" stopped because it ran past its 10-minute budget`, `Osk finished the chore "Tidy notes"`, `3 things in memory wait for your review`, the question's own `sentence`, which names the creature. It carries no identifier and no engine word; what an app needs to act is in `about`. Since contract 1.41. |
+| `notice.at` | `string` | When it happened (ISO 8601). |
+| `notice.about` | `object` | `{ kind: "ask", callId, tool }`, `{ kind: "question", questionId, promise }`, `{ kind: "chore", routineId, need, runId }` (`need` one of `grants`, `run`, `disabled`, `invalid`), `{ kind: "run", routineId, runId }` or `{ kind: "inbox", pending }`. |
+
+### notifications.quiet
+
+Fires when quiet begins, changes its reason, or ends: quiet hours reaching their start or end, or the
+keeper switching do not disturb on or off. While quiet holds nothing interrupts, a creature's panes do
+not rise by themselves (its `show` sets things out beside the conversation as cards and its `arrange`
+moves nothing), and its work goes on. Every workspace server of a machine reckons quiet from the same
+settings and clock. Server event. Since contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"began" \| "changed" \| "ended"` | `changed` when the reason changed while quiet went on. |
+| `quiet` | `object \| null` | `{ reason, since, until }`, or `null` once quiet ended. `reason` is `do-not-disturb` (it wins while both hold) or `quiet-hours`; `since` when it began; `until` the end of quiet hours, `null` while do not disturb holds. |
+
+### notifications.digest
+
+Fires when a digest is ready and when the keeper puts it away. Outside quiet, a thing that can wait (a
+digest-tier notice) arrives at once: it joins the unseen digest, or makes one when none stands, and rings
+nothing. When quiet ends, everything held arrives as one digest. No empty digest is sent. A new digest
+carries the notices of an unseen one before it (one line per notice id, the newest kept) and replaces it,
+so at most one stands unseen. There are no set times for digests. Server event. Since contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change` | `"ready" \| "seen"` | `seen` after `POST /notifications/digests/{id}/seen`. |
+| `digest.id` | `string` | The digest's id. |
+| `digest.at` | `string` | When it was composed (ISO 8601). |
+| `digest.reason` | `"quiet-ended" \| "arrived"` | What composed it: quiet ending, or a thing that can wait arriving outside quiet. |
+| `digest.notices` | `Notice[]` | What waited, interrupts first and then the rest, each oldest first, at most 50, each with `held: false`. |
+| `digest.folded` | `number` | How many more waited beyond the 50 listed. |
+| `digest.seenAt` | `string \| null` | When the keeper put it away. |
+
+### notifications.settings
+
+Fires when the keeper's notification settings change, through any workspace server of the machine
+(`PATCH /notifications`). Server event. Since contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `settings.quietHours` | `{ on, start, end }` | A daily span of `HH:MM` times in `tz` that may cross midnight; off by default, with 22:00 to 07:00 ready. |
+| `settings.doNotDisturb` | `boolean` | A switch that holds until it is switched off. |
+| `settings.tz` | `string \| null` | An IANA zone, or `null` for the machine's own. |
 
 ### routine.fired
 
@@ -1112,7 +1293,7 @@ when an effect was in flight; such an effect is never replayed). Since contract 
 | `verified` | `boolean \| null` | Whether the goal was checked; `null` in milestone one (no verifier yet). |
 | `reason` | `string \| null` | Why the run ended other than `completed`, or why a slot was skipped or dropped. |
 | `output` | `string \| null` | The file the run's final output was saved to, beside the journal. |
-| `notify` | `{ tier: "interrupt" \| "digest" \| "log", at: string \| null } \| null` | How the keeper should hear about it, and when: `interrupt` for anything that needs the keeper (deferred to the end of quiet hours), `digest` at the next digest time for a chore that notifies `always`, `log` for nothing to report. |
+| `notify` | `{ tier: "interrupt" \| "digest" \| "log", at: string \| null } \| null` | How the keeper should hear about it, and when, by the keeper's settings in `GET /notifications`: `interrupt` for anything that needs the keeper, except a scheduled run that failed and is tried again on its own, which is `log` (since contract 1.41), `digest` for a chore that notifies `always`, told at once without a bell, `log` for nothing to report. An `interrupt` or a `digest` surfaces when the run ends, or at the end of quiet hours if they hold. `at` is null when it is not known: a log never surfaces, and an interrupt or digest under do not disturb surfaces when it is switched off. `notifications.notice` says whether the keeper is told now. |
 
 ### routine.needs
 
@@ -1127,9 +1308,33 @@ never from a pane deriving its own (`adr.keeper-facing-items-come-from-the-wire-
 |---|---|---|
 | `creature` | `string` | The creature's slug. |
 | `routineId` | `string` | The chore's id. |
-| `items` | `NeedsYouItem[]` | Each `{ creature, routineId, kind, reason, runId, since, action }`. `kind` is `grants` (held on an unaccepted write or act grant set; `action` is `{ verb: "accept", digest }` and `runId` the refused run, when one was), `run` (the last run ended and needs you), `disabled` or `invalid`. `since` is when that began, when known. |
+| `items` | `NeedsYouItem[]` | Each `{ creature, routineId, kind, tier, reason, runId, since, action }`. `kind` is `grants` (held on an unaccepted write or act grant set, or on a check not yet approved; `action` is `{ verb: "accept", digest }` and `runId` the refused run, when one was; `reason` says in plain words what the chore asks to do, `asks to write files`, `asks to run commands and write files` or `asks to check for work by running <command>`, and never carries the digest), `run` (the last run ended and needs you), `disabled` (it kept failing and stopped; `action` is `{ verb: "answer" }` since contract 1.41, and the question with its choices is its creature's in `GET /creatures/{slug}/promises`, whose `about.chores` names this chore) or `invalid`. `tier` is the engine's own decision, the same as the item's notice on `notifications.notice` (since contract 1.41): `digest` for a `grants` item with no run waiting on it, which can wait (its notice arrives at once without a bell) and brings no creature to the porch, and `interrupt` for every other item. `since` is when that began, when known. |
 
-A held run has no session, so the item names the chore, never a thread. Since contract 1.10.
+A held run has no session, so the item names the chore, never a thread. A scheduled run that failed
+is no `run` item while the chore is tried again on its own (since contract 1.41). Since contract 1.10.
+
+### routine.checked
+
+Fires each time a chore's check ran: before a run its trigger fired, the engine ran the chore's
+`check.command` in the workspace's shell with no model and no tokens. Exit 0 means there was nothing to
+do, so no run, no thread and no notice follow; any other exit wakes the model, and `routine.fired`
+follows. A check that did not finish within `check.timeoutSeconds` or could not start fails the run like
+any failure (`routine.finished` with `process: "failed"`), and the chore is tried again on its own. The
+command runs only once the keeper has accepted the chore's digest, which covers the exact command; a run
+by hand skips the check. The same result is the chore's `lastCheck` on its row and is evidence for its
+creature's `chores-ran` promise. Server event. Since contract 1.41.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `creature` | `string` | The creature's slug. |
+| `routineId` | `string` | The chore's id. |
+| `check.at` | `string` | When the check ended (ISO 8601). |
+| `check.command` | `string` | The command that ran, exactly as accepted. |
+| `check.verdict` | `"quiet" \| "woke" \| "failed"` | `quiet` for exit 0, `woke` for any other exit, `failed` when it did not finish in time or could not start. |
+| `check.exitCode` | `number \| null` | Its exit code, `null` when it had none. |
+| `check.ms` | `number` | How long it ran. |
+| `check.found` | `string` | One plain line saying what it found. |
+| `check.output` | `string` | The last 4000 characters it printed. Untrusted: the woken run reads it from the file its prompt names, never from its prompt. |
 
 ### workshop.changed
 
@@ -1158,15 +1363,18 @@ route's answer carries the refusal. Health is not evented; a pane polls
 ### models.changed
 
 Fires when what `GET /models` would answer for one node changed, so the mills pane re-fetches
-that node rather than merging a delta: after a probe recorded or refreshed a capability record
-(`POST /models/probe`, or the inventory's own scan), after a node manifest advertised a different
-server list, or when a server's health moved (a breaker opening or closing). The payload carries
-no detail on purpose; `GET /models?node=` is the source of truth. Since contract 1.8.
+that node rather than merging a delta: after a probe learned something it did not know before
+(`POST /models/probe`, the refresh `GET /models` runs, or the inventory's own scan; since contract
+1.41 a probe that learned the same again fires nothing), after a node manifest advertised a different
+server list, or when a server's health moved (a breaker opening or closing), and, since contract
+1.41, when the keeper's connections changed on disk (`keywork connect` saved one while the server
+ran) and the server reloaded them. The payload carries no detail on purpose; `GET /models?node=` is
+the source of truth. Since contract 1.8.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `node` | `string` | The node whose model servers changed. |
-| `reason` | `"probe" \| "manifest" \| "health"` | What changed it. |
+| `reason` | `"probe" \| "manifest" \| "health" \| "connections"` | What changed it. |
 
 ### mesh.listener
 
@@ -1278,7 +1486,10 @@ openings from inside a setting or a thread (a file from a
 diff, a test from a file, a link) arrive the same way, through `POST /show`, so every surface
 agrees on the trail. It is IDE control: it arranges the console's own space around the conversation, never
 the computer, and it changes nothing in the world, so it asks no permission and spends the keeper's
-attention instead. The record lives on the server, not in a pane
+attention instead. While quiet hours or do not disturb hold (`notifications.quiet`), a creature's own
+`show` sets things out beside the conversation as cards, with no `where: "outside"`, seat or size and
+a rung no higher than `card`, and its `arrange` moves nothing, so nothing rises by itself while the
+keeper is away; what the keeper opens still rises (since contract 1.41). The record lives on the server, not in a pane
 (`adr.keeper-facing-items-come-from-the-wire-never-a-pane`): `GET /show` seats every setting still
 out on a cold start, and a client follows this event and `show.settled` after that. Unlike the
 process-level events above, both are scoped to a session: the envelope's `sessionId` is the thread
@@ -1357,7 +1568,7 @@ none of these fields; a 1.32 console ignores them and sets everything beside the
 | Field | Type | Meaning |
 |---|---|---|
 | `setting.id` | `string` | The setting, named in `POST /show/{id}/answer`. |
-| `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. A thread a bound project's runtime runs for a creature of the stead's home is that creature's: the setting carries its slug, its temperament is the mood when it names none, and the limits it counts against are the creature's own on that runtime (since contract 1.40; before, such a thread set out as no creature). |
+| `setting.creature` | `string \| null` | The creature's slug, or `null` for a session with no creature. A thread a bound project's runtime runs for a creature of the stead's home is that creature's: the setting carries its slug, the temperament it is in now (its `manner`, since contract 1.41) is the mood when it names none, and the limits it counts against are the creature's own on that runtime (since contract 1.40; before, such a thread set out as no creature). |
 | `setting.sessionId` | `string` | The thread that set it out. A delegated child sets out on its parent's thread, so the setting follows the thread the keeper sees. A keeper's opening sits on the thread of what it grew from. |
 | `setting.what` | `{ kind, ref, title? }` | `kind` is `"file" \| "diff" \| "report" \| "thread" \| "chore" \| "url" \| "note" \| "pane"`; `ref` is the workspace path, change-set id, report id, session id, chore id, url, or the note's own words (at most 2000 characters); `title` is absent when none was given. Since contract 1.34 a `"pane"` is one of the console's own panes, and its `ref` is that pane's name: `"sessions"`, `"arcs"`, `"files"`, `"context"`, `"memory"`, `"needs-you"`, `"permissions"`, `"mcp"` or `"workspaces"`, and since contract 1.38 also `"workshop"`, `"mills"`, `"parcels"`, `"bots"`, `"campaigns"`, `"themes"`, `"posture"`, `"stead"`, `"terminal"` or `"screen"`. A session may name it in other words; the name here is always one of those. A `terminal` or `screen` acts on the keeper's machine, so the `show` that sets one out asks the keeper every time (`gate.ask` with `rule: "always"`) and nothing is proposed unless they allow it. |
 | `setting.place` | `object` | Where in the stead the setting rises from, and where it goes back to when it leaves: `{ kind: "workshop", creature }`, `{ kind: "porch" }`, `{ kind: "store" }`, `{ kind: "mill" }` or `{ kind: "project", creature, directory }` with `directory` an absolute path. The session names it in its own words with `show`'s `from` (my workshop, the porch, the storehouse, the mill, a project or folder you have worked in by name or path, another creature's workshop). A project is this workspace or, since contract 1.39, a folder in the creature's worksites (`GET /creature-worksites`), named by its path or by its folder name when no other of that creature's places shares the name; `creature` is the creature whose worksite it is and `directory` that worksite's `directory`, so a console finds the building by it. Naming a place grants nothing and reads nothing from the folder. Left unnamed it is the creature's own workshop, the porch for a session with no creature and for a local agent over a creature's MCP server, and the place of what it grows from when `from` names a setting that is out. In a thread a bound project's runtime runs for a home creature it is that creature's project place, `{ kind: "project", creature, directory }` with `directory` the worksite the thread most recently worked in (the row `GET /creature-worksites` at home carries with that project's id), or the thread's own directory before it has worked in one (since contract 1.40). A replacement keeps its place unless it names another; a keeper's opening takes the place of what it grew from. Settings kept from before take their owner's default on load. Since contract 1.38; a 1.37 server sends none, which a client reads as the creature's workshop. |
@@ -1499,6 +1710,27 @@ working tree. Both write the same shape (since contract 1.7 the terminal's facts
 | `session` | `{ files, added, deleted }`, optional | The session's net change at that moment over every file its turns touched, the figure the desk row shows after a restart. |
 | `outcome` | `"completed" \| "interrupted" \| "failed" \| "shutdown"`, optional | How the turn ended, written under `keywork serve` since contract 1.32: `interrupted` when an abort or a steer stopped it, `shutdown` when the server shut down while it ran. Absent in facts the terminal or an earlier release wrote. |
 | `error` | `string`, optional | The message a `failed` turn failed on. |
+| `delivery` | `string \| null`, optional | What the turn's live `turn.completed` carried as `delivery`, written under `keywork serve` since contract 1.41: the id of the delivery a completed turn of a creature's conversation, thread or project thread made, or `null` when it made none. Absent wherever that event carries none. |
+
+While a turn runs under `keywork serve`, a `custom` entry with `customType: "turn_progress"` says
+where it stands, so a turn the engine is killed in can be read and carried on. It is written as the
+turn opens and again at its first change, each time whole; the latest for a prompt holds (since
+contract 1.41):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `prompt` | `string` | The id of the turn's prompt entry. |
+| `carries` | `string[]`, optional | The prompts of the earlier turns this one carries on: a turn the engine stopped in while a question waited, whose answer started this turn, and any turn that one carried on in turn. Its delivery lists every file they changed together. |
+| `wrote` | `true`, optional | The turn ran a tool that writes. |
+| `checkpoint` | `string`, optional | The tree checkpointed before the turn's first change, put back on the prompt entry as `checkpoint` as `turn_facts` does. |
+
+When a session the engine died in is next opened, every call of its last assistant message that
+has no result gets one, which the model reads: the waiting-through-the-stop line for a call whose
+question is still carried, `stopped: the engine stopped while this call was running, so it may
+have done some or all of its work. Look at what it changed before you make it again.` for a call
+the gate had let through, and `not run: the engine stopped before this call ran, so it changed
+nothing.` for the rest. Then the cut turn (a `turn_progress` and no `turn_facts`) gets its
+`turn_facts` with `outcome: "shutdown"` and the files it changed from its checkpoint to that moment.
 
 Snapshots never take in `node_modules` or `.git`, and gitignored files stay out unless an
 earlier snapshot already held them; an existing checkpoint store forgets its index once, the first
@@ -1508,7 +1740,12 @@ and `.git` directory as it is now (since contract 1.7).
 
 Some entries exist only as evidence and never reach the model: the `custom` entries for
 `permission_ask`, `permission_decision`, `context_injection`, `memory_decision`, `shell_reset`,
-`session_grants`, `turn_facts`, `keywork.creature` and `keywork.creature.report`. A session a creature owns carries, right
+`session_grants`, `turn_facts`, `turn_progress`, `keywork.creature`, `keywork.creature.report` and
+`keywork.creature.talking-choice`. The last is in a creature's conversation: `{ "choice": "inherit" }` or
+`{ "choice": { "provider", "model" } }`, the creature's model for talking (`models.strong`) that the
+conversation follows, written when the conversation opens and whenever it moves. Before each prompt the
+engine compares the creature's `strong` with the latest one; when they differ the turn talks on the new
+choice, with a `model_change` entry, so the keeper's latest choice wins (since contract 1.41). A session a creature owns carries, right
 after its `binding` entry (`{ bot: <slug> }`, the same entry a plain bot session writes), one
 `custom` entry `{ "type": "custom", "customType": "keywork.creature", "data": { "creature":
 "pip", "kind": "conversation" } }`, where `kind` is `conversation` (the one session the keeper
@@ -1535,7 +1772,10 @@ the prompt the creature answers (it is in the model context and starts a turn wh
 `detail.kind: "frame"`, its mark `kind: "frame"` with the prompt at `messages[index]`, so a
 transcript draws the creature line in the prompt's place; a report has no `kind`.
 The session takes the creature's name as its title until the creature's first reply titles it.
-Since contract 1.11.
+Since contract 1.11. The keeper's answer to a question that waited through a stop is written the
+same way in any session, a creature's or not, with `origin` `{ kind: "answer", callId, tool,
+verdict, reason?, note? }` (see `turn.started`): a client draws it from those fields, never as
+the words the creature is told, and never as the keeper's typed words (since contract 1.41).
 
 The keeper's review of a thread's delivery lives on the same session as journal-only entries. A
 verdict on one hunk of the diff `GET /sessions/{id}/changes` shows is one `custom` entry
@@ -1617,10 +1857,13 @@ before the edit (empty for a tool result). A client places a forgotten prompt at
 `edits` alone.
 
 `GET /sessions/{id}` also says how each turn ended, in `outcomes`, each `{ index, entryId,
-outcome, error? }`: `messages[index]` is the turn's prompt, `entryId` its entry, `outcome` the
-`turn_facts` outcome and `error` a failed turn's message. A turn the engine died in leaves its
-prompt with no reply and no `turn_facts`; it reads as `shutdown` the next time the session is
-read, so a client can mark it interrupted and offer it again. What the turn had written before it
+outcome, error?, delivery? }`: `messages[index]` is the turn's prompt, `entryId` its entry, `outcome` the
+`turn_facts` outcome, `error` a failed turn's message and `delivery`, on a completed turn, the
+`turn_facts` delivery (since contract 1.41), so a client that replays a transcript from here puts it
+on the turn's replayed `turn.completed` as the live event had it. A turn the engine died in reads as `shutdown` the next time the session is read, so a client can
+mark it interrupted and offer it again: its prompt with no reply and no `turn_facts`, or, since
+contract 1.41, a turn with a `turn_progress` and no `turn_facts`, whose every message, tool call
+and tool result up to the moment it stopped is in `messages`. What the turn had written before it
 ended (partial text kept on a failure, an abort or a shutdown) stays in `messages`. The turn
 still running, a turn compacted away and a turn settled before outcomes were kept carry no mark,
 so a client treats a missing mark as unknown, never as a failure. Since contract 1.32.

@@ -1,3 +1,4 @@
+import type { ToolFact } from "../messages.ts";
 import type { NoteSource } from "../request-notes.ts";
 import { outcomeNoteOf } from "../show/heard.ts";
 import type { Tool } from "../tools.ts";
@@ -13,8 +14,8 @@ export const yardToolNames = [
   withdrawToolName,
 ] as const;
 
-export function yardTools(target: ShowTarget): Tool[] {
-  return [showTool(target), shownTool(target), arrangeTool(target), withdrawTool(target)];
+export function yardTools(target: ShowTarget, told?: (fact: ToolFact) => void): Tool[] {
+  return [showTool(target), shownTool(target), arrangeTool(target, told), withdrawTool(target)];
 }
 
 const refusalLeads = [

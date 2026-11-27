@@ -9,6 +9,8 @@ import type { SessionStore } from "./store.ts";
 
 export const turnFactsType = "turn_facts";
 
+export const turnProgressType = "turn_progress";
+
 export type FileChange = Pick<ChangedPath, "path" | "added" | "deleted">;
 
 export interface ChangeTotals {
@@ -32,6 +34,20 @@ export interface TurnFacts {
   readonly session?: ChangeTotals;
   readonly outcome?: TurnOutcome;
   readonly error?: string;
+  readonly delivery?: string | null;
+}
+
+export interface TurnProgress {
+  readonly prompt: string;
+  readonly carries?: readonly string[];
+  readonly wrote?: true;
+  readonly checkpoint?: string;
+}
+
+export interface CarriedWork {
+  readonly files: readonly FileChange[];
+  readonly wrote: boolean;
+  readonly checkpoint: string | undefined;
 }
 
 export interface TurnTrees {
@@ -59,6 +75,60 @@ export function turnFactsOf(entry: SessionEntry): TurnFacts | undefined {
   return isTurnFacts(entry.data) ? entry.data : undefined;
 }
 
+export function recordTurnProgress(
+  store: SessionStore,
+  progress: TurnProgress,
+): Promise<CustomEntry> {
+  return store.appendCustom(turnProgressType, progress);
+}
+
+export function turnProgressOf(entry: SessionEntry): TurnProgress | undefined {
+  if (entry.type !== "custom" || entry.customType !== turnProgressType) return undefined;
+  return isTurnProgress(entry.data) ? entry.data : undefined;
+}
+
+export function cutTurnAlong(path: readonly SessionEntry[]): PathTurn | undefined {
+  const last = turnsAlong(path).at(-1);
+  if (last === undefined || last.facts !== undefined) return undefined;
+  return turnProgressAlong(path).has(last.prompt.id) ? last : undefined;
+}
+
+export function carriedTurnsOf(path: readonly SessionEntry[], callId: string): string[] {
+  const asking = turnAsking(path, callId);
+  if (asking === undefined) return [];
+  const earlier = turnProgressAlong(path).get(asking)?.carries ?? [];
+  return [...earlier, asking];
+}
+
+export async function workAcross(
+  path: readonly SessionEntry[],
+  trees: TurnTrees | undefined,
+  facts: TurnFacts,
+  wrote: boolean,
+): Promise<CarriedWork> {
+  const progress = turnProgressAlong(path);
+  const carries = progress.get(facts.prompt)?.carries ?? [];
+  const carried = turnsAlong(path).filter(({ prompt }) => carries.includes(prompt.id));
+  if (carried.length === 0) return { files: facts.files, wrote, checkpoint: facts.checkpoint };
+  const every = [...carried.map((turn) => turn.facts), facts];
+  const checkpoint = [...carried.map(({ prompt }) => prompt.checkpoint), facts.checkpoint].find(
+    (tree) => tree !== undefined,
+  );
+  const across = {
+    wrote: wrote || carried.some(({ prompt }) => progress.get(prompt.id)?.wrote === true),
+    checkpoint,
+  };
+  if (trees === undefined || checkpoint === undefined) {
+    return { ...across, files: mergedFiles(every) };
+  }
+  const touched = new Set(mergedFiles(every).map(({ path: file }) => file));
+  const changed = await trees.filesBetween(checkpoint, facts.settled ?? (await trees.snapshot()));
+  return {
+    ...across,
+    files: changed.filter(({ path: file }) => touched.has(file)).map(fileChangeOf),
+  };
+}
+
 export function turnsAlong(path: readonly SessionEntry[]): PathTurn[] {
   const facts = new Map<string, TurnFacts>();
   for (const entry of path) {
@@ -68,6 +138,15 @@ export function turnsAlong(path: readonly SessionEntry[]): PathTurn[] {
   return path
     .filter(isPromptEntry)
     .map((prompt, index) => ({ turn: index + 1, prompt, facts: facts.get(prompt.id) }));
+}
+
+export function turnProgressAlong(path: readonly SessionEntry[]): Map<string, TurnProgress> {
+  const progress = new Map<string, TurnProgress>();
+  for (const entry of path) {
+    const found = turnProgressOf(entry);
+    if (found !== undefined) progress.set(found.prompt, found);
+  }
+  return progress;
 }
 
 export function latestSessionTotals(path: readonly SessionEntry[]): ChangeTotals | undefined {
@@ -164,8 +243,36 @@ async function filesOfTurn(
   return trees.filesBetween(from, until ?? tree);
 }
 
+function turnAsking(path: readonly SessionEntry[], callId: string): string | undefined {
+  let prompt: string | undefined;
+  for (const entry of path) {
+    if (entry.type === "message" && callsWith(entry, callId)) return prompt;
+    if (isPromptEntry(entry)) prompt = entry.id;
+  }
+  return undefined;
+}
+
+function callsWith(entry: MessageEntry, callId: string): boolean {
+  return (
+    entry.message.role === "assistant" &&
+    entry.message.parts.some((part) => part.type === "tool-call" && part.callId === callId)
+  );
+}
+
+function mergedFiles(turns: readonly (TurnFacts | undefined)[]): FileChange[] {
+  const byPath = new Map<string, FileChange>();
+  for (const file of turns.flatMap((facts) => facts?.files ?? [])) byPath.set(file.path, file);
+  return [...byPath.values()];
+}
+
 function isTurnFacts(data: unknown): data is TurnFacts {
   if (typeof data !== "object" || data === null) return false;
   const { prompt, files } = data as { prompt?: unknown; files?: unknown };
   return typeof prompt === "string" && Array.isArray(files);
+}
+
+function isTurnProgress(data: unknown): data is TurnProgress {
+  if (typeof data !== "object" || data === null) return false;
+  const { prompt, carries } = data as { prompt?: unknown; carries?: unknown };
+  return typeof prompt === "string" && (carries === undefined || Array.isArray(carries));
 }

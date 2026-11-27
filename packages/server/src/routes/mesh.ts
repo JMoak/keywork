@@ -7,6 +7,7 @@ import {
   type GrantService,
   isPairingFailure,
   isRefusal,
+  type KeyPlacement,
   type MeshCaller,
   type MeshCensus,
   type MeshClient,
@@ -60,6 +61,7 @@ export interface MeshConsole extends MeshTrust {
   client: MeshClient;
   messages?: CreatureMail | undefined;
   census?: (() => Promise<MeshCensus>) | undefined;
+  keys?: (() => KeyPlacement) | undefined;
 }
 
 export interface MeshFamilyOptions {
@@ -163,9 +165,12 @@ export const meshRoutes = [
     path: "/mesh/pairs",
     operationId: "listMeshPairs",
     summary:
-      "This node's pairing state: `{ claim, owner, pairs, pending }`. `claim` is `unclaimed` until the first console pairs; `owner` is the `(tailnetId, userId)` of the human who claimed it; `pairs` are the peers this node trusts, each `{ id, peerStableId, peerUserId, peerTags, role, caps, endpoint, createdAt, confirmedBy }` where `role` is `console` (may issue grants here), `node` (may call with grants) or `target` (this node is its console); `pending` lists inbound attempts with the six-digit `sas` to compare.",
+      "This node's pairing state: `{ claim, owner, pairs, pending, keys }`. `claim` is `unclaimed` until the first console pairs; `owner` is the `(tailnetId, userId)` of the human who claimed it; `pairs` are the peers this node trusts, each `{ id, peerStableId, peerUserId, peerTags, role, caps, endpoint, createdAt, confirmedBy }` where `role` is `console` (may issue grants here), `node` (may call with grants) or `target` (this node is its console); `pending` lists inbound attempts with the six-digit `sas` to compare. `keys` says where this machine's mesh keys (its device key, which is its identity, and each pair's secret) are kept: `{ protection, store, reason }`, `protection` `os` with `store` naming the operating system's key store (`windows dpapi`, `macos keychain` or `secret service`), or `file` when no OS key store holds them, with `reason` one plain sentence saying why; a file key is protected only by file permissions. The node moves keys from a file into the OS key store when it starts and one answers; once moved, a start where that store does not answer keeps the mesh off rather than make a new identity. `keys` since contract 1.41.",
     authenticated: true,
-    responses: { "200": "`{ claim, owner, pairs, pending }`.", "503": "The mesh is not served." },
+    responses: {
+      "200": "`{ claim, owner, pairs, pending, keys }`.",
+      "503": "The mesh is not served.",
+    },
   },
   {
     method: "POST",
@@ -363,12 +368,13 @@ export function meshFamily(
     handlers: (context) => {
       const served = servedBy(() => meshOf(context.host), "the mesh");
       return {
-        listMeshPairs: served(async ({ pairing }) =>
+        listMeshPairs: served(async ({ pairing, keys }) =>
           json(200, {
             claim: pairing.claimState(),
             owner: pairing.owner(),
             pairs: pairing.pairs(),
             pending: pairing.pending(),
+            ...(keys !== undefined && { keys: keys() }),
           }),
         ),
         beginMeshPairing: served(async ({ client }, request) => {

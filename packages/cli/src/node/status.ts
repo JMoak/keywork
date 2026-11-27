@@ -1,3 +1,4 @@
+import { type KeyPlacement, meshKeysAt } from "@keywork/engine";
 import { type AnchoredFolder, anchoredElsewhere, anchoredFolder, anchorWords } from "../paths.ts";
 import { type NodeStoppedItem, readStoppedItem, resetCommand } from "./desk.ts";
 import {
@@ -25,6 +26,7 @@ export interface NodeStatusReport {
   node: NodeFile | null;
   held: NodeStoppedItem | null;
   pairing: { state: "claimed" | "unclaimed" | "unknown"; claim: HeldClaimCode | null };
+  keys?: KeyPlacement | null;
   units: { core: UnitCheck | null; workspaces: UnitCheck[] };
   anchors: (AnchoredFolder | null)[];
   mesh: { addresses: string[] };
@@ -60,6 +62,7 @@ export async function nodeStatus(options: NodeStatusOptions): Promise<NodeStatus
     node,
     held: readStoppedItem(paths.stoppedItem) ?? null,
     pairing: await pairingOf(options.claimDesk),
+    keys: meshKeysAt(paths.state),
     units: {
       core: node === null ? null : await check(node.core, meshEndpoints(node, addresses)),
       workspaces: await Promise.all(
@@ -91,6 +94,7 @@ export function statusLines(report: NodeStatusReport): string[] {
     ...workspaceLines(report.node?.workspaces ?? [], report.units.workspaces, report.anchors),
     ...coreLines(report.node, report.units.core, report.mesh.addresses),
     pairingLine(report.pairing),
+    ...(report.keys === undefined ? [] : [keysLine(report.keys)]),
     `files: ${report.files.nodeFile} · ${report.files.config}`,
     `logs: ${report.files.nodeLog} · ${report.files.lifecycleLog}`,
   ];
@@ -198,6 +202,13 @@ function pairingLine(pairing: NodeStatusReport["pairing"]): string {
   return pairing.claim === null
     ? "pairing: unclaimed; no claim code is live (a headless node prints one when it starts)"
     : `pairing: unclaimed; claim code ${groupedClaimCode(pairing.claim.code)} valid until ${pairing.claim.expiresAt}`;
+}
+
+function keysLine(keys: KeyPlacement | null): string {
+  if (keys === null)
+    return "keys: none yet; the node makes this machine's mesh keys when it first needs them";
+  if (keys.protection === "os") return `keys: in the OS key store (${keys.store ?? "unknown"})`;
+  return `keys: protected only by file permissions, because ${keys.reason ?? "no OS key store holds them"}`;
 }
 
 const staleText = "stopped (stale node.json)";

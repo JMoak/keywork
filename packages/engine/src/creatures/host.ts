@@ -1,13 +1,19 @@
 import { join } from "node:path";
+import type { ModelReference } from "../inference/types.ts";
+import type { InheritRefusal } from "../models/policy/inherit.ts";
+import type { Clock } from "../routines/clock.ts";
 import { type KeeperReport, readKeeperReport } from "./decisions/report.ts";
 import {
   type CreaturePatch,
   type ModelPolicy,
+  mannerOf,
   patchedCreatureFile,
+  rangeOf,
   type Temperament,
   temperamentOf,
 } from "./file.ts";
 import { type InboundPolicy, inboundOf } from "./inbound.ts";
+import { mannerKeeper, type WorkElsewhere } from "./manner.ts";
 import {
   type CreatureChores,
   type CreaturePause,
@@ -43,6 +49,8 @@ export interface CreatureSummary {
   paused: string | null;
   inbound: InboundPolicy;
   temperament: Temperament;
+  range: Temperament[];
+  manner: Temperament;
 }
 
 export interface CreatureReport extends KeeperReport {
@@ -67,6 +75,11 @@ export interface DayUsage {
   costNanos: number | null;
 }
 
+export interface WorkedDay {
+  sessions: readonly string[];
+  costNanos: number | null;
+}
+
 export interface CreatureDetail extends Omit<CreatureSummary, "conversation" | "threads"> {
   introduction: string;
   conversation: string;
@@ -74,6 +87,21 @@ export interface CreatureDetail extends Omit<CreatureSummary, "conversation" | "
   nextRun: RoutineRunAhead | null;
   usage: DayUsage;
   routines: string;
+  talking?: TalkingModel;
+}
+
+export type TalkingModel =
+  | (ModelReference & { mode: "chat" | "tools"; detail?: string; projectCheck?: ToolCheck })
+  | InheritRefusal;
+
+export interface ToolCheck {
+  endpoint: string;
+  model: string;
+}
+
+export interface CreatureTalking {
+  slug: string;
+  talking: TalkingModel;
 }
 
 export interface RemovalChoice {
@@ -115,6 +143,7 @@ export interface CreaturesPort {
   read(slug: string): Promise<CreatureDetail | undefined>;
   create(draft: CreatureDraft): Promise<CreatureSummary>;
   update(slug: string, patch: CreaturePatch): Promise<CreatureSummary | undefined>;
+  takeManner(slug: string, temperament: Temperament): Promise<CreatureSummary | undefined>;
   report(slug: string): Promise<CreatureReport | undefined>;
   pause(slug: string, chores: CreatureChores): Promise<CreaturePause | undefined>;
   resume(slug: string, chores: CreatureChores): Promise<CreaturePause | undefined>;
@@ -129,15 +158,21 @@ export interface CreatureHost extends CreaturesPort {
   finish(creature: string, thread: string, report: ThreadReport): Promise<InjectOutcome>;
   inbound(creature: string): Promise<InboundPolicy | undefined>;
   deliver(creature: string, text: string, origin: CreatureOrigin): Promise<InjectOutcome>;
+  worked(creature: string): void;
+  keepManners(): Promise<void>;
+  close(): void;
 }
 
 export interface CreatureHostSeams {
   registry: CreatureRegistry;
   sessions: CreatureSessions;
   nextRun?: ((slug: string) => Promise<RoutineRunAhead | undefined>) | undefined;
-  spentToday?: ((slug: string, date: string) => Promise<number | null>) | undefined;
+  workedToday?: ((slug: string, date: string) => Promise<WorkedDay>) | undefined;
   shadowReport?: ((slug: string) => Promise<KeeperReport>) | undefined;
   now?: (() => Date) | undefined;
+  clock?: Clock | undefined;
+  elsewhere?: ((slug: string) => Promise<WorkElsewhere>) | undefined;
+  notice?: ((line: string) => void) | undefined;
 }
 
 export function creatureHost(seams: CreatureHostSeams): CreatureHost {
@@ -151,15 +186,24 @@ export function creatureHost(seams: CreatureHostSeams): CreatureHost {
   const announce = (slug: string, change: CreatureChange): void => {
     for (const listener of [...listeners]) listener({ slug, change });
   };
+  const manners = mannerKeeper({
+    registry,
+    sessions,
+    elsewhere: seams.elsewhere,
+    clock: seams.clock,
+    changed: (slug) => announce(slug, "updated"),
+    notice: seams.notice,
+  });
   const ownedBy = (slug: string, all: readonly TaggedSession[]): TaggedSession[] =>
     all.filter((session) => session.tag.creature === slug);
   const usageOf = async (slug: string, owned: readonly TaggedSession[]): Promise<DayUsage> => {
     const date = now().toISOString().slice(0, 10);
-    return {
-      date,
-      sessions: owned.filter((session) => session.lastActivityAt.startsWith(date)).length,
-      costNanos: (await seams.spentToday?.(slug, date)) ?? null,
-    };
+    const worked = await seams.workedToday?.(slug, date);
+    const sessions = new Set([
+      ...owned.filter((session) => session.lastActivityAt.startsWith(date)).map(({ id }) => id),
+      ...(worked?.sessions ?? []),
+    ]);
+    return { date, sessions: sessions.size, costNanos: worked?.costNanos ?? null };
   };
   const removalOf = (
     creature: Creature,
@@ -219,6 +263,10 @@ export function creatureHost(seams: CreatureHostSeams): CreatureHost {
       if (updated === undefined) return undefined;
       announce(slug, "updated");
       return summaryOf(updated, await threads.sessionsOf(slug));
+    },
+    takeManner: async (slug, temperament) => {
+      const taken = await manners.take(slug, temperament);
+      return taken === undefined ? undefined : summaryOf(taken, await threads.sessionsOf(slug));
     },
     report: async (slug) => {
       if ((await registry.read(slug)) === undefined) return undefined;
@@ -283,6 +331,9 @@ export function creatureHost(seams: CreatureHostSeams): CreatureHost {
       (await registry.read(creature)) === undefined
         ? "missing"
         : threads.note(creature, text, origin),
+    worked: (creature) => manners.worked(creature),
+    keepManners: () => manners.keep(),
+    close: () => manners.close(),
   };
 }
 
@@ -301,6 +352,8 @@ function summaryOf(creature: Creature, owned: readonly TaggedSession[]): Creatur
     paused: creature.file.paused?.since ?? null,
     inbound: inboundOf(creature.file),
     temperament: temperamentOf(creature.file),
+    range: rangeOf(creature.file),
+    manner: mannerOf(creature.file),
   };
 }
 

@@ -124,6 +124,7 @@ export interface LedgerThread {
 export interface ChoreFacts {
   title: string;
   posture: ToolPosture;
+  check?: string | null | undefined;
   accepted: boolean;
   directory: string;
 }
@@ -155,6 +156,8 @@ export interface CreatureLedgerOptions {
   chore?: ((creature: string, routineId: string) => Promise<ChoreFacts | undefined>) | undefined;
   notice(line: string): void;
   conversationEnded?: ((ending: LedgerConversationEnding) => Promise<void>) | undefined;
+  stillWaiting?: ((session: string, callId: string) => boolean) | undefined;
+  stillWorking?: ((session: string) => boolean) | undefined;
   now?: (() => Date) | undefined;
   keepsClosed?: number | undefined;
 }
@@ -175,8 +178,12 @@ export function askTitleOf(tool: string, args: unknown): string {
   return `Allow ${toolActivityOf(tool, args)}?`;
 }
 
-export function grantsTitleOf(chore: Pick<ChoreFacts, "title" | "posture">): string {
-  return `May the chore "${oneLine(chore.title)}" ${chore.posture === "act" ? "act" : "write"}?`;
+export function grantsTitleOf(chore: Pick<ChoreFacts, "title" | "posture" | "check">): string {
+  const asked = [
+    ...(chore.posture === "read-only" ? [] : [chore.posture]),
+    ...(typeof chore.check === "string" ? [`run \`${oneLine(chore.check)}\``] : []),
+  ].join(" and ");
+  return `May the chore "${oneLine(chore.title)}" ${asked === "" ? "write" : asked}?`;
 }
 
 interface KeptEntry extends CreatureLedgerEntry {
@@ -556,7 +563,7 @@ class KeptCreatureLedger implements CreatureLedger {
     let settled = false;
     for (const [creature, record] of records) {
       for (const entry of record.entries) {
-        if (!settleCutOff(entry, at)) continue;
+        if (this.waitsStill(entry) || this.worksStill(entry) || !settleCutOff(entry, at)) continue;
         settled = true;
         this.endedByTheStop(creature, entry, at);
       }
@@ -564,6 +571,24 @@ class KeptCreatureLedger implements CreatureLedger {
     }
     if (settled) this.kept.save(records);
     return records;
+  }
+
+  private waitsStill(entry: KeptEntry): boolean {
+    return (
+      entry.state === "waiting" &&
+      entry.about.kind === "ask" &&
+      entry.session !== null &&
+      this.options.stillWaiting?.(entry.session, entry.about.callId) === true
+    );
+  }
+
+  private worksStill(entry: KeptEntry): boolean {
+    return (
+      entry.state === "running" &&
+      entry.about.kind === "thread" &&
+      entry.session !== null &&
+      this.options.stillWorking?.(entry.session) === true
+    );
   }
 
   private endedByTheStop(creature: string, entry: KeptEntry, at: string): void {

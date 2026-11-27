@@ -9,6 +9,7 @@ export const meshManifestPath = "/mesh/manifest";
 export const nodeRoles = ["console", "host", "reachable"] as const;
 export const nodeCapabilities = ["screen:view", "screen:control", "files", "exec"] as const;
 export const workshopSubstrateKinds = ["sbx", "compose", "host"] as const;
+export const manifestKeyProtections = ["os", "file"] as const;
 
 export type NodeRole = (typeof nodeRoles)[number];
 export type NodeCapability = (typeof nodeCapabilities)[number];
@@ -39,10 +40,13 @@ export const nodeManifestSchema = z.object({
   gpus: z.array(gpuSchema),
   modelServers: z.array(manifestModelServerSchema),
   capabilities: z.array(z.enum(nodeCapabilities)),
+  keys: z.enum(manifestKeyProtections).optional(),
   generatedAt: z.iso.datetime({ offset: true }),
 });
 
 export type NodeManifest = z.infer<typeof nodeManifestSchema>;
+
+export type ManifestKeyProtection = (typeof manifestKeyProtections)[number];
 
 export interface ManifestSources {
   version: string;
@@ -52,6 +56,7 @@ export interface ManifestSources {
   substrates?: (() => Promise<readonly WorkshopSubstrateKind[]>) | undefined;
   gpus?: (() => Promise<readonly Gpu[]>) | undefined;
   modelServers?: (() => Promise<readonly ManifestModelServer[]>) | undefined;
+  keys?: (() => ManifestKeyProtection | undefined) | undefined;
   machine?: (() => MachineFacts) | undefined;
   now?: (() => Date) | undefined;
 }
@@ -85,6 +90,7 @@ export async function buildManifest(sources: ManifestSources): Promise<NodeManif
     gpus,
     modelServers,
     capabilities: unique(sources.capabilities),
+    keys: sources.keys?.(),
     generatedAt: (sources.now ?? (() => new Date()))().toISOString(),
   });
 }

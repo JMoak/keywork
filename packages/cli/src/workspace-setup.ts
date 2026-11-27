@@ -1,4 +1,11 @@
-import { openWorkspace, resolveAnchor, type TrustStore } from "@keywork/shared";
+import {
+  declaredWorkspaceBelow,
+  openWorkspace,
+  resolveAnchor,
+  type TrustStore,
+  undeclaredVaultPath,
+  type Workspace,
+} from "@keywork/shared";
 import type { WorkspaceReadiness, WorkspaceSetupPort } from "@keywork/tui";
 import { type AnchorMemory, fileAnchorMemory } from "./anchor.ts";
 import { materializeWorkspace } from "./materialize.ts";
@@ -19,12 +26,21 @@ export function workspaceSetupPort(options: WorkspaceSetupOptions): WorkspaceSet
       const root = setupRoot(options.cwd, anchors);
       if (resolveAnchor(options.cwd).source === "launch") anchors.remember(options.cwd, root);
       grantTrust(root, options);
-      const workspace =
-        openWorkspace(options.cwd, options.workspaceSlug) ?? materializeWorkspace(root);
+      const workspace = openWorkspace(options.cwd, options.workspaceSlug) ?? declaredAt(root);
       options.requestReopen?.();
-      return { root, vault: workspace.vaultPath, reopens: options.requestReopen !== undefined };
+      return {
+        root,
+        vault: workspace?.vaultPath ?? undeclaredVaultPath(root),
+        reopens: options.requestReopen !== undefined,
+      };
     },
   };
+}
+
+// Workspace anchors never nest, so a folder that already holds a declared workspace stays known
+// by its path rather than declare itself over that one.
+function declaredAt(root: string): Workspace | undefined {
+  return declaredWorkspaceBelow(root) === undefined ? materializeWorkspace(root) : undefined;
 }
 
 export function workspaceReadiness(

@@ -3,12 +3,16 @@ export {
   type AskDecider,
   type AskEnding,
   type AskFollower,
+  type AskKeeping,
   AskQueue,
   type AskQueueOptions,
   type AskVerdict,
+  type CarriedAnswer,
+  type CarriedResume,
   type Denial,
   defaultAskTimeoutMs,
   type GrantSink,
+  type KeptAsk,
   type PendingAsk,
 } from "./asks.ts";
 export {
@@ -229,6 +233,7 @@ export {
   modelWaitReasons,
 } from "./routes/model-waits.ts";
 export type { ModelsFilter, ModelsPort, ModelsProbeRequest } from "./routes/models.ts";
+export type { PromisesPort } from "./routes/promises.ts";
 export type { CreatureScenesPort, SceneSetOutAnswer } from "./routes/scenes.ts";
 export type { ContextAnswer, CostAnswer } from "./routes/session-verbs.ts";
 export type { PromptBehavior } from "./routes/sessions.ts";

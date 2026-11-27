@@ -34,6 +34,15 @@ export function resolveVaultPath(cwd: string, slug?: string): string | undefined
   return openWorkspace(cwd, slug)?.vaultPath;
 }
 
+export function declaredWorkspaceBelow(root: string): string | undefined {
+  const enclosed = findDeclarationBelow(resolve(root));
+  return enclosed === undefined ? undefined : rootOfDeclaration(enclosed);
+}
+
+export function undeclaredVaultPath(root: string): string {
+  return defaultVaultPath(resolve(root));
+}
+
 export function resolveAnchor(cwd: string): WorkspaceAnchor {
   const launch = resolve(cwd);
   const declaration = findDeclarationAbove(launch);

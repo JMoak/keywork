@@ -1,4 +1,9 @@
-import type { PromptOrigin, SendBehavior } from "@keywork/engine";
+import {
+  type PromptOrigin,
+  ResolutionError,
+  type SendBehavior,
+  SilentServerError,
+} from "@keywork/engine";
 import {
   bodyOf,
   endedConversation,
@@ -66,7 +71,7 @@ export const sessionRoutes = [
     path: "/sessions/{id}",
     operationId: "readSession",
     summary:
-      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). `outcomes` says how each turn ended, each `{ index, entryId, outcome, error? }` with `messages[index]` the turn's prompt: `completed`, `interrupted` (stopped by an abort or a steer), `failed` (with `error`, the message the turn failed on), or `shutdown` (the engine stopped while the turn ran: a server that shut down mid-turn records it, and a turn the engine died in, its prompt with no reply and no `turn_facts`, reads as one when the session is next read). Whatever text the turn had produced stays in `messages` after its prompt. A turn still running, a turn whose prompt was compacted away, and a turn settled before outcomes were kept carry no mark (since contract 1.32). `live` is true when the session is open in this server process, or is a child its parent's `delegate` call is running.",
+      "One session with its messages. `asOf` is the latest /events id the messages already reflect, so a client that opened the stream first can drop buffered envelopes with `id <= asOf`. `summaries` marks the messages that are not prompts but folded history, each `{ index, entryId, kind }` with `index` into `messages` and `kind` either `compaction` or `branch_summary`, so a client draws a summary as a summary rather than as something the person typed. `flushes` marks the memory flushes the same way, each `{ index, entryId, facts }`: `messages[index]` is the prompt keywork sent to ask what was worth keeping (not a turn, never counted among the prompts `POST /sessions/{id}/restore` numbers), `messages[index + 1]` the model's reply, and `facts` the lines the reply kept, empty when nothing was worth keeping. `edits` says where the context edits of `POST /sessions/{id}/forget` sit, each `{ index, entryId, role, kind, text }`: `entryId` and `role` name the edited message, `kind` is `forgotten` (the message left `messages`, and `index` is where it sat, before the message that now follows it) or `rewritten` (it is `messages[index]`, carrying its replacement), and `text` is its own text before the edit (empty for a tool result). `reports` lists the one-line summaries a creature's finished threads sent to this conversation (`keywork.creature.report` entries: never prompts, never in the model context), each `{ index, entryId, at, text, origin, kind? }` with `index` the position in `messages` the entry was written before and `origin` the `{ kind: creature, creature, thread }` the live `extension.notice` carried, so a transcript draws the line after a reload exactly as it drew it live (since contract 1.10); `kind: frame` says `messages[index]` is the prompt an inject with `frame` wrote right after it, which a transcript draws as the creature line and never as a keeper prompt (since contract 1.11). A frame whose `origin` is `{ kind: \"answer\", callId, tool, verdict, reason?, note? }` is the keeper's answer to a question carried through a stop, in any session, drawn from those fields (`you allowed it once`) and never as the words it carries (since contract 1.41). `outcomes` says how each turn ended, each `{ index, entryId, outcome, error?, delivery? }` with `messages[index]` the turn's prompt: `completed`, `interrupted` (stopped by an abort or a steer), `failed` (with `error`, the message the turn failed on), or `shutdown` (the engine stopped while the turn ran: a server that shut down mid-turn records it, and a turn the engine died in reads as one, its prompt with no reply and no `turn_facts`, or, since contract 1.41, a turn with a `turn_progress` entry and no `turn_facts`). Whatever the turn had said and done stays in `messages` after its prompt: since contract 1.41 each message, tool call and tool result is written as it happens, so a turn the engine died in keeps everything up to the moment it stopped. A turn still running, a turn whose prompt was compacted away, and a turn settled before outcomes were kept carry no mark (since contract 1.32). A completed turn carries `delivery` exactly when its live `turn.completed` did, with the same value: the id of the delivery it made, or `null` when it made none, so a transcript read again marks which turns delivered. The turn's own record keeps it, so a delivery that has since folded out of `GET /creature-deliveries` still counts; a turn completed before contract 1.41 carries none. `live` is true when the session is open in this server process, or is a child its parent's `delegate` call is running.",
     authenticated: true,
     responses: { "200": "The session.", "404": "No session has that id." },
   },
@@ -83,7 +88,8 @@ export const sessionRoutes = [
         'The prompt was accepted; `queued` says whether it waits behind a running turn, and with `behavior: "now"`, `setAside` lists the prompts taken off the queue as `queue.changed` carried them. Watch /events for the turn.',
       "400": 'The body is not `{ text, behavior?: "steer" | "queue" | "now" }`.',
       "404": "No session has that id.",
-      "409": "The session is a ledger conversation that has ended, so it takes no prompt.",
+      "409":
+        "The session is a ledger conversation that has ended, so it takes no prompt; or no model can answer it yet: `{ error, refused }`, `error` a plain sentence naming what is missing (no model connected, several and none chosen, a model with no credential, a local model server that does not answer) and `refused` its IR-18 code, or `unreachable` for a server that does not answer (since contract 1.41). A creature's session asks its local model server whether it answers before every prompt it accepts, whether or not the model's tool support is already known, so a silent server is refused here rather than failing the turn after it was accepted.",
     },
   },
   {
@@ -132,7 +138,18 @@ export const sessionFamily = {
       }
       const setAside = prompt.behavior === "now" ? await host.queue.setAside(id ?? "") : undefined;
       if (setAside === "missing") return missingSession();
-      const outcome = await host.prompt(id ?? "", prompt.text, sendBehaviorOf(prompt.behavior));
+      const outcome = await host
+        .prompt(id ?? "", prompt.text, sendBehaviorOf(prompt.behavior))
+        .catch((cause: unknown) => {
+          if (cause instanceof ResolutionError || cause instanceof SilentServerError) return cause;
+          throw cause;
+        });
+      if (outcome instanceof ResolutionError) {
+        return json(409, { error: outcome.message, refused: outcome.failure.code });
+      }
+      if (outcome instanceof SilentServerError) {
+        return json(409, { error: outcome.message, refused: "unreachable" });
+      }
       if (outcome === "ended") return endedConversation();
       return outcome === "missing"
         ? missingSession()

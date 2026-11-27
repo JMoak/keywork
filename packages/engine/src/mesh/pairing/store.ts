@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { type Disk, jsonFileStore } from "@keywork/shared";
 import { z } from "zod";
-import type { KeyStore } from "./keys.ts";
+import { type KeyStore, pairSecretPrefix } from "./keys.ts";
 import type { Owner } from "./machine.ts";
 import { confirmations } from "./wire.ts";
 
@@ -64,7 +64,7 @@ export function filePairStore(file: string, disk?: Disk): PairStore {
 }
 
 export function pairSecretName(pairId: string): string {
-  return `mesh.pair.${pairId}`;
+  return `${pairSecretPrefix}${pairId}`;
 }
 
 export async function savePairSecret(

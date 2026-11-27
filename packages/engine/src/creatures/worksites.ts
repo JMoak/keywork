@@ -253,14 +253,14 @@ class Tally {
 
   began(conversation: WorkingConversation, at: string): Site[] {
     const touched = this.wake(conversation);
-    if (!this.isRepository(conversation.root)) return touched;
+    if (!this.isOnePlace(conversation)) return touched;
     const home = this.count(conversation, this.repositoryPlace(conversation.root), spanAt(at));
     return unique([...touched, ...home]);
   }
 
   changedFile(conversation: WorkingConversation, path: string, at: string): Site[] {
     const touched = this.wake(conversation);
-    const place = this.placeOf(conversation.root, path);
+    const place = this.placeOf(conversation, path);
     if (place === undefined) return touched;
     return unique([...touched, ...this.count(conversation, place, spanAt(at))]);
   }
@@ -269,7 +269,7 @@ class Tally {
     const conversation = this.working.get(id);
     if (conversation === undefined) return [];
     this.working.delete(id);
-    if (this.isRepository(conversation.root)) {
+    if (this.isOnePlace(conversation)) {
       const home = this.sites.get(siteKeyOf({ ...conversation, directory: conversation.root }));
       if (home !== undefined) home.latest = later(home.latest, at);
     }
@@ -323,12 +323,10 @@ class Tally {
   }
 
   private recallConversation(conversation: JournalledConversation): void {
-    const span = this.isRepository(conversation.root)
-      ? turnSpanOf(conversation.entries)
-      : undefined;
+    const span = this.isOnePlace(conversation) ? turnSpanOf(conversation.entries) : undefined;
     if (span !== undefined) this.count(conversation, this.repositoryPlace(conversation.root), span);
     for (const { path, at } of fileChangesIn(conversation.entries)) {
-      const place = this.placeOf(conversation.root, path);
+      const place = this.placeOf(conversation, path);
       if (place !== undefined) this.count(conversation, place, spanAt(at));
     }
   }
@@ -371,16 +369,21 @@ class Tally {
     return opened;
   }
 
-  private placeOf(root: string, path: string): Place | undefined {
+  private placeOf(conversation: WorkingConversation, path: string): Place | undefined {
+    const { root } = conversation;
     const target = resolve(root, path);
     const inside = relative(root, target);
     if (isOutside(inside)) return this.repositoryAbove(target);
     if (inside === "") return undefined;
-    if (this.isRepository(root)) return this.repositoryPlace(root);
     const [child, ...rest] = inside.split(sep);
-    if (child === undefined || rest.length === 0) return { directory: root, root, project: null };
     if (child === stateFolder) return undefined;
+    if (this.isOnePlace(conversation)) return this.repositoryPlace(root);
+    if (child === undefined || rest.length === 0) return { directory: root, root, project: null };
     return { directory: join(root, child), root, project: null };
+  }
+
+  private isOnePlace(conversation: WorkingConversation): boolean {
+    return conversation.visitor !== undefined || this.isRepository(conversation.root);
   }
 
   private repositoryAbove(file: string): Place | undefined {

@@ -5,6 +5,7 @@ import {
   type CreatureHost,
   type Deliverer,
   type GrantRule,
+  type KeeperSettings,
   type Message,
   messageText,
   type PermissionAsk,
@@ -33,6 +34,7 @@ export interface RoutineSessions {
   prompt(sessionId: string, text: string): Promise<"started" | "queued" | "missing">;
   abort(sessionId: string): Promise<unknown>;
   denyAsk(callId: string): Promise<unknown>;
+  discard(sessionId: string): Promise<void>;
   costUsd(sessionId: string): Promise<number | null>;
 }
 
@@ -43,6 +45,7 @@ export interface ServedRoutinesOptions {
   creatures: Pick<CreatureHost, "finish">;
   directory: CreatureDirectory;
   log: Pick<EventLog, "record" | "subscribe">;
+  notifications?: (() => KeeperSettings) | undefined;
 }
 
 export interface ServedRoutines {
@@ -62,6 +65,7 @@ export async function servedRoutines(options: ServedRoutinesOptions): Promise<Se
     creatures: options.directory,
     outputsDir: options.state.outputs,
     emit: recordedRoutineEvents(options.log),
+    notifications: options.notifications,
   });
   await service.start();
   const unobserve = observeBusEvents(options.log, service);
@@ -136,6 +140,7 @@ export function servedThreadHost(
     prompt: (sessionId, text) => sessions.prompt(sessionId, text),
     abort: (sessionId) => sessions.abort(sessionId),
     denyAsk: (callId) => sessions.denyAsk(callId),
+    discard: (sessionId) => sessions.discard(sessionId),
     watch: (sessionId, listener) => {
       const watch = new ThreadWatch(() => sessions.costUsd(sessionId), listener);
       return log.subscribe((envelope) => {

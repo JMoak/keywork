@@ -1,17 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { backoffMs } from "../backoff.ts";
+import { type CheckResult, type CheckRunner, checkResultOf, shellCheckRunner } from "./check.ts";
 import { type Cancel, type Clock, dayMs, hourMs, isoOf, minuteMs, systemClock } from "./clock.ts";
 import { deliveryOfEffects, performEffect } from "./effects.ts";
 import { type RoutineEventSink, silentSink } from "./events.ts";
 import { type CreatureDirectory, mirrorRoutine, routineOf } from "./mirror.ts";
-import {
-  defaultNotificationSettings,
-  type NotificationSettings,
-  surfaceAt,
-  tierOf,
-} from "./notify.ts";
-import { payloadRefOf, savePayload, type TriggerPayload } from "./payload.ts";
+import { defaultKeeperSettings, type KeeperSettings, surfaceAt, tierOf } from "./notify.ts";
+import { payloadRefOf, type SavedPayload, savePayload, type TriggerPayload } from "./payload.ts";
 import { runPrompt } from "./prompt.ts";
 import {
   type GrantRule,
@@ -19,6 +15,7 @@ import {
   type NotifyChoice,
   needsAcceptance,
   type Routine,
+  type RoutineCheck,
   type ToolPosture,
 } from "./routine.ts";
 import {
@@ -28,6 +25,7 @@ import {
   type RunProcess,
   type RunRow,
   type RunTrigger,
+  tellsNow,
 } from "./run.ts";
 import type {
   AskVerdict,
@@ -90,11 +88,13 @@ export interface SchedulerOptions {
   deliverer: Deliverer;
   creatures: CreatureDirectory;
   outputsDir: string;
+  workspace?: string | undefined;
+  checks?: CheckRunner | undefined;
   clock?: Clock;
   emit?: RoutineEventSink;
   held?: (run: RunRow) => void;
   settings?: Partial<SchedulerSettings>;
-  notifications?: NotificationSettings;
+  notifications?: (() => KeeperSettings) | undefined;
   zone?: string;
 }
 
@@ -107,6 +107,7 @@ export interface PendingFire {
   catchUp: boolean;
   scheduledFor: number;
   triggerKey: string;
+  byKeeper?: true;
 }
 
 export function approvalClassOf(tool: string): ApprovalClass {
@@ -118,9 +119,11 @@ export class RoutineScheduler {
   private readonly clock: Clock;
   private readonly emit: RoutineEventSink;
   private readonly settings: SchedulerSettings;
-  private readonly notifications: NotificationSettings;
+  private readonly notifications: () => KeeperSettings;
   private readonly pending = new Map<string, PendingFire>();
   private readonly active = new Map<string, ActiveRun>();
+  private readonly checking = new Set<string>();
+  private readonly keeperTries = new Set<string>();
   private readonly inFlight = new Set<Promise<unknown>>();
   private cancelTimer: Cancel | undefined;
   private running = false;
@@ -130,7 +133,7 @@ export class RoutineScheduler {
     this.clock = options.clock ?? systemClock;
     this.emit = options.emit ?? silentSink;
     this.settings = { ...defaultSchedulerSettings, ...options.settings };
-    this.notifications = options.notifications ?? defaultNotificationSettings;
+    this.notifications = options.notifications ?? (() => defaultKeeperSettings);
   }
 
   start(): void {
@@ -178,7 +181,7 @@ export class RoutineScheduler {
 
   async fireByHand(home: CreatureHome, indexed: IndexedRoutine, routine: Routine): Promise<RunRow> {
     const now = this.clock.now();
-    return this.fire(
+    const run = await this.fire(
       {
         creature: home.slug,
         routineId: routine.id,
@@ -193,6 +196,8 @@ export class RoutineScheduler {
       indexed,
       routine,
     );
+    if (run === undefined) throw new Error("a run by hand is never held back by its check");
+    return run;
   }
 
   async fireOnOccurrence(
@@ -200,7 +205,7 @@ export class RoutineScheduler {
     indexed: IndexedRoutine,
     routine: Routine,
     payload: TriggerPayload,
-  ): Promise<RunRow> {
+  ): Promise<RunRow | undefined> {
     const now = this.clock.now();
     return this.fire(
       {
@@ -217,6 +222,32 @@ export class RoutineScheduler {
       indexed,
       routine,
       payload,
+    );
+  }
+
+  async retryNow(
+    home: CreatureHome,
+    indexed: IndexedRoutine,
+    routine: Routine,
+  ): Promise<RunRow | undefined> {
+    const now = this.clock.now();
+    this.store.allowOneMoreTry(home.slug, routine.id, this.settings.disableAfterErrors);
+    this.pending.delete(keyOf(home.slug, routine.id));
+    return this.fire(
+      {
+        creature: home.slug,
+        routineId: routine.id,
+        slot: now,
+        attempt: 1,
+        trigger: routine.trigger.kind as RunTrigger,
+        catchUp: false,
+        scheduledFor: now,
+        triggerKey: triggerKeyOf(routine),
+        byKeeper: true,
+      },
+      home,
+      this.store.routine(home.slug, routine.id) ?? indexed,
+      routine,
     );
   }
 
@@ -432,10 +463,10 @@ export class RoutineScheduler {
     indexed: IndexedRoutine,
     routine: Routine,
     payload?: TriggerPayload,
-  ): Promise<RunRow> {
+  ): Promise<RunRow | undefined> {
     const now = this.clock.now();
     const scheduled = fire.trigger !== "manual";
-    const refusal = scheduled ? this.capRefusal(fire, now) : undefined;
+    const refusal = scheduled && fire.byKeeper !== true ? this.capRefusal(fire, now) : undefined;
     const occupied = this.occupiedBy(fire.creature, fire.routineId);
     const turnedAway =
       refusal !== undefined
@@ -448,6 +479,20 @@ export class RoutineScheduler {
       this.replanAfter(indexed);
       return turnedAway;
     }
+    const consent = consentOf(indexed, routine);
+    const gated = scheduled && routine.check !== undefined;
+    if (gated && "blocked" in consent) {
+      this.replanAfter(indexed);
+      return undefined;
+    }
+    const checked =
+      gated && routine.check !== undefined
+        ? await this.runCheck(home, routine, routine.check)
+        : undefined;
+    if (checked?.verdict === "quiet") {
+      this.settleQuiet(indexed);
+      return undefined;
+    }
     const inserted = this.store.insertRun({ ...fire, firedAt: fire.slot, status: "running" });
     if (inserted === undefined) {
       this.replanAfter(indexed);
@@ -455,10 +500,46 @@ export class RoutineScheduler {
         runIdOf(fire.creature, fire.routineId, fire.slot, fire.attempt),
       ) as RunRow;
     }
-    if (payload !== undefined) await savePayload(this.options.outputsDir, inserted, payload);
-    const consent = consentOf(indexed, routine);
+    if (fire.byKeeper === true) this.keeperTries.add(inserted.runId);
+    const saved = savedPayloadOf(payload, checked);
+    if (saved !== undefined) await savePayload(this.options.outputsDir, inserted, saved);
     if ("blocked" in consent) return this.hold(inserted, routine, consent.blocked);
-    return this.launch(inserted, fire, home, routine, consent, now);
+    if (checked?.verdict === "failed") {
+      const reason = `its check \`${checked.command}\` ${checked.found}`;
+      return this.conclude(inserted, routine.notify, failedEnding(reason));
+    }
+    return this.launch(inserted, { ...fire, checked }, home, routine, consent, now);
+  }
+
+  private async runCheck(
+    home: CreatureHome,
+    routine: Routine,
+    check: RoutineCheck,
+  ): Promise<CheckResult> {
+    const key = keyOf(home.slug, routine.id);
+    const started = this.clock.now();
+    this.checking.add(key);
+    try {
+      const outcome = await (this.options.checks ?? shellCheckRunner)({
+        command: check.command,
+        cwd: this.options.workspace ?? home.dir,
+        timeoutMs: check.timeoutSeconds * 1000,
+      });
+      const ended = this.clock.now();
+      const result = checkResultOf(check, outcome, isoOf(ended), ended - started);
+      this.store.recordCheck(home.slug, routine.id, result);
+      this.emit("routine.checked", { creature: home.slug, routineId: routine.id, check: result });
+      return result;
+    } finally {
+      this.checking.delete(key);
+    }
+  }
+
+  private settleQuiet(indexed: IndexedRoutine): void {
+    if (indexed.retryAt !== null || indexed.consecutiveErrors > 0) {
+      this.store.recordSuccess(indexed.creature, indexed.id);
+    }
+    this.replanAfter(indexed);
   }
 
   private hold(run: RunRow, routine: Routine, reason: string): RunRow {
@@ -466,7 +547,7 @@ export class RoutineScheduler {
     const tier = tierOf(routine.notify, true);
     const held = this.store.holdRun(run.runId, reason, {
       tier,
-      at: surfaceAt(tier, now, this.notifications),
+      at: surfaceAt(tier, now, this.notifications()),
     });
     this.options.held?.(held);
     this.replanAfterId(run.creature, run.routineId);
@@ -516,6 +597,7 @@ export class RoutineScheduler {
   }
 
   private occupiedBy(creature: string, routineId: string): string | undefined {
+    if (this.checking.has(keyOf(creature, routineId))) return "its check is still running";
     const active = this.activeFor(creature, routineId);
     if (active !== undefined) return `the previous run ${active.runId} is still active`;
     const held = this.store.heldRun(creature, routineId);
@@ -547,6 +629,8 @@ export class RoutineScheduler {
             catchUp: fire.catchUp,
             attempt: fire.attempt,
             payload,
+            checkExit: fire.checked?.exitCode ?? undefined,
+            byKeeper: fire.byKeeper === true,
           }),
           posture: consent.posture,
           grants: consent.grants,
@@ -611,10 +695,15 @@ export class RoutineScheduler {
 
   private async conclude(run: RunRow, notify: NotifyChoice, ending: Ending): Promise<RunRow> {
     const now = this.clock.now();
-    const tier = tierOf(notify, needsKeeper(ending));
+    const repairFollows = needsKeeper(ending) && !tellsNow({ trigger: run.trigger, ...ending });
+    const tier = repairFollows ? "log" : tierOf(notify, needsKeeper(ending));
     const ended = this.store.endRun(
       run.runId,
-      { ...ending, verified: null, notify: { tier, at: surfaceAt(tier, now, this.notifications) } },
+      {
+        ...ending,
+        verified: null,
+        notify: { tier, at: surfaceAt(tier, now, this.notifications()) },
+      },
       now,
     );
     const disabled = this.account(ended, ending.reason, now);
@@ -624,6 +713,7 @@ export class RoutineScheduler {
   }
 
   private account(run: RunRow, reason: string | null, now: number): string | null {
+    const askedFor = this.keeperTries.delete(run.runId);
     if (run.trigger === "manual") return null;
     if (run.process === "completed") {
       this.store.recordSuccess(run.creature, run.routineId);
@@ -637,7 +727,10 @@ export class RoutineScheduler {
       now + backoffMs(before + 1, this.settings),
     );
     if (failures < this.settings.disableAfterErrors) return null;
-    const disabled = `disabled after ${failures} failed runs in a row; the last: ${reason ?? run.process}`;
+    const last = reason ?? run.process;
+    const disabled = askedFor
+      ? `the try you asked for failed too: ${last}`
+      : `disabled after ${failures} failed runs in a row; the last: ${last}`;
     this.store.disable(run.creature, run.routineId, disabled, now);
     return disabled;
   }
@@ -683,14 +776,16 @@ export class RoutineScheduler {
         delivery === "unknown"
           ? "the node stopped while an effect was in flight; it may or may not have happened, so it is never replayed"
           : "the node stopped during the run";
-      const tier = "interrupt" as const;
+      const tier = tellsNow({ trigger: run.trigger, process: "failed", delivery })
+        ? ("interrupt" as const)
+        : ("log" as const);
       const ended = this.store.endRun(
         run.runId,
         {
           ...failedEnding(reason),
           delivery,
           verified: null,
-          notify: { tier, at: surfaceAt(tier, now, this.notifications) },
+          notify: { tier, at: surfaceAt(tier, now, this.notifications()) },
         },
         now,
       );
@@ -859,7 +954,7 @@ export class RoutineScheduler {
   private zoneOf(routine: Routine): string {
     return routine.trigger.kind === "cron"
       ? routine.trigger.tz
-      : (this.options.zone ?? this.notifications.tz ?? localTimeZone());
+      : (this.options.zone ?? this.notifications().settings.tz ?? localTimeZone());
   }
 
   private track(work: Promise<unknown>): void {
@@ -872,7 +967,9 @@ type PlanMode = "startup" | "wake" | "normal";
 
 type StopReason = "cancelled" | "watchdog" | "minutes-budget" | "usd-budget";
 
-type FireFacts = Pick<PendingFire, "slot" | "attempt" | "catchUp">;
+type FireFacts = Pick<PendingFire, "slot" | "attempt" | "catchUp" | "byKeeper"> & {
+  checked?: CheckResult | undefined;
+};
 
 interface ActiveRun {
   runId: string;
@@ -920,9 +1017,30 @@ function consentOf(indexed: IndexedRoutine, routine: Routine): Consent {
   const digest = grantDigest(routine);
   if (indexed.accepted?.digest === digest)
     return { posture: routine.tools, grants: routine.grants };
-  return {
-    blocked: `this chore asks for ${routine.tools} tools (grant set ${digest}); it waits until the keeper accepts that grant set, and a fired trigger never does`,
-  };
+  return { blocked: `${askedOf(routine, digest)}, and a fired trigger never does` };
+}
+
+function askedOf(routine: Routine, digest: string): string {
+  const check = routine.check === undefined ? undefined : `the check \`${routine.check.command}\``;
+  if (routine.tools === "read-only") {
+    return `this chore asks to run ${check} (${digest}); it waits until the keeper accepts that command`;
+  }
+  const tools = `${routine.tools} tools (grant set ${digest})`;
+  if (check === undefined) {
+    return `this chore asks for ${tools}; it waits until the keeper accepts that grant set`;
+  }
+  return `this chore asks for ${tools} and to run ${check}; it waits until the keeper accepts that grant set and command`;
+}
+
+function savedPayloadOf(
+  occurrence: TriggerPayload | undefined,
+  checked: CheckResult | undefined,
+): SavedPayload | undefined {
+  if (checked === undefined) return occurrence;
+  const check = { command: checked.command, exitCode: checked.exitCode, output: checked.output };
+  return occurrence === undefined
+    ? { kind: "check", receivedAt: checked.at, check }
+    : { ...occurrence, check };
 }
 
 function processOf(result: RunnerResult, active: ActiveRun): RunProcess {

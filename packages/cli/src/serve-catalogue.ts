@@ -12,6 +12,8 @@ export const openRouterEndpoint = "https://openrouter.ai/api/v1";
 
 export const catalogueMaxAgeMs = 24 * 60 * 60 * 1000;
 
+export const catalogueLookAgainMs = 60 * 60 * 1000;
+
 const fetchTimeoutMs = 10_000;
 
 export interface CatalogueEntry {
@@ -29,26 +31,49 @@ export interface CatalogueSeams {
 export interface ProviderCatalogue {
   entries(): readonly CatalogueEntry[];
   refresh(): Promise<void>;
+  wanted(): Promise<void>;
 }
 
 export function openRouterCatalogue(seams: CatalogueSeams): ProviderCatalogue {
   let entries: readonly CatalogueEntry[] = [];
+  let reading: Promise<void> | undefined;
+  let lookedAt: number | undefined;
+  const refresh = async () => {
+    const cached = await readCached(seams.file);
+    if (cached !== undefined) entries = cached.entries;
+    if (cached !== undefined && seams.now() - cached.fetchedAt < catalogueMaxAgeMs) return;
+    try {
+      entries = await fetchCatalogue(seams);
+      await writeCached(seams.file, { fetchedAt: seams.now(), entries });
+    } catch (cause) {
+      seams.notice?.(
+        `the OpenRouter catalogue could not be read (${toError(cause).message}); its models carry only what keywork.json declares`,
+      );
+    }
+  };
   return {
     entries: () => entries,
-    refresh: async () => {
-      const cached = await readCached(seams.file);
-      if (cached !== undefined) entries = cached.entries;
-      if (cached !== undefined && seams.now() - cached.fetchedAt < catalogueMaxAgeMs) return;
-      try {
-        entries = await fetchCatalogue(seams);
-        await writeCached(seams.file, { fetchedAt: seams.now(), entries });
-      } catch (cause) {
-        seams.notice?.(
-          `the OpenRouter catalogue could not be read (${toError(cause).message}); its models carry only what keywork.json declares`,
-        );
+    refresh,
+    wanted: () => {
+      if (reading !== undefined) return reading;
+      if (lookedAt !== undefined && seams.now() - lookedAt < catalogueLookAgainMs) {
+        return Promise.resolve();
       }
+      lookedAt = seams.now();
+      reading = refresh().finally(() => {
+        reading = undefined;
+      });
+      return reading;
     },
   };
+}
+
+export function isOpenRouterConnection(registration: ProviderRegistration): boolean {
+  return (
+    registration.endpoint === openRouterEndpoint &&
+    registration.enabled &&
+    registration.credential.kind === "present"
+  );
 }
 
 export function catalogueFileOf(userRoot: string): string {
@@ -57,13 +82,14 @@ export function catalogueFileOf(userRoot: string): string {
 
 export function cataloguedInventory<
   Inventory extends { registrations(): readonly ProviderRegistration[] },
->(inventory: Inventory, catalogue: Pick<ProviderCatalogue, "entries">): Inventory {
+>(inventory: Inventory, catalogue: Pick<ProviderCatalogue, "entries" | "wanted">): Inventory {
   return {
     ...inventory,
-    registrations: () =>
-      inventory
-        .registrations()
-        .map((registration) => withCatalogue(registration, catalogue.entries())),
+    registrations: () => {
+      const registrations = inventory.registrations();
+      if (registrations.some(isOpenRouterConnection)) void catalogue.wanted();
+      return registrations.map((registration) => withCatalogue(registration, catalogue.entries()));
+    },
   };
 }
 
